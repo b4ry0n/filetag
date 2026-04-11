@@ -1,0 +1,17 @@
+[package]
+name = "filetag"
+version = "0.1.0"
+edition = "2024"
+description = "SQLite-backed file tagging CLI with content hashing and symlink views"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+indicatif = "0.17"
+rusqlite = { version = "0.33", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"

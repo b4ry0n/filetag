@@ -1,0 +1,146 @@
+# filetag
+
+SQLite-backed file tagging CLI with content hashing and symlink views.
+
+Tag any file with arbitrary tags (including `key=value` pairs), query them with boolean expressions, and generate symlink views of the results.
+
+## Features
+
+- Per-directory SQLite database (`.filetag/db.sqlite3`), portable relative paths
+- BLAKE3 content hashing for file identity (lazy: only hashes on first tag)
+- Boolean query language with `and`, `or`, `not`, glob patterns (`genre/*`), and value comparisons (`year>=2020`)
+- Symlink-based views for integration with other tools
+- JSON Lines output (`--json`) for composability with `jq` and scripts
+- Stdin support: pipe file paths from `fd`, `find`, or other queries
+- NUL-delimited I/O (`-0`) for safe handling of paths with special characters
+- Detects missing, modified, and untagged files
+- Repairs moved files by matching BLAKE3 hashes
+- Tag renaming (`mv`) and merging (`merge`)
+- Shell completions for bash, zsh, and fish
+
+## Install
+
+```
+cargo install --path .
+```
+
+## Quick start
+
+```sh
+# Initialize a database in the current directory
+filetag init
+
+# Tag files (comma-separated or repeated -t)
+filetag tag photo.jpg -t vacation,beach,year=2024
+filetag tag *.mp3 -t genre/rock -t year=2024
+filetag tag -r ./Music -t collection/main
+
+# Pipe file paths from other tools
+fd -e flac | filetag tag -t lossless
+find . -name '*.jpg' -print0 | filetag tag -0 -t photo
+
+# List all tags
+filetag tags
+
+# List tags for a specific file
+filetag tags song.mp3
+
+# Detailed file info
+filetag show photo.jpg
+
+# Find files by tag query
+filetag find genre/rock
+filetag find 'genre/rock and year>=2020'
+filetag find 'genre/* and not live' --with-tags
+filetag find vacation --count
+filetag find vacation -0 | xargs -0 ls -l
+
+# JSON output
+filetag find 'genre/rock' --json
+filetag tags --json
+filetag info --json
+
+# Generate a symlink view
+filetag view genre/rock -o ~/Views/rock
+
+# Check for missing/modified/untagged files
+filetag status
+
+# Find moved files by content hash
+filetag repair
+filetag repair --dry-run
+
+# Rename a tag
+filetag mv old-tag new-tag
+
+# Merge a tag into another
+filetag merge old-tag target-tag
+filetag merge --dry-run old-tag target-tag
+
+# Database statistics
+filetag info
+
+# Shell completions
+filetag completions zsh >> ~/.zfunc/_filetag
+filetag completions bash >> ~/.bash_completion.d/filetag
+filetag completions fish > ~/.config/fish/completions/filetag.fish
+```
+
+## Global options
+
+```
+--json              JSON Lines output (one object per line)
+--color <WHEN>      auto | always | never (default: auto)
+-q, --quiet         Suppress informational messages
+-v, --verbose       Extra detail
+--db <PATH>         Use a specific database (override auto-detect)
+```
+
+## Command aliases
+
+| Command | Alias |
+| :------ | :---- |
+| `tag`   | `t`   |
+| `untag` | `u`   |
+| `tags`  | `ls`  |
+| `show`  | `s`   |
+| `find`  | `f`   |
+
+## Query language
+
+Queries support boolean logic and glob patterns:
+
+```
+genre/rock                        # exact tag
+genre/*                           # glob
+year=2024                         # exact value
+year>=2020                        # comparison (>=, <=, >, <)
+genre/rock and not live           # boolean
+(genre/rock or genre/metal) and year>=2020
+```
+
+## How it works
+
+The database is created in `.filetag/` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's BLAKE3 hash, size, and mtime are stored. Subsequent operations skip rehashing if size and mtime are unchanged.
+
+The `view` command creates a directory of relative symlinks pointing back to the original files, letting you browse query results in any file manager.
+
+The `repair` command scans for files whose paths no longer exist and tries to find them at new locations by matching their BLAKE3 hash.
+
+## Dependencies
+
+| Crate          | Purpose                |
+| :------------- | :--------------------- |
+| rusqlite       | SQLite database access |
+| blake3         | Content hashing        |
+| clap           | CLI argument parsing   |
+| clap_complete  | Shell completions      |
+| serde          | Serialization          |
+| serde_json     | JSON output            |
+| walkdir        | Recursive dir walking  |
+| indicatif      | Progress bars          |
+| anyhow         | Error handling         |
+
+## License
+
+MIT

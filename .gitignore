@@ -1,0 +1,7 @@
+/target
+.filetag/
+.github/copilot-instructions.md
+*.swp
+*.swo
+*~
+.DS_Store
