@@ -519,7 +519,12 @@ function setViewMode(mode) {
     state.viewMode = mode;
     document.getElementById('view-grid').classList.toggle('active', mode === 'grid');
     document.getElementById('view-list').classList.toggle('active', mode === 'list');
+    document.getElementById('zoom-slider').style.display = mode === 'grid' ? '' : 'none';
     renderContent();
+}
+
+function setCardSize(size) {
+    document.getElementById('content').style.setProperty('--card-size', size + 'px');
 }
 
 function toggleTagGroup(btn) {
@@ -558,6 +563,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // View toggle
     document.getElementById('view-grid').addEventListener('click', () => setViewMode('grid'));
     document.getElementById('view-list').addEventListener('click', () => setViewMode('list'));
+
+    // Zoom slider
+    const zoom = document.getElementById('zoom-slider');
+    zoom.addEventListener('input', () => setCardSize(zoom.value));
+    setCardSize(zoom.value);
 
     // Detail panel
     document.getElementById('detail-close').addEventListener('click', closeDetail);
