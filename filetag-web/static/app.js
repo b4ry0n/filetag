@@ -540,9 +540,7 @@ function renderDetail() {
                 </div>
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
-        document.getElementById('bulk-tag-input').addEventListener('keydown', e => {
-            if (e.key === 'Enter') { e.preventDefault(); doBulkAddTag(); }
-        });
+        attachTagAutocomplete(document.getElementById('bulk-tag-input'), () => doBulkAddTag());
         return;
     }
 
@@ -613,12 +611,7 @@ function renderDetail() {
             </div>
         </div>`;
 
-    document.getElementById('tag-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === 'Tab') {
-            e.preventDefault();
-            doAddTag();
-        }
-    });
+    attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
 }
 
 // Update only the tag chips in the detail panel, leaving the preview (video/audio/image) untouched.
@@ -864,6 +857,111 @@ async function doRemoveTag(path, tagStr) {
     renderTags();
     renderContent();
     renderDetailTagsOnly();
+}
+
+// ---------------------------------------------------------------------------
+// Tag autocomplete
+// ---------------------------------------------------------------------------
+
+function attachTagAutocomplete(inputEl, submitFn) {
+    let _dropdown = null;
+    let _activeIdx = -1;
+
+    function getMatches(query) {
+        const q = query.toLowerCase();
+        if (!q) {
+            // Show top tags by count, excluding ones already on the selected file(s)
+            const applied = new Set(
+                (state.selectedFile?.tags || []).map(t => formatTag(t))
+            );
+            return [...state.tags]
+                .filter(t => !applied.has(t.name))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 12);
+        }
+        return state.tags
+            .filter(t => t.name.toLowerCase().includes(q))
+            .sort((a, b) => {
+                // Prefer prefix matches first
+                const aPrefix = a.name.toLowerCase().startsWith(q);
+                const bPrefix = b.name.toLowerCase().startsWith(q);
+                if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+                return b.count - a.count;
+            })
+            .slice(0, 15);
+    }
+
+    function buildDropdown(tags) {
+        if (!_dropdown) {
+            _dropdown = document.createElement('ul');
+            _dropdown.className = 'tag-autocomplete';
+            inputEl.parentElement.appendChild(_dropdown);
+        }
+        _activeIdx = -1;
+        if (!tags.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
+        _dropdown.innerHTML = tags.map(tag => {
+            const dot = tag.color
+                ? `<span class="tag-color-dot" style="background:${tag.color}"></span>`
+                : '';
+            return `<li data-tagname="${esc(tag.name)}">${dot}<span class="ac-name">${esc(tag.name)}</span><span class="ac-count">${tag.count}</span></li>`;
+        }).join('');
+        _dropdown.hidden = false;
+        _dropdown.querySelectorAll('li').forEach(li => {
+            li.addEventListener('mousedown', e => {
+                e.preventDefault(); // keep focus on input
+                inputEl.value = li.dataset.tagname;
+                closeDropdown();
+                submitFn();
+            });
+        });
+    }
+
+    function closeDropdown() {
+        if (_dropdown) { _dropdown.hidden = true; }
+        _activeIdx = -1;
+    }
+
+    function setActive(idx) {
+        const items = _dropdown ? _dropdown.querySelectorAll('li') : [];
+        items.forEach(li => li.classList.remove('ac-active'));
+        _activeIdx = idx;
+        if (_activeIdx >= 0 && _activeIdx < items.length) {
+            items[_activeIdx].classList.add('ac-active');
+            inputEl.value = items[_activeIdx].dataset.tagname;
+            items[_activeIdx].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    inputEl.addEventListener('input', () => buildDropdown(getMatches(inputEl.value.trim())));
+
+    inputEl.addEventListener('focus', () => buildDropdown(getMatches(inputEl.value.trim())));
+
+    inputEl.addEventListener('blur', () => setTimeout(closeDropdown, 150));
+
+    inputEl.addEventListener('keydown', e => {
+        const items = _dropdown ? _dropdown.querySelectorAll('li') : [];
+        const count = items.length;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!_dropdown || _dropdown.hidden) buildDropdown(getMatches(inputEl.value.trim()));
+            setActive(Math.min(_activeIdx + 1, count - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive(Math.max(_activeIdx - 1, 0));
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeDropdown();
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault();
+            if (_activeIdx >= 0 && !_dropdown.hidden) {
+                inputEl.value = items[_activeIdx].dataset.tagname;
+                closeDropdown();
+            } else {
+                closeDropdown();
+            }
+            submitFn();
+        }
+    });
 }
 
 function clearSelection() {
