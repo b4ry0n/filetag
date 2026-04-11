@@ -1,21 +1,16 @@
-[package]
-name = "filetag"
-version = "0.2.0"
-edition = "2024"
-description = "SQLite-backed file tagging CLI with content hashing and symlink views"
-license = "MIT"
-readme = "README.md"
-repository = "https://github.com/b4ry0n/filetag"
-keywords = ["tagging", "files", "sqlite", "cli"]
-categories = ["command-line-utilities", "filesystem"]
+[workspace]
+resolver = "2"
+members = ["filetag-lib", "filetag-cli", "filetag-web"]
 
-[dependencies]
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/b4ry0n/filetag"
+
+[workspace.dependencies]
 anyhow = "1.0"
 blake3 = "1"
-clap = { version = "4", features = ["derive"] }
-clap_complete = "4"
-dirs = "6"
-indicatif = "0.17"
 rusqlite = { version = "0.33", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
