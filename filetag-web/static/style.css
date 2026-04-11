@@ -343,8 +343,10 @@ h3, h4 { font-weight: 600; }
 .file-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, var(--card-size, 140px));
+    grid-auto-rows: max-content;
     gap: 12px;
     justify-content: start;
+    align-content: start;
 }
 
 .card {
