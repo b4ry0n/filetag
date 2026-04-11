@@ -262,21 +262,15 @@ function renderTags() {
         const items = children.sort((a, b) => a.suffix.localeCompare(b.suffix));
         const rootCount = root ? root.count : 0;
         const totalCount = items.reduce((s, i) => s + i.count, 0) + rootCount;
-        const groupActive = state.mode === 'search' && state.searchQuery === `${prefix}/*` ? ' active' : '';
+        const groupQuery = root ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
+        const groupActive = state.mode === 'search' && state.searchQuery === groupQuery ? ' active' : '';
+        const groupColor = root ? root.color : null;
         html += `<div class="tag-group">
             <div class="tag-group-label${groupActive}">
                 <button class="tag-group-chevron" onclick="toggleTagGroup(this.parentElement)" title="Expand/collapse"><span class="chevron">▸</span></button>
-                <button class="tag-group-name" onclick="doTagGroupSearch('${esc(prefix)}')">${esc(prefix)}/ <span class="count">${totalCount}</span></button>
+                <button class="tag-group-name" onclick="doTagGroupSearch('${esc(prefix)}')">${colorDot(groupColor)}${esc(prefix)} <span class="count">${totalCount}</span></button>
             </div>
             <div class="tag-group-items">`;
-        // If a bare prefix tag exists (e.g. "kunst"), show it first
-        if (root) {
-            const q = quoteTag(root.name);
-            const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-            html += `<button class="tag-item tag-item-root${active}" onclick="doTagSearch('${esc(root.name)}')" oncontextmenu="showTagMenu(event, '${esc(root.name)}')">
-                ${colorDot(root.color)}<em>${esc(root.name)}</em> <span class="count">${root.count}</span>
-            </button>`;
-        }
         for (const item of items) {
             const q = quoteTag(item.fullName);
             const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
@@ -1072,7 +1066,10 @@ function toggleTagGroup(labelEl) {
 }
 
 async function doTagGroupSearch(prefix) {
-    const q = `${prefix}/*`;
+    // Include files with the bare prefix tag (e.g. "kunst") as well as sub-tags ("kunst/*")
+async function doTagGroupSearch(prefix) {
+    const hasRoot = state.tags.some(t => t.name === prefix);
+    const q = hasRoot ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
     document.getElementById('search-input').value = q;
     await searchFiles(q);
     document.getElementById('search-clear').hidden = false;
