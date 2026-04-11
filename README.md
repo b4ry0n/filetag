@@ -80,23 +80,23 @@ filetag merge old-tag target-tag
 filetag merge --dry-run old-tag target-tag
 
 # Child database management
-filetag db add ./Music              # Register a child database
-filetag db ls                       # List registered children
-filetag db push ./Music             # Move files+tags from parent to child
-filetag db push ./Music -n          # Dry run
-filetag db pull ./Music             # Move files+tags from child to parent
-filetag db prune                    # Remove dead registrations
+filetag db add ./Music                # Register a child database
+filetag db ls                         # List registered children
+filetag db push ./Music               # Transfer tags to child DB
+filetag db push ./Music -n            # Dry run
+filetag db pull ./Music               # Transfer tags back to parent DB
+filetag db prune                      # Remove dead registrations
 
 # Cross-database queries
-filetag tags --all                   # Tags from all child databases
-filetag find genre/rock --all        # Search across all databases
+filetag tags --all                    # Tags from all child databases
+filetag find genre/rock --all         # Search across all databases
 
 # Global database registry
-filetag db register                  # Add current DB to global registry
-filetag db unregister                # Remove from global registry
-filetag db registered                # List all globally registered databases
-filetag tags --all-dbs               # Tags across all registered databases
-filetag find genre/rock --all-dbs    # Search across all registered databases
+filetag db register                   # Add current DB to global registry
+filetag db unregister                 # Remove from global registry
+filetag db registered                 # List all globally registered databases
+filetag tags --all-dbs                # Tags across all registered databases
+filetag find genre/rock --all-dbs     # Search across all registered databases
 
 # Database statistics
 filetag info
@@ -140,6 +140,12 @@ genre/rock and not live           # boolean
 (genre/rock or genre/metal) and year>=2020
 ```
 
+## Data safety
+
+filetag never modifies, moves, or deletes your files. It only reads them to collect metadata and compute hashes. All tag data lives in `.filetag/db.sqlite3`. Nothing is written outside that directory: no caches, no temp files, no global state. The only exception is the optional global registry (`~/.config/filetag/databases.json`), which is created only when you explicitly run `filetag db register` or `filetag init --register`.
+
+To completely remove filetag from a directory tree, delete the `.filetag/` folder. If you previously registered the database, also run `filetag db unregister` (or manually remove the entry from `~/.config/filetag/databases.json`).
+
 ## How it works
 
 The database is created in `.filetag/` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's BLAKE3 hash, size, and mtime are stored. Subsequent operations skip rehashing if size and mtime are unchanged.
@@ -158,32 +164,17 @@ cd Music && filetag init    # child at ./Music
 cd .. && filetag db add ./Music
 ```
 
-`db push` moves files (with tags) from the parent to the child, `db pull` moves them back. `--all` on `tags` and `find` queries across the entire tree. Child discovery is recursive with cycle detection.
+`db push` transfers tag records for files under the child path from the parent database to the child database. `db pull` does the reverse. Files on disk are never touched. `--all` on `tags` and `find` queries across the entire tree. Child discovery is recursive with cycle detection.
 
 ### Global registry
 
-Every `filetag init` automatically registers the database in `~/.config/filetag/databases.json`. Use `--all-dbs` on `tags` and `find` to query across all registered databases, even in unrelated directory trees.
+Databases can be registered in `~/.config/filetag/databases.json` via `filetag init --register` or `filetag db register`. Use `--all-dbs` on `tags` and `find` to query across all registered databases, even in unrelated directory trees.
 
 ```sh
 filetag find genre/rock --all-dbs    # search everywhere
 filetag db registered                # see all known databases
 filetag db prune                     # clean up dead entries
 ```
-
-## Dependencies
-
-| Crate          | Purpose                |
-| :------------- | :--------------------- |
-| rusqlite       | SQLite database access |
-| blake3         | Content hashing        |
-| clap           | CLI argument parsing   |
-| clap_complete  | Shell completions      |
-| dirs           | XDG config directories |
-| serde          | Serialization          |
-| serde_json     | JSON output            |
-| walkdir        | Recursive dir walking  |
-| indicatif      | Progress bars          |
-| anyhow         | Error handling         |
 
 ## License
 
