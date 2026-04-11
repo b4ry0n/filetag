@@ -144,7 +144,23 @@ async function loadFileDetail(path) {
 function selectDir(path, name, fileCount) {
     state.selectedDir = { path, name, file_count: fileCount };
     state.selectedFile = null;
-    render();
+    renderDetail(); // only update the panel, NOT the full grid
+}
+
+// Timer to distinguish single click (select) from double click (navigate) on directories.
+let _dirClickTimer = null;
+
+function handleDirClick(path, name, fileCount) {
+    if (_dirClickTimer) {
+        clearTimeout(_dirClickTimer);
+        _dirClickTimer = null;
+        navigateTo(path); // double click
+    } else {
+        _dirClickTimer = setTimeout(() => {
+            _dirClickTimer = null;
+            selectDir(path, name, fileCount); // single click
+        }, 250);
+    }
 }
 
 async function addTagToFile(path, tagStr) {
@@ -289,7 +305,7 @@ function renderGrid(items) {
         if (isDir) {
             const dirPath = fullPath(entry);
             const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="card folder${dirSelected}" onclick="selectDir('${esc(dirPath)}','${esc(name)}',${entry.file_count})" ondblclick="navigateTo('${esc(dirPath)}')">
+            html += `<div class="card folder${dirSelected}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
                 <div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -325,7 +341,7 @@ function renderList(items) {
         if (isDir) {
             const dirPath = fullPath(entry);
             const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="list-row folder${dirSelected}" onclick="selectDir('${esc(dirPath)}','${esc(name)}',${entry.file_count})" ondblclick="navigateTo('${esc(dirPath)}')">
+            html += `<div class="list-row folder${dirSelected}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -593,6 +609,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const zoom = document.getElementById('zoom-slider');
     zoom.addEventListener('input', () => setCardSize(zoom.value));
     setCardSize(zoom.value);
+
+    // Close detail panel when clicking empty space in the content area
+    document.getElementById('content').addEventListener('click', e => {
+        if (e.target === e.currentTarget) closeDetail();
+    });
 
     // Detail panel
     document.getElementById('detail-close').addEventListener('click', closeDetail);
