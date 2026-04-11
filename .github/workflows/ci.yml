@@ -29,7 +29,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -49,9 +49,15 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: filetag-linux-amd64
+            ext: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: filetag-macos-arm64
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: filetag-windows-amd64
+            ext: zip
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -59,13 +65,20 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --target ${{ matrix.target }} -p filetag -p filetag-web
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../${{ matrix.artifact }}.tar.gz filetag filetag-web
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path filetag.exe, filetag-web.exe -DestinationPath ../../../${{ matrix.artifact }}.zip
       - name: Upload release asset
+        shell: bash
         run: |
           gh release create "${{ github.ref_name }}" --generate-notes 2>/dev/null || true
-          gh release upload "${{ github.ref_name }}" "${{ matrix.artifact }}.tar.gz" --clobber
+          gh release upload "${{ github.ref_name }}" "${{ matrix.artifact }}.${{ matrix.ext }}" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
