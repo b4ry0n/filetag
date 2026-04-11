@@ -16,6 +16,8 @@ Tag any file with arbitrary tags (including `key=value` pairs), query them with 
 - Detects missing, modified, and untagged files
 - Repairs moved files by matching BLAKE3 hashes
 - Tag renaming (`mv`) and merging (`merge`)
+- Hierarchical child databases with push/pull transfer
+- Cross-database queries (`--all`) across child databases
 - Shell completions for bash, zsh, and fish
 
 ## Install
@@ -77,6 +79,25 @@ filetag mv old-tag new-tag
 filetag merge old-tag target-tag
 filetag merge --dry-run old-tag target-tag
 
+# Child database management
+filetag db add ./Music              # Register a child database
+filetag db ls                       # List registered children
+filetag db push ./Music             # Move files+tags from parent to child
+filetag db push ./Music -n          # Dry run
+filetag db pull ./Music             # Move files+tags from child to parent
+filetag db prune                    # Remove dead registrations
+
+# Cross-database queries
+filetag tags --all                   # Tags from all child databases
+filetag find genre/rock --all        # Search across all databases
+
+# Global database registry
+filetag db register                  # Add current DB to global registry
+filetag db unregister                # Remove from global registry
+filetag db registered                # List all globally registered databases
+filetag tags --all-dbs               # Tags across all registered databases
+filetag find genre/rock --all-dbs    # Search across all registered databases
+
 # Database statistics
 filetag info
 
@@ -127,6 +148,28 @@ The `view` command creates a directory of relative symlinks pointing back to the
 
 The `repair` command scans for files whose paths no longer exist and tries to find them at new locations by matching their BLAKE3 hash.
 
+### Child databases
+
+For large collections you can split the database hierarchy: initialize separate databases in subdirectories and register them as children of the parent.
+
+```sh
+filetag init                # parent at .
+cd Music && filetag init    # child at ./Music
+cd .. && filetag db add ./Music
+```
+
+`db push` moves files (with tags) from the parent to the child, `db pull` moves them back. `--all` on `tags` and `find` queries across the entire tree. Child discovery is recursive with cycle detection.
+
+### Global registry
+
+Every `filetag init` automatically registers the database in `~/.config/filetag/databases.json`. Use `--all-dbs` on `tags` and `find` to query across all registered databases, even in unrelated directory trees.
+
+```sh
+filetag find genre/rock --all-dbs    # search everywhere
+filetag db registered                # see all known databases
+filetag db prune                     # clean up dead entries
+```
+
 ## Dependencies
 
 | Crate          | Purpose                |
@@ -135,6 +178,7 @@ The `repair` command scans for files whose paths no longer exist and tries to fi
 | blake3         | Content hashing        |
 | clap           | CLI argument parsing   |
 | clap_complete  | Shell completions      |
+| dirs           | XDG config directories |
 | serde          | Serialization          |
 | serde_json     | JSON output            |
 | walkdir        | Recursive dir walking  |
