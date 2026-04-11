@@ -22,8 +22,9 @@ Tag any file with arbitrary tags (including `key=value` pairs), query them with 
 
 ## Install
 
-```
-cargo install --path .
+```sh
+cargo install --path filetag-cli           # CLI (binary: filetag)
+cargo install --path filetag-web           # Web interface (binary: filetag-web)
 ```
 
 ## Quick start
