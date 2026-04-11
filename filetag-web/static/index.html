@@ -35,6 +35,12 @@
                 <nav class="breadcrumb" id="breadcrumb"></nav>
                 <div class="toolbar-right">
                     <span id="entry-count" class="entry-count"></span>
+                    <button id="detail-toggle" class="view-btn active" title="Toggle info pane" onclick="toggleDetailPanel()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+                            <rect x="15" y="3" width="6" height="18" rx="0"/>
+                        </svg>
+                    </button>
                     <div class="view-toggle">
                         <button id="view-grid" class="view-btn active" title="Grid view">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -57,21 +63,8 @@
             </div>
             <div id="content" class="file-grid"></div>
         </main>
-        <aside class="detail" id="detail" hidden>
-            <div class="detail-header">
-                <h3 id="detail-name"></h3>
-                <button id="detail-close" class="detail-close" title="Close">&times;</button>
-            </div>
-            <div id="detail-preview" class="detail-preview"></div>
-            <div id="detail-meta" class="detail-meta"></div>
-            <div class="detail-tags-section">
-                <h4>Tags</h4>
-                <div id="detail-tags" class="detail-tags"></div>
-                <div class="tag-add-form">
-                    <input type="text" id="tag-input" placeholder="Add tag (e.g. genre/rock)">
-                    <button id="tag-add-btn">Add</button>
-                </div>
-            </div>
+        <aside class="detail" id="detail">
+            <div class="detail-empty">Select a file or folder to see details</div>
         </aside>
     </div>
     <script src="/app.js"></script>

@@ -76,6 +76,7 @@ const state = {
     selectedFile: null,  // { path, size, blake3, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
     info: null,
+    detailOpen: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -118,7 +119,6 @@ async function loadFiles(path) {
     state.entries = data.entries;
     state.mode = 'browse';
     state.searchQuery = '';
-    state.selectedFile = null;
 }
 
 async function searchFiles(query) {
@@ -142,9 +142,16 @@ async function loadFileDetail(path) {
 }
 
 function selectDir(path, name, fileCount) {
+    const anchor = saveScrollAnchor(path);
     state.selectedDir = { path, name, file_count: fileCount };
     state.selectedFile = null;
-    renderDetail(); // only update the panel, NOT the full grid
+    if (!state.detailOpen) {
+        state.detailOpen = true;
+        document.querySelector('.layout').classList.remove('detail-collapsed');
+        document.getElementById('detail-toggle').classList.add('active');
+    }
+    renderDetail();
+    restoreScrollAnchor(anchor);
 }
 
 // Timer to distinguish single click (select) from double click (navigate) on directories.
@@ -270,7 +277,7 @@ function renderBreadcrumb() {
             accumulated += (i === 0 ? '' : '/') + parts[i];
             const isCurrent = i === parts.length - 1;
             const path = accumulated;
-            html += `<span class="breadcrumb-sep">/</span>`;
+            if (i > 0) html += `<span class="breadcrumb-sep">/</span>`;
             html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${esc(path)}')">${esc(parts[i])}</button>`;
         }
     }
@@ -305,12 +312,12 @@ function renderGrid(items) {
         if (isDir) {
             const dirPath = fullPath(entry);
             const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="card folder${dirSelected}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
+            html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
                 <div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
         } else {
-            html += `<div class="card${selected}" onclick="selectFile('${esc(path)}')" ondblclick="selectFile('${esc(path)}')">
+            html += `<div class="card${selected}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}')" ondblclick="selectFile('${esc(path)}')">
                 <div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -341,7 +348,7 @@ function renderList(items) {
         if (isDir) {
             const dirPath = fullPath(entry);
             const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="list-row folder${dirSelected}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
+            html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -349,7 +356,7 @@ function renderList(items) {
                 <span class="tags-count">${tags}</span>
             </div>`;
         } else {
-            html += `<div class="list-row${selected}" onclick="selectFile('${esc(path)}')">
+            html += `<div class="list-row${selected}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}')">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -415,63 +422,74 @@ function renderDetail() {
     const panel = document.getElementById('detail');
 
     if (!state.selectedFile && !state.selectedDir) {
-        panel.hidden = true;
+        panel.innerHTML = '<div class="detail-empty">Select a file or folder to see details</div>';
         return;
     }
-
-    panel.hidden = false;
 
     // Directory selected
     if (state.selectedDir) {
         const d = state.selectedDir;
-        document.getElementById('detail-name').textContent = d.name;
-        document.getElementById('detail-preview').innerHTML =
-            `<div class="no-preview" style="color:#fab005;font-size:64px">${ICONS.folder}</div>`;
-        document.getElementById('detail-meta').innerHTML = `
-            <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(d.path)}</span></div>
-            <div class="detail-meta-row"><span class="detail-meta-label">Items</span><span class="detail-meta-value">${d.file_count}</span></div>
-        `;
-        document.querySelector('.detail-tags-section').hidden = true;
+        panel.innerHTML = `
+            <div class="detail-header">
+                <h3>${esc(d.name)}</h3>
+                <button class="detail-close" onclick="closeDetail()" title="Close">&times;</button>
+            </div>
+            <div class="detail-preview">
+                <div class="no-preview" style="color:#fab005">${ICONS.folder}</div>
+            </div>
+            <div class="detail-meta">
+                <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(d.path)}</span></div>
+                <div class="detail-meta-row"><span class="detail-meta-label">Items</span><span class="detail-meta-value">${d.file_count}</span></div>
+            </div>`;
         return;
     }
 
-    document.querySelector('.detail-tags-section').hidden = false;
     const f = state.selectedFile;
     const name = f.path.split('/').pop();
     const type_ = fileType(name);
 
-    document.getElementById('detail-name').textContent = name;
-
-    // Preview
-    const previewEl = document.getElementById('detail-preview');
+    let preview;
     if (type_ === 'image') {
-        previewEl.innerHTML = `<img src="/preview/${encodeURI(f.path)}" alt="${esc(name)}">`;
+        preview = `<img src="/preview/${encodeURI(f.path)}" alt="${esc(name)}">`;
     } else if (type_ === 'audio') {
-        previewEl.innerHTML = `<audio controls preload="metadata" src="/preview/${encodeURI(f.path)}"></audio>`;
+        preview = `<audio controls preload="metadata" src="/preview/${encodeURI(f.path)}"></audio>`;
     } else if (type_ === 'video') {
-        previewEl.innerHTML = `<video controls preload="metadata" src="/preview/${encodeURI(f.path)}"></video>`;
+        preview = `<video controls preload="metadata" src="/preview/${encodeURI(f.path)}"></video>`;
     } else {
-        previewEl.innerHTML = `<div class="no-preview">${fileIcon(name)}</div>`;
+        preview = `<div class="no-preview">${fileIcon(name)}</div>`;
     }
 
-    // Metadata
-    document.getElementById('detail-meta').innerHTML = `
-        <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
-        <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
-        <div class="detail-meta-row"><span class="detail-meta-label">BLAKE3</span><span class="detail-meta-value">${f.blake3 || '(not hashed)'}</span></div>
-        ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}
-    `;
-
-    // Tags
-    const tagsEl = document.getElementById('detail-tags');
-    if (f.tags.length === 0) {
-        tagsEl.innerHTML = '<span class="no-tags">No tags assigned</span>';
-    } else {
-        tagsEl.innerHTML = f.tags.map(t => {
+    const tagChips = f.tags.length === 0
+        ? '<span class="no-tags">No tags assigned</span>'
+        : f.tags.map(t => {
             const tagStr = formatTag(t);
             return `<span class="tag-chip">${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${esc(f.path)}','${esc(tagStr)}')">&times;</button></span>`;
         }).join('');
-    }
+
+    panel.innerHTML = `
+        <div class="detail-header">
+            <h3>${esc(name)}</h3>
+            <button class="detail-close" onclick="closeDetail()" title="Close">&times;</button>
+        </div>
+        <div class="detail-preview">${preview}</div>
+        <div class="detail-meta">
+            <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">BLAKE3</span><span class="detail-meta-value">${f.blake3 || '(not hashed)'}</span></div>
+            ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}
+        </div>
+        <div class="detail-tags-section">
+            <h4>Tags</h4>
+            <div class="detail-tags">${tagChips}</div>
+            <div class="tag-add-form">
+                <input type="text" id="tag-input" placeholder="Add tag (e.g. genre/rock)">
+                <button onclick="doAddTag()">Add</button>
+            </div>
+        </div>`;
+
+    document.getElementById('tag-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') doAddTag();
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +520,8 @@ function render() {
 // ---------------------------------------------------------------------------
 
 async function navigateTo(path) {
+    state.selectedFile = null;
+    state.selectedDir = null;
     await loadFiles(path);
     render();
 }
@@ -536,8 +556,17 @@ async function doTagSearch(tagName) {
 }
 
 async function selectFile(path) {
+    const layout = document.querySelector('.layout');
+    // anchor to the element being clicked (in DOM before render)
+    const anchor = saveScrollAnchor(path);
     await loadFileDetail(path);
+    if (!state.detailOpen) {
+        state.detailOpen = true;
+        layout.classList.remove('detail-collapsed');
+        document.getElementById('detail-toggle').classList.add('active');
+    }
     render();
+    restoreScrollAnchor(anchor);
 }
 
 async function doAddTag() {
@@ -563,6 +592,16 @@ function setViewMode(mode) {
     renderContent();
 }
 
+function toggleDetailPanel() {
+    const activePath = state.selectedFile?.path || state.selectedDir?.path || null;
+    const anchor = saveScrollAnchor(activePath);
+    const layout = document.querySelector('.layout');
+    const collapsed = layout.classList.toggle('detail-collapsed');
+    state.detailOpen = !collapsed;
+    document.getElementById('detail-toggle').classList.toggle('active', !collapsed);
+    restoreScrollAnchor(anchor);
+}
+
 function setCardSize(size) {
     document.getElementById('content').style.setProperty('--card-size', size + 'px');
 }
@@ -574,9 +613,42 @@ function toggleTagGroup(btn) {
 }
 
 function closeDetail() {
+    const activePath = state.selectedFile?.path || state.selectedDir?.path || null;
+    const anchor = saveScrollAnchor(activePath);
     state.selectedFile = null;
     state.selectedDir = null;
+    state.detailOpen = false;
+    document.querySelector('.layout').classList.add('detail-collapsed');
+    document.getElementById('detail-toggle').classList.remove('active');
     render();
+    restoreScrollAnchor(anchor);
+}
+
+// Scroll anchor helpers — keep an element at the same viewport-Y across reflows
+// ---------------------------------------------------------------------------
+
+function saveScrollAnchor(path) {
+    const content = document.getElementById('content');
+    if (path) {
+        const el = content.querySelector(`[data-path="${CSS.escape(path)}"]`);
+        if (el) return { path, top: el.getBoundingClientRect().top };
+    }
+    // fallback: proportional position
+    return { ratio: content.scrollHeight > 0 ? content.scrollTop / content.scrollHeight : 0 };
+}
+
+function restoreScrollAnchor(anchor) {
+    const content = document.getElementById('content');
+    requestAnimationFrame(() => {
+        if (anchor.path) {
+            const el = content.querySelector(`[data-path="${CSS.escape(anchor.path)}"]`);
+            if (el) {
+                content.scrollTop += el.getBoundingClientRect().top - anchor.top;
+                return;
+            }
+        }
+        content.scrollTop = anchor.ratio * content.scrollHeight;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -613,15 +685,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Close detail panel when clicking empty space in the content area
     document.getElementById('content').addEventListener('click', e => {
         if (e.target === e.currentTarget) closeDetail();
-    });
-
-    // Detail panel
-    document.getElementById('detail-close').addEventListener('click', closeDetail);
-
-    // Tag add
-    document.getElementById('tag-add-btn').addEventListener('click', doAddTag);
-    document.getElementById('tag-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') doAddTag();
     });
 
     // Keyboard shortcuts

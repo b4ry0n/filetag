@@ -158,11 +158,18 @@ h3, h4 { font-weight: 600; }
 
 .layout {
     display: grid;
-    grid-template-columns: var(--sidebar-width) 1fr;
+    grid-template-columns: var(--sidebar-width) 1fr var(--detail-width);
     height: calc(100vh - var(--header-height));
 }
 
-/* detail panel no longer affects grid - it overlays */
+.layout.detail-collapsed {
+    grid-template-columns: var(--sidebar-width) 1fr;
+}
+
+.layout.detail-collapsed .detail {
+    display: none;
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                            */
@@ -478,23 +485,22 @@ h3, h4 { font-weight: 600; }
 /* ------------------------------------------------------------------ */
 
 .detail {
-    position: fixed;
-    top: var(--header-height);
-    right: 0;
-    width: var(--detail-width);
-    height: calc(100vh - var(--header-height));
     background: var(--bg-surface);
     border-left: 1px solid var(--border);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    z-index: 100;
-    box-shadow: -4px 0 16px rgba(0,0,0,0.08);
-    transition: transform 0.2s ease;
 }
 
-.detail[hidden] {
-    display: none;
+.detail-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
 }
 
 .detail-header {
