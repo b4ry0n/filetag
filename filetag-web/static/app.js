@@ -8,6 +8,7 @@ const ICONS = {
     image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
     audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
     video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+    gotoDir: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4.5v7A1.5 1.5 0 002.5 13h11A1.5 1.5 0 0015 11.5V6a1.5 1.5 0 00-1.5-1.5H7L5.5 3H2.5A1.5 1.5 0 001 4.5z"/><polyline points="9 8 11 10 9 12"/><line x1="6" y1="10" x2="11" y2="10"/></svg>',
 };
 
 // ---------------------------------------------------------------------------
@@ -415,8 +416,11 @@ function renderGrid(items) {
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const checkmark = state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
+            const gotoDirBtn = state.mode === 'search'
+                ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
+                : '';
             html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)">
-                ${checkmark}<div class="card-preview">${preview}</div>
+                ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
         }
@@ -455,12 +459,15 @@ function renderList(items) {
             </div>`;
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
+            const gotoDirBtn = state.mode === 'search'
+                ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
+                : '';
             html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
                 <span class="date">${date}</span>
-                <span class="tags-count">${tags}</span>
+                <span class="tags-count">${tags}${gotoDirBtn}</span>
             </div>`;
         }
     }
@@ -757,6 +764,14 @@ function doClearSearch() {
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
     navigateTo(state.currentPath || '');
+}
+
+function navigateToParent(filePath) {
+    const parts = filePath.split('/');
+    const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+    document.getElementById('search-input').value = '';
+    document.getElementById('search-clear').hidden = true;
+    navigateTo(dir);
 }
 
 /// Quote a tag name for the query language if it contains special characters.
