@@ -200,19 +200,25 @@ h3, h4 { font-weight: 600; }
 .tag-group-label {
     display: flex;
     align-items: center;
-    gap: 6px;
     width: 100%;
-    padding: 6px 16px;
     font-size: 13px;
     font-weight: 600;
-    text-align: left;
     color: var(--text);
 }
 
 .tag-group-label:hover { background: var(--bg-hover); }
+.tag-group-label.active { background: var(--primary-light); color: var(--primary); }
 
-.tag-group-label .chevron {
+.tag-group-chevron {
+    flex-shrink: 0;
+    padding: 6px 4px 6px 16px;
+    color: var(--text-tertiary);
+    line-height: 1;
+}
+
+.tag-group-chevron .chevron {
     font-size: 10px;
+    display: inline-block;
     transition: transform 0.15s;
     width: 12px;
     text-align: center;
@@ -220,12 +226,25 @@ h3, h4 { font-weight: 600; }
 
 .tag-group-label.expanded .chevron { transform: rotate(90deg); }
 
-.tag-group-label .count {
+.tag-group-name {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    padding: 6px 16px 6px 2px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    color: inherit;
+}
+
+.tag-group-name .count {
     margin-left: auto;
     font-size: 11px;
     color: var(--text-tertiary);
     font-weight: 400;
 }
+
+.tag-group-label.active .tag-group-name .count { color: var(--primary); }
 
 .tag-group-items { display: none; }
 .tag-group-items.open { display: block; }
