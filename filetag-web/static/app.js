@@ -581,6 +581,23 @@ function renderDetail() {
     });
 }
 
+// Update only the tag chips in the detail panel, leaving the preview (video/audio/image) untouched.
+function renderDetailTagsOnly() {
+    if (!state.selectedFile) return;
+    const tagsEl = document.querySelector('#detail .detail-tags');
+    if (!tagsEl) return;
+    const f = state.selectedFile;
+    const tagChips = f.tags.length === 0
+        ? '<span class="no-tags">No tags assigned</span>'
+        : f.tags.map(t => {
+            const tagStr = formatTag(t);
+            const stateTag = state.tags.find(st => st.name === t.name);
+            const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${esc(f.path)}','${esc(tagStr)}')">&times;</button></span>`;
+        }).join('');
+    tagsEl.innerHTML = tagChips;
+}
+
 // ---------------------------------------------------------------------------
 // Render: DB info header
 // ---------------------------------------------------------------------------
@@ -665,13 +682,17 @@ async function doAddTag() {
     if (!tagStr) return;
     await addTagToFile(state.selectedFile.path, tagStr);
     input.value = '';
-    render();
-    document.getElementById('tag-input')?.focus();
+    renderTags();
+    renderContent();
+    renderDetailTagsOnly();
+    input.focus();
 }
 
 async function doRemoveTag(path, tagStr) {
     await removeTagFromFile(path, tagStr);
-    render();
+    renderTags();
+    renderContent();
+    renderDetailTagsOnly();
 }
 
 function setViewMode(mode) {
