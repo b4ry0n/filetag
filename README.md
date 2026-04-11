@@ -141,6 +141,23 @@ genre/rock and not live           # boolean
 (genre/rock or genre/metal) and year>=2020
 ```
 
+## Web interface
+
+`filetag-web` provides a browser-based file manager with tag sidebar, search, grid/list views, and file previews.
+
+```sh
+# Start in the current directory (must contain a .filetag database or a parent must)
+filetag-web
+
+# Specify a directory and port
+filetag-web ~/Music --port 8080
+
+# Bind to all interfaces (e.g. for LAN access)
+filetag-web --bind 0.0.0.0
+```
+
+Open `http://127.0.0.1:3000` (default) in your browser. The full query language works in the search bar.
+
 ## Data safety
 
 filetag never modifies, moves, or deletes your files. It only reads them to collect metadata and compute hashes. All tag data lives in `.filetag/db.sqlite3`. Nothing is written outside that directory: no caches, no temp files, no global state. The only exception is the optional global registry (`~/.config/filetag/databases.json`), which is created only when you explicitly run `filetag db register` or `filetag init --register`.
