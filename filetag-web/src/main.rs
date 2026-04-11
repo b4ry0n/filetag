@@ -157,6 +157,8 @@ struct ApiSearchEntry {
 struct FileListParams {
     #[serde(default)]
     path: String,
+    #[serde(default)]
+    show_hidden: bool,
 }
 
 #[derive(Deserialize)]
@@ -272,6 +274,9 @@ async fn api_files(
     for entry in rd.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if name == ".filetag" {
+            continue;
+        }
+        if !params.show_hidden && name.starts_with('.') {
             continue;
         }
 
