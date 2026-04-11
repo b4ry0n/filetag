@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::collections::HashSet;
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};

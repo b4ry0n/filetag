@@ -1,6 +1,7 @@
 pub mod db;
 pub mod query;
 pub mod registry;
+#[cfg(unix)]
 pub mod view;
 
 /// A list of (tag_name, optional_value) pairs.

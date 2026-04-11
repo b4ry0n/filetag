@@ -1,4 +1,6 @@
-use filetag_lib::{TagList, db, query, registry, view};
+#[cfg(unix)]
+use filetag_lib::view;
+use filetag_lib::{TagList, db, query, registry};
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
@@ -144,7 +146,8 @@ enum Command {
         all_dbs: bool,
     },
 
-    /// Generate a symlink view for a tag query
+    /// Generate a symlink view for a tag query (Unix only)
+    #[cfg(unix)]
     View {
         /// Tag query
         query: Vec<String>,
@@ -341,6 +344,7 @@ fn main() -> Result<()> {
             *all,
             *all_dbs,
         ),
+        #[cfg(unix)]
         Command::View { query, output } => cmd_view(&cli, query.clone(), output.clone()),
         Command::Status { path } => cmd_status(&cli, path.clone()),
         Command::Repair { path, dry_run } => cmd_repair(&cli, path.clone(), *dry_run),
@@ -870,6 +874,7 @@ fn make_display_path(abs: &std::path::Path, cwd: &std::path::Path) -> String {
     }
 }
 
+#[cfg(unix)]
 fn cmd_view(cli: &Cli, query_parts: Vec<String>, output: PathBuf) -> Result<()> {
     let (conn, root) = open_db(cli)?;
     let query_str = query_parts.join(" ");
