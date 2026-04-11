@@ -58,7 +58,11 @@ enum ColorWhen {
 #[derive(Subcommand)]
 enum Command {
     /// Initialize a new filetag database in the current directory
-    Init,
+    Init {
+        /// Also register in the global database registry
+        #[arg(long)]
+        register: bool,
+    },
 
     /// Add tags to files
     #[command(visible_alias = "t")]
@@ -230,22 +234,22 @@ enum DbAction {
     /// Remove registrations for missing databases
     Prune,
 
-    /// Push files and tags from parent DB to a child DB
+    /// Transfer tag records for files under a child path from parent DB to child DB
     Push {
         /// Path to the child database root
         path: PathBuf,
 
-        /// Only show what would be moved
+        /// Only show what would be transferred
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
 
-    /// Pull files and tags from a child DB back to the parent
+    /// Transfer tag records from a child DB back to the parent DB
     Pull {
         /// Path to the child database root
         path: PathBuf,
 
-        /// Only show what would be moved
+        /// Only show what would be transferred
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
@@ -312,7 +316,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Command::Init => cmd_init(&cli),
+        Command::Init { register } => cmd_init(&cli, *register),
         Command::Tag {
             files,
             tags,
@@ -504,12 +508,12 @@ fn make_progress(cli: &Cli, len: u64, msg: &str) -> ProgressBar {
 // Subcommand implementations
 // ---------------------------------------------------------------------------
 
-fn cmd_init(_cli: &Cli) -> Result<()> {
+fn cmd_init(cli: &Cli, register: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     db::init(&cwd)?;
-    // Auto-register in global registry
-    if let Err(e) = registry::add(&cwd) {
-        eprintln!("warning: could not register in global registry: {}", e);
+    if register {
+        registry::add(&cwd)?;
+        info!(cli, "Registered in global registry");
     }
     println!("Initialized filetag database in {}", cwd.display());
     Ok(())
@@ -1381,7 +1385,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                         if tag_count == 1 { "" } else { "s" }
                     );
                 }
-                info!(cli, "{} file(s) would be moved", files.len());
+                info!(cli, "{} record(s) would be transferred", files.len());
                 return Ok(());
             }
 
@@ -1397,7 +1401,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             let parent_tx = conn.unchecked_transaction()?;
             let child_tx = child_conn.unchecked_transaction()?;
 
-            let mut moved = 0u64;
+            let mut transferred = 0u64;
             let pb = make_progress(cli, files.len() as u64, "Pushing");
             let prefix_with_slash = format!("{}/", child_rel.trim_end_matches('/'));
             for f in &files {
@@ -1430,7 +1434,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
                 // Remove from parent
                 db::delete_file_by_path(&parent_tx, &f.rel_path)?;
-                moved += 1;
+                transferred += 1;
                 pb.inc(1);
             }
             pb.finish_and_clear();
@@ -1440,7 +1444,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
             info!(
                 cli,
-                "Moved {} file(s) to child database {}", moved, child_rel
+                "Transferred {} record(s) to child database {}", transferred, child_rel
             );
         }
         DbAction::Pull { path, dry_run } => {
@@ -1499,14 +1503,14 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                         if tag_count == 1 { "" } else { "s" }
                     );
                 }
-                info!(cli, "{} file(s) would be moved", files.len());
+                info!(cli, "{} record(s) would be transferred", files.len());
                 return Ok(());
             }
 
             let parent_tx = conn.unchecked_transaction()?;
             let child_tx = child_conn.unchecked_transaction()?;
 
-            let mut moved = 0u64;
+            let mut transferred = 0u64;
             let pb = make_progress(cli, files.len() as u64, "Pulling");
             let prefix_with_slash = format!("{}/", child_rel.trim_end_matches('/'));
             for f in &files {
@@ -1536,7 +1540,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
                 // Remove from child
                 db::delete_file_by_path(&child_tx, &f.rel_path)?;
-                moved += 1;
+                transferred += 1;
                 pb.inc(1);
             }
             pb.finish_and_clear();
@@ -1546,7 +1550,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
             info!(
                 cli,
-                "Pulled {} file(s) from child database {}", moved, child_rel
+                "Transferred {} record(s) from child database {}", transferred, child_rel
             );
         }
         DbAction::Register => {
