@@ -75,9 +75,12 @@ const state = {
     searchResults: [],
     selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
+    selectedPaths: new Set(), // multi-select: Set of paths
     info: null,
     detailOpen: true,
 };
+
+let _lastClickedPath = null; // for shift-range selection
 
 // ---------------------------------------------------------------------------
 // API
@@ -134,6 +137,8 @@ async function searchFiles(query) {
         state.mode = 'search';
         state.selectedFile = null;
     }
+    state.selectedPaths.clear();
+    _lastClickedPath = null;
 }
 
 async function loadFileDetail(path) {
@@ -402,8 +407,10 @@ function renderGrid(items) {
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
         } else {
-            html += `<div class="card${selected}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}')" ondblclick="selectFile('${esc(path)}')">
-                <div class="card-preview">${preview}</div>
+            const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
+            const checkmark = state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
+            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)">
+                ${checkmark}<div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
         }
@@ -441,7 +448,8 @@ function renderList(items) {
                 <span class="tags-count">${tags}</span>
             </div>`;
         } else {
-            html += `<div class="list-row${selected}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}')">
+            const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
+            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -505,6 +513,29 @@ function renderContent() {
 
 function renderDetail() {
     const panel = document.getElementById('detail');
+
+    // Multi-select bulk panel
+    if (state.selectedPaths.size > 1) {
+        const count = state.selectedPaths.size;
+        panel.innerHTML = `
+            <div class="detail-header">
+                <h3>${count} files selected</h3>
+                <button class="detail-close" onclick="clearSelection()" title="Clear selection">&times;</button>
+            </div>
+            <div class="bulk-tag-section">
+                <p class="bulk-hint">Add or remove a tag on all selected files.</p>
+                <div class="tag-add-form">
+                    <input type="text" id="bulk-tag-input" placeholder="Tag (e.g. genre/rock)">
+                    <button onclick="doBulkAddTag()">Add</button>
+                    <button class="btn-secondary" onclick="doBulkRemoveTag()">Remove</button>
+                </div>
+                <div id="bulk-status" class="bulk-status"></div>
+            </div>`;
+        document.getElementById('bulk-tag-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); doBulkAddTag(); }
+        });
+        return;
+    }
 
     if (!state.selectedFile && !state.selectedDir) {
         panel.innerHTML = '<div class="detail-empty">Select a file or folder to see details</div>';
@@ -628,6 +659,8 @@ function render() {
 async function navigateTo(path) {
     state.selectedFile = null;
     state.selectedDir = null;
+    state.selectedPaths.clear();
+    _lastClickedPath = null;
     await loadFiles(path);
     render();
 }
@@ -661,11 +694,50 @@ async function doTagSearch(tagName) {
     render();
 }
 
-async function selectFile(path) {
+async function selectFile(path, event) {
     const layout = document.querySelector('.layout');
-    // anchor to the element being clicked (in DOM before render)
     const anchor = saveScrollAnchor(path);
-    await loadFileDetail(path);
+
+    const isMulti = event && (event.ctrlKey || event.metaKey);
+    const isShift = event && event.shiftKey;
+
+    if (isMulti) {
+        // Toggle this path in the multi-select set
+        if (state.selectedPaths.has(path)) {
+            state.selectedPaths.delete(path);
+        } else {
+            state.selectedPaths.add(path);
+        }
+        _lastClickedPath = path;
+        // Keep selectedFile in sync with the most recently toggled file, or clear if set is empty
+        if (state.selectedPaths.size === 1) {
+            await loadFileDetail([...state.selectedPaths][0]);
+        } else if (state.selectedPaths.size === 0) {
+            state.selectedFile = null;
+            state.selectedDir = null;
+        } else {
+            // Multi: update state but don't reload preview
+            state.selectedDir = null;
+        }
+    } else if (isShift && _lastClickedPath) {
+        // Range-select between _lastClickedPath and path
+        const items = state.mode === 'search' ? state.searchResults : state.entries;
+        const paths = items.filter(e => !e.is_dir).map(e => state.mode === 'search' ? e.path : fullPath(e));
+        const a = paths.indexOf(_lastClickedPath);
+        const b = paths.indexOf(path);
+        if (a !== -1 && b !== -1) {
+            const [lo, hi] = a < b ? [a, b] : [b, a];
+            for (let i = lo; i <= hi; i++) state.selectedPaths.add(paths[i]);
+        }
+        state.selectedDir = null;
+    } else {
+        // Plain click: single select
+        state.selectedPaths.clear();
+        state.selectedPaths.add(path);
+        _lastClickedPath = path;
+        await loadFileDetail(path);
+    }
+
     if (!state.detailOpen) {
         state.detailOpen = true;
         layout.classList.remove('detail-collapsed');
@@ -693,6 +765,48 @@ async function doRemoveTag(path, tagStr) {
     renderTags();
     renderContent();
     renderDetailTagsOnly();
+}
+
+function clearSelection() {
+    state.selectedPaths.clear();
+    state.selectedFile = null;
+    state.selectedDir = null;
+    _lastClickedPath = null;
+    render();
+}
+
+async function doBulkAddTag() {
+    const input = document.getElementById('bulk-tag-input');
+    const tagStr = input.value.trim();
+    if (!tagStr) return;
+    const paths = [...state.selectedPaths];
+    const status = document.getElementById('bulk-status');
+    status.textContent = 'Adding...';
+    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr] })));
+    await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
+    input.value = '';
+    status.textContent = `Added "${tagStr}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    renderTags();
+    renderContent();
+    input.focus();
+}
+
+async function doBulkRemoveTag() {
+    const input = document.getElementById('bulk-tag-input');
+    const tagStr = input.value.trim();
+    if (!tagStr) return;
+    const paths = [...state.selectedPaths];
+    const status = document.getElementById('bulk-status');
+    status.textContent = 'Removing...';
+    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr] })));
+    await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
+    input.value = '';
+    status.textContent = `Removed "${tagStr}" from ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    renderTags();
+    renderContent();
+    input.focus();
 }
 
 function setViewMode(mode) {
@@ -801,7 +915,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') {
-            if (state.selectedFile) { closeDetail(); }
+            if (state.selectedPaths.size > 1) { clearSelection(); }
+            else if (state.selectedFile) { closeDetail(); }
             else if (state.mode === 'search') { doClearSearch(); }
         }
     });
