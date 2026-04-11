@@ -73,7 +73,7 @@ const state = {
     entries: [],
     searchQuery: '',
     searchResults: [],
-    selectedFile: null,  // { path, size, blake3, mtime, indexed_at, tags } | null
+    selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
     info: null,
     detailOpen: true,
@@ -198,6 +198,17 @@ function fullPath(entry) {
 // Render: Sidebar tags
 // ---------------------------------------------------------------------------
 
+const TAG_COLORS = [
+    '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
+    '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1',
+    '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e',
+];
+
+function colorDot(color) {
+    if (!color) return '';
+    return `<span class="tag-color-dot" style="background:${color}"></span>`;
+}
+
 function renderTags() {
     const el = document.getElementById('tag-list');
     if (!state.tags.length) {
@@ -214,7 +225,7 @@ function renderTags() {
             const prefix = tag.name.slice(0, slash);
             const suffix = tag.name.slice(slash + 1);
             if (!groups[prefix]) groups[prefix] = [];
-            groups[prefix].push({ suffix, fullName: tag.name, count: tag.count });
+            groups[prefix].push({ suffix, fullName: tag.name, count: tag.count, color: tag.color });
         } else {
             standalone.push(tag);
         }
@@ -237,8 +248,8 @@ function renderTags() {
         for (const item of items) {
             const q = quoteTag(item.fullName);
             const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-            html += `<button class="tag-item${active}" onclick="doTagSearch('${esc(item.fullName)}')">
-                ${esc(item.suffix)} <span class="count">${item.count}</span>
+            html += `<button class="tag-item${active}" onclick="doTagSearch('${esc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${esc(item.fullName)}')">
+                ${colorDot(item.color)}${esc(item.suffix)} <span class="count">${item.count}</span>
             </button>`;
         }
         html += '</div></div>';
@@ -248,12 +259,86 @@ function renderTags() {
     for (const tag of standalone.sort((a, b) => a.name.localeCompare(b.name))) {
         const q = quoteTag(tag.name);
         const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-        html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${esc(tag.name)}')">
-            ${esc(tag.name)} <span class="count">${tag.count}</span>
+        html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${esc(tag.name)}')" oncontextmenu="showTagMenu(event, '${esc(tag.name)}')">
+            ${colorDot(tag.color)}${esc(tag.name)} <span class="count">${tag.count}</span>
         </button>`;
     }
 
     el.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Tag context menu
+// ---------------------------------------------------------------------------
+
+function showTagMenu(e, tagName) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeTagMenu();
+
+    const tag = state.tags.find(t => t.name === tagName);
+    const currentColor = tag?.color || null;
+
+    let swatches = TAG_COLORS.map(c => {
+        const sel = c === currentColor ? ' selected' : '';
+        return `<button class="tag-menu-swatch${sel}" style="background:${c}" onclick="setTagColor('${esc(tagName)}','${c}')"></button>`;
+    }).join('');
+    // "no color" swatch
+    const noSel = !currentColor ? ' selected' : '';
+    swatches = `<button class="tag-menu-swatch tag-menu-swatch-none${noSel}" onclick="setTagColor('${esc(tagName)}', null)" title="No color">✕</button>` + swatches;
+
+    const menu = document.createElement('div');
+    menu.id = 'tag-context-menu';
+    menu.className = 'tag-context-menu';
+    menu.innerHTML = `
+        <div class="tag-menu-header">${esc(tagName)}</div>
+        <div class="tag-menu-section">
+            <div class="tag-menu-label">Color</div>
+            <div class="tag-menu-swatches">${swatches}</div>
+        </div>
+        <div class="tag-menu-divider"></div>
+        <button class="tag-menu-action tag-menu-delete" onclick="deleteTag('${esc(tagName)}')">Delete tag</button>
+    `;
+    document.body.appendChild(menu);
+
+    // Position near the click
+    const rect = menu.getBoundingClientRect();
+    let x = e.clientX;
+    let y = e.clientY;
+    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+
+    // Close on outside click (wait a tick so this click doesn't close it)
+    requestAnimationFrame(() => {
+        document.addEventListener('click', closeTagMenu, { once: true });
+    });
+}
+
+function closeTagMenu() {
+    const menu = document.getElementById('tag-context-menu');
+    if (menu) menu.remove();
+}
+
+async function setTagColor(tagName, color) {
+    closeTagMenu();
+    await apiPost('/api/tag-color', { name: tagName, color });
+    await loadTags();
+    render();
+}
+
+async function deleteTag(tagName) {
+    closeTagMenu();
+    const tag = state.tags.find(t => t.name === tagName);
+    const count = tag?.count || 0;
+    if (count > 0 && !confirm(`Delete tag "${tagName}"? It is applied to ${count} file(s).`)) {
+        return;
+    }
+    await apiPost('/api/delete-tag', { name: tagName });
+    await loadTags();
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    render();
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +548,9 @@ function renderDetail() {
         ? '<span class="no-tags">No tags assigned</span>'
         : f.tags.map(t => {
             const tagStr = formatTag(t);
-            return `<span class="tag-chip">${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${esc(f.path)}','${esc(tagStr)}')">&times;</button></span>`;
+            const stateTag = state.tags.find(st => st.name === t.name);
+            const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${esc(f.path)}','${esc(tagStr)}')">&times;</button></span>`;
         }).join('');
 
     panel.innerHTML = `
@@ -475,7 +562,6 @@ function renderDetail() {
         <div class="detail-meta">
             <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
             <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
-            <div class="detail-meta-row"><span class="detail-meta-label">BLAKE3</span><span class="detail-meta-value">${f.blake3 || '(not hashed)'}</span></div>
             ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}
         </div>
         <div class="detail-tags-section">
@@ -488,7 +574,10 @@ function renderDetail() {
         </div>`;
 
     document.getElementById('tag-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') doAddTag();
+        if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault();
+            doAddTag();
+        }
     });
 }
 
@@ -577,6 +666,7 @@ async function doAddTag() {
     await addTagToFile(state.selectedFile.path, tagStr);
     input.value = '';
     render();
+    document.getElementById('tag-input')?.focus();
 }
 
 async function doRemoveTag(path, tagStr) {

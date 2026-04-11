@@ -56,7 +56,7 @@ filetag/
 files (
     id         INTEGER PRIMARY KEY,
     path       TEXT UNIQUE,          -- relative to database root
-    blake3     TEXT,                 -- hex, NULL until first hash
+    file_id    TEXT,                 -- platform file identity (device:inode on Unix)
     size       INTEGER,
     mtime_ns   INTEGER,
     indexed_at TEXT                  -- ISO 8601
@@ -81,7 +81,7 @@ child_databases (
 )
 ```
 
-Schema version 2. Migration from v1 to v2 adds `child_databases`.
+Schema version 3. Migration from v1 to v2 adds `child_databases`. Migration from v2 to v3 adds `file_id` and removes `blake3` usage.
 
 ## Key design decisions
 
@@ -89,7 +89,7 @@ Schema version 2. Migration from v1 to v2 adds `child_databases`.
 
 **Relative paths.** All paths stored in the database are relative to the database root. This makes the database portable when the directory is moved or mounted elsewhere.
 
-**BLAKE3 content hashing.** Hashing is lazy: computed only on first tag, skipped on subsequent operations if `size` and `mtime_ns` are unchanged. Used by `repair` to find files that have been moved since they were indexed.
+**File identity tracking.** Files get a platform-specific identifier (`device:inode` on Unix, `None` on other platforms). Used by `repair` to detect files that have been moved or renamed. Falls back to filename+size matching as a heuristic.
 
 **Tags as flat strings with `/` as separator.** `genre/rock` is just a string; the slash is a naming convention. This keeps the schema simple while allowing `genre/*` glob queries to work naturally.
 

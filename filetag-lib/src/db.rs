@@ -5,7 +5,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 4;
 
 /// Open (or create) the database inside the given root directory.
 /// Creates `.filetag/db.sqlite3` under `root`.
@@ -63,17 +63,18 @@ fn migrate(conn: &Connection) -> Result<()> {
             "CREATE TABLE IF NOT EXISTS files (
                 id          INTEGER PRIMARY KEY,
                 path        TEXT NOT NULL,
-                blake3      TEXT,
+                file_id     TEXT,
                 size        INTEGER NOT NULL,
                 mtime_ns    INTEGER NOT NULL,
                 indexed_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path   ON files(path);
-            CREATE INDEX IF NOT EXISTS idx_files_blake3 ON files(blake3);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path    ON files(path);
+            CREATE INDEX IF NOT EXISTS idx_files_file_id ON files(file_id);
 
             CREATE TABLE IF NOT EXISTS tags (
                 id   INTEGER PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE
+                name TEXT NOT NULL UNIQUE,
+                color TEXT
             );
 
             CREATE TABLE IF NOT EXISTS file_tags (
@@ -94,6 +95,21 @@ fn migrate(conn: &Connection) -> Result<()> {
                 rel_path TEXT NOT NULL UNIQUE
             );",
         )?;
+    }
+
+    if version < 3 {
+        // Drop blake3, add file_id.  SQLite cannot DROP COLUMN on older versions,
+        // so we just add the new column and ignore the old one.
+        conn.execute_batch(
+            "ALTER TABLE files ADD COLUMN file_id TEXT;
+             CREATE INDEX IF NOT EXISTS idx_files_file_id ON files(file_id);",
+        ).ok(); // ignore "duplicate column" if fresh DB already has it
+    }
+
+    if version < 4 {
+        conn.execute_batch(
+            "ALTER TABLE tags ADD COLUMN color TEXT;",
+        ).ok(); // ignore if fresh DB already has it
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -123,12 +139,12 @@ pub struct FileRecord {
     pub id: i64,
     #[allow(dead_code)]
     pub path: String,
-    pub blake3: Option<String>,
+    pub file_id: Option<String>,
     pub size: i64,
     pub mtime_ns: i64,
 }
 
-/// Get or insert a file record. Hashes with BLAKE3 if the file is new or changed.
+/// Get or insert a file record. Updates metadata if the file has changed.
 pub fn get_or_index_file(conn: &Connection, rel_path: &str, root: &Path) -> Result<FileRecord> {
     let abs = root.join(rel_path);
     let meta = std::fs::metadata(&abs)
@@ -142,15 +158,16 @@ pub fn get_or_index_file(conn: &Connection, rel_path: &str, root: &Path) -> Resu
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0)
     };
+    let fid = get_file_id(&meta);
 
     // Check for existing record
     let existing: Option<FileRecord> = conn
-        .prepare_cached("SELECT id, path, blake3, size, mtime_ns FROM files WHERE path = ?1")?
+        .prepare_cached("SELECT id, path, file_id, size, mtime_ns FROM files WHERE path = ?1")?
         .query_row(params![rel_path], |row| {
             Ok(FileRecord {
                 id: row.get(0)?,
                 path: row.get(1)?,
-                blake3: row.get(2)?,
+                file_id: row.get(2)?,
                 size: row.get(3)?,
                 mtime_ns: row.get(4)?,
             })
@@ -158,53 +175,53 @@ pub fn get_or_index_file(conn: &Connection, rel_path: &str, root: &Path) -> Resu
         .ok();
 
     if let Some(rec) = existing {
-        if rec.size == size && rec.mtime_ns == mtime_ns && rec.blake3.is_some() {
-            return Ok(rec);
+        // Update metadata if changed (size, mtime, or file_id)
+        if rec.size != size || rec.mtime_ns != mtime_ns || rec.file_id != fid {
+            conn.execute(
+                "UPDATE files SET file_id = ?1, size = ?2, mtime_ns = ?3, indexed_at = datetime('now') WHERE id = ?4",
+                params![fid, size, mtime_ns, rec.id],
+            )?;
+            return Ok(FileRecord {
+                file_id: fid,
+                size,
+                mtime_ns,
+                ..rec
+            });
         }
-        // Changed: rehash
-        let hash = hash_file(&abs)?;
-        conn.execute(
-            "UPDATE files SET blake3 = ?1, size = ?2, mtime_ns = ?3, indexed_at = datetime('now') WHERE id = ?4",
-            params![hash, size, mtime_ns, rec.id],
-        )?;
-        return Ok(FileRecord {
-            blake3: Some(hash),
-            size,
-            mtime_ns,
-            ..rec
-        });
+        return Ok(rec);
     }
 
     // New file
-    let hash = hash_file(&abs)?;
     conn.execute(
-        "INSERT INTO files (path, blake3, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
-        params![rel_path, hash, size, mtime_ns],
+        "INSERT INTO files (path, file_id, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
+        params![rel_path, fid, size, mtime_ns],
     )?;
     let id = conn.last_insert_rowid();
     Ok(FileRecord {
         id,
         path: rel_path.to_string(),
-        blake3: Some(hash),
+        file_id: fid,
         size,
         mtime_ns,
     })
 }
 
-fn hash_file(path: &Path) -> Result<String> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("opening {} for hashing", path.display()))?;
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = [0u8; 65536];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher.finalize().to_hex().to_string())
+/// Platform-specific persistent file identifier (device:inode on Unix).
+#[cfg(unix)]
+fn get_file_id(meta: &std::fs::Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    Some(format!("{}:{}", meta.dev(), meta.ino()))
+}
+
+#[cfg(windows)]
+fn get_file_id(_meta: &std::fs::Metadata) -> Option<String> {
+    // Windows file IDs require opening a handle; not yet implemented.
+    None
+}
+
+#[cfg(not(any(unix, windows)))]
+fn get_file_id(_meta: &std::fs::Metadata) -> Option<String> {
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -275,16 +292,16 @@ pub fn tags_for_file(conn: &Connection, file_id: i64) -> Result<Vec<(String, Opt
 }
 
 /// List all known tags (with usage count).
-pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64)>> {
+pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64, Option<String>)>> {
     let mut stmt = conn.prepare(
-        "SELECT t.name, COUNT(ft.file_id)
+        "SELECT t.name, COUNT(ft.file_id), t.color
          FROM tags t
          LEFT JOIN file_tags ft ON ft.tag_id = t.id
          GROUP BY t.id
          ORDER BY t.name",
     )?;
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?))
     })?;
     let mut result = Vec::new();
     for row in rows {
@@ -293,15 +310,39 @@ pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64)>> {
     Ok(result)
 }
 
+/// Set or clear the color for a tag.
+pub fn set_tag_color(conn: &Connection, name: &str, color: Option<&str>) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE tags SET color = ?1 WHERE name = ?2",
+        params![color, name],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Delete a tag entirely: removes all file_tags rows and the tag itself.
+pub fn delete_tag(conn: &Connection, name: &str) -> Result<bool> {
+    let tag_id: Option<i64> = conn
+        .prepare_cached("SELECT id FROM tags WHERE name = ?1")?
+        .query_row(params![name], |r| r.get(0))
+        .ok();
+    if let Some(id) = tag_id {
+        conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![id])?;
+        conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Look up a file record by relative path.
 pub fn file_by_path(conn: &Connection, rel_path: &str) -> Result<Option<FileRecord>> {
     let rec = conn
-        .prepare_cached("SELECT id, path, blake3, size, mtime_ns FROM files WHERE path = ?1")?
+        .prepare_cached("SELECT id, path, file_id, size, mtime_ns FROM files WHERE path = ?1")?
         .query_row(params![rel_path], |row| {
             Ok(FileRecord {
                 id: row.get(0)?,
                 path: row.get(1)?,
-                blake3: row.get(2)?,
+                file_id: row.get(2)?,
                 size: row.get(3)?,
                 mtime_ns: row.get(4)?,
             })
@@ -346,7 +387,7 @@ pub fn list_children(conn: &Connection) -> Result<Vec<String>> {
 /// A file record with all its tags, used for transferring between databases.
 pub struct FileWithTags {
     pub rel_path: String,
-    pub blake3: Option<String>,
+    pub file_id: Option<String>,
     pub size: i64,
     pub mtime_ns: i64,
     /// (tag_name, value) pairs
@@ -357,7 +398,7 @@ pub struct FileWithTags {
 pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWithTags>> {
     let pattern = format!("{}/%", prefix.trim_end_matches('/'));
     let mut stmt = conn.prepare(
-        "SELECT f.id, f.path, f.blake3, f.size, f.mtime_ns
+        "SELECT f.id, f.path, f.file_id, f.size, f.mtime_ns
          FROM files f
          WHERE f.path LIKE ?1",
     )?;
@@ -378,7 +419,7 @@ pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWit
         ))
     })?;
     for row in rows {
-        let (id, path, blake3, size, mtime_ns) = row?;
+        let (id, path, file_id, size, mtime_ns) = row?;
         let tags: Vec<(String, String)> = tag_stmt
             .query_map(params![id], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -387,7 +428,7 @@ pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWit
             .collect();
         results.push(FileWithTags {
             rel_path: path,
-            blake3,
+            file_id,
             size,
             mtime_ns,
             tags,
@@ -405,7 +446,7 @@ pub fn delete_file_by_path(conn: &Connection, rel_path: &str) -> Result<bool> {
 /// Get all files with their tags from the database.
 pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
     let mut stmt =
-        conn.prepare("SELECT f.id, f.path, f.blake3, f.size, f.mtime_ns FROM files f")?;
+        conn.prepare("SELECT f.id, f.path, f.file_id, f.size, f.mtime_ns FROM files f")?;
     let mut tag_stmt = conn.prepare(
         "SELECT t.name, ft.value
          FROM file_tags ft
@@ -423,7 +464,7 @@ pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
         ))
     })?;
     for row in rows {
-        let (id, path, blake3, size, mtime_ns) = row?;
+        let (id, path, file_id, size, mtime_ns) = row?;
         let tags: Vec<(String, String)> = tag_stmt
             .query_map(params![id], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -432,7 +473,7 @@ pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
             .collect();
         results.push(FileWithTags {
             rel_path: path,
-            blake3,
+            file_id,
             size,
             mtime_ns,
             tags,

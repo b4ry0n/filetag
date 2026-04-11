@@ -1,20 +1,19 @@
 # filetag
 
-SQLite-backed file tagging CLI with content hashing and symlink views.
+SQLite-backed file tagging CLI with symlink views.
 
 Tag any file with arbitrary tags (including `key=value` pairs), query them with boolean expressions, and generate symlink views of the results.
 
 ## Features
 
 - Per-directory SQLite database (`.filetag/db.sqlite3`), portable relative paths
-- BLAKE3 content hashing for file identity (lazy: only hashes on first tag)
 - Boolean query language with `and`, `or`, `not`, glob patterns (`genre/*`), and value comparisons (`year>=2020`)
 - Symlink-based views for integration with other tools
 - JSON Lines output (`--json`) for composability with `jq` and scripts
 - Stdin support: pipe file paths from `fd`, `find`, or other queries
 - NUL-delimited I/O (`-0`) for safe handling of paths with special characters
-- Detects missing, modified, and untagged files
-- Repairs moved files by matching BLAKE3 hashes
+- Detects missing and untagged files
+- Repairs moved files by matching file identity (inode) or name+size
 - Tag renaming (`mv`) and merging (`merge`)
 - Hierarchical child databases with push/pull transfer
 - Cross-database queries (`--all`) across child databases
@@ -69,7 +68,7 @@ filetag view genre/rock -o ~/Views/rock
 # Check for missing/modified/untagged files
 filetag status
 
-# Find moved files by content hash
+# Find moved files by file identity or name+size
 filetag repair
 filetag repair --dry-run
 
@@ -166,11 +165,11 @@ To completely remove filetag from a directory tree, delete the `.filetag/` folde
 
 ## How it works
 
-The database lives in `.filetag/db.sqlite3` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's BLAKE3 hash, size, and mtime are stored. Subsequent operations skip rehashing if size and mtime are unchanged.
+The database lives in `.filetag/db.sqlite3` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's size, mtime, and a platform-specific file identifier (device:inode on Unix) are stored.
 
 The `view` command creates a directory of relative symlinks pointing back to the original files, letting you browse query results in any file manager.
 
-The `repair` command scans for files whose paths no longer exist and tries to find them at new locations by matching their BLAKE3 hash.
+The `repair` command scans for files whose paths no longer exist and tries to find them at new locations by matching their file identity (strong match) or filename+size (heuristic match).
 
 ### Child databases
 
