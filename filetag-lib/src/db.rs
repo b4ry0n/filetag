@@ -493,3 +493,86 @@ pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<Open
 
     Ok(result)
 }
+
+// ---------------------------------------------------------------------------
+// Directory listing (for web interface)
+// ---------------------------------------------------------------------------
+
+/// An entry in a directory listing (file or subdirectory).
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: i64,
+    pub mtime_ns: i64,
+    pub file_count: i64,
+    pub tag_count: i64,
+}
+
+/// List files and subdirectories at a given path level in the database.
+/// Directories are synthesised from file paths. Directories come first, then
+/// files, both sorted alphabetically.
+pub fn list_directory(conn: &Connection, prefix: &str) -> Result<Vec<DirEntry>> {
+    use std::collections::HashMap;
+
+    let prefix_with_slash = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", prefix.trim_end_matches('/'))
+    };
+    let pattern = format!("{}%", prefix_with_slash);
+    let prefix_len = prefix_with_slash.len();
+
+    let mut stmt = conn.prepare(
+        "SELECT f.path, f.size, f.mtime_ns,
+                (SELECT COUNT(*) FROM file_tags WHERE file_id = f.id)
+         FROM files f WHERE f.path LIKE ?1 ORDER BY f.path",
+    )?;
+
+    let mut files = Vec::new();
+    let mut subdirs: HashMap<String, i64> = HashMap::new();
+
+    let rows = stmt.query_map(params![pattern], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (path, size, mtime_ns, tag_count) = row?;
+        let relative = &path[prefix_len..];
+        if let Some(slash_pos) = relative.find('/') {
+            let dir_name = &relative[..slash_pos];
+            *subdirs.entry(dir_name.to_string()).or_insert(0) += 1;
+        } else {
+            files.push(DirEntry {
+                name: relative.to_string(),
+                is_dir: false,
+                size,
+                mtime_ns,
+                file_count: 0,
+                tag_count,
+            });
+        }
+    }
+
+    let mut entries: Vec<DirEntry> = subdirs
+        .into_iter()
+        .map(|(name, count)| DirEntry {
+            name,
+            is_dir: true,
+            size: 0,
+            mtime_ns: 0,
+            file_count: count,
+            tag_count: 0,
+        })
+        .collect();
+
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.extend(files);
+
+    Ok(entries)
+}
