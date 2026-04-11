@@ -69,6 +69,7 @@ const state = {
     mode: 'browse', // browse | search
     currentPath: '',
     viewMode: 'grid',
+    showHidden: false,
     tags: [],
     entries: [],
     searchQuery: '',
@@ -117,7 +118,8 @@ async function loadTags() {
 }
 
 async function loadFiles(path) {
-    const data = await api('/api/files?path=' + encodeURIComponent(path));
+    const url = '/api/files?path=' + encodeURIComponent(path) + (state.showHidden ? '&show_hidden=true' : '');
+    const data = await api(url);
     state.currentPath = data.path;
     state.entries = data.entries;
     state.mode = 'browse';
@@ -807,6 +809,15 @@ async function doBulkRemoveTag() {
     renderTags();
     renderContent();
     input.focus();
+}
+
+async function toggleShowHidden() {
+    state.showHidden = !state.showHidden;
+    document.getElementById('hidden-toggle').classList.toggle('active', state.showHidden);
+    if (state.mode === 'browse') {
+        await loadFiles(state.currentPath);
+        renderContent();
+    }
 }
 
 function setViewMode(mode) {
