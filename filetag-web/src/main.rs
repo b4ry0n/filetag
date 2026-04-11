@@ -101,6 +101,8 @@ struct ApiInfo {
 struct ApiTag {
     name: String,
     count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -127,7 +129,7 @@ struct ApiDirEntry {
 struct ApiFileDetail {
     path: String,
     size: i64,
-    blake3: Option<String>,
+    file_id: Option<String>,
     mtime: i64,
     indexed_at: String,
     tags: Vec<ApiFileTag>,
@@ -245,7 +247,7 @@ async fn api_tags(
     let tags = db::all_tags(&conn).map_err(AppError)?;
     Ok(Json(
         tags.into_iter()
-            .map(|(name, count)| ApiTag { name, count })
+            .map(|(name, count, color)| ApiTag { name, count, color })
             .collect(),
     ))
 }
@@ -376,7 +378,7 @@ async fn api_file_detail(
         Ok(Json(ApiFileDetail {
             path: params.path,
             size: record.size,
-            blake3: record.blake3,
+            file_id: record.file_id,
             mtime: record.mtime_ns,
             indexed_at,
             tags: tags
@@ -400,7 +402,7 @@ async fn api_file_detail(
         Ok(Json(ApiFileDetail {
             path: params.path,
             size,
-            blake3: None,
+            file_id: None,
             mtime,
             indexed_at: String::new(),
             tags: vec![],
@@ -464,6 +466,39 @@ fn parse_tag(s: &str) -> (String, Option<String>) {
     }
 }
 
+// --- Tag color ---
+
+#[derive(Deserialize)]
+struct TagColorRequest {
+    name: String,
+    color: Option<String>,
+}
+
+async fn api_tag_color(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TagColorRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let conn = open_conn(&state)?;
+    let ok = db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": ok })))
+}
+
+// --- Delete tag ---
+
+#[derive(Deserialize)]
+struct DeleteTagRequest {
+    name: String,
+}
+
+async fn api_delete_tag(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DeleteTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let conn = open_conn(&state)?;
+    let deleted = db::delete_tag(&conn, &body.name).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -498,6 +533,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/file", get(api_file_detail))
         .route("/api/tag", post(api_tag))
         .route("/api/untag", post(api_untag))
+        .route("/api/tag-color", post(api_tag_color))
+        .route("/api/delete-tag", post(api_delete_tag))
         .nest_service("/preview", ServeDir::new(&root))
         .with_state(state);
 

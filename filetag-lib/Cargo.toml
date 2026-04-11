@@ -4,11 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core library for filetag: SQLite-backed file tagging with content hashing"
+description = "Core library for filetag: SQLite-backed file tagging"
 
 [dependencies]
 anyhow.workspace = true
-blake3.workspace = true
 dirs = "6"
 rusqlite.workspace = true
 serde.workspace = true

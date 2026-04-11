@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SQLite-backed file tagging CLI with content hashing and symlink views"
+description = "SQLite-backed file tagging CLI with symlink views"
 readme = "../README.md"
 keywords = ["tagging", "files", "sqlite", "cli"]
 categories = ["command-line-utilities", "filesystem"]
@@ -12,7 +12,6 @@ categories = ["command-line-utilities", "filesystem"]
 [dependencies]
 filetag-lib = { path = "../filetag-lib" }
 anyhow.workspace = true
-blake3.workspace = true
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 indicatif = "0.17"

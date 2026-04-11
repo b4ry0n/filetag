@@ -160,7 +160,7 @@ enum Command {
         path: Option<PathBuf>,
     },
 
-    /// Find moved files by matching BLAKE3 content hashes
+    /// Find moved files by matching file identity or name+size
     Repair {
         /// Directory to scan (default: database root)
         path: Option<PathBuf>,
@@ -288,7 +288,7 @@ struct JsonFileTags {
 struct JsonShowFile {
     path: String,
     size: i64,
-    blake3: Option<String>,
+    file_id: Option<String>,
     mtime: i64,
     indexed_at: String,
     tags: Vec<JsonTag>,
@@ -613,7 +613,7 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<
                 if let Ok(c) = rusqlite::Connection::open(&db_path)
                     && let Ok(tags) = db::all_tags(&c)
                 {
-                    for (name, count) in tags {
+                    for (name, count, _color) in tags {
                         *merged_tags.entry(name).or_insert(0) += count;
                     }
                 }
@@ -622,14 +622,14 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<
             let databases = db::collect_all_databases(conn, root)?;
             for db in &databases {
                 if let Ok(tags) = db::all_tags(&db.conn) {
-                    for (name, count) in tags {
+                    for (name, count, _color) in tags {
                         *merged_tags.entry(name).or_insert(0) += count;
                     }
                 }
             }
         } else {
             let tags = db::all_tags(&conn)?;
-            for (name, count) in tags {
+            for (name, count, _color) in tags {
                 merged_tags.insert(name, count);
             }
         }
@@ -706,7 +706,7 @@ fn cmd_show(cli: &Cli, file: PathBuf) -> Result<()> {
         let j = JsonShowFile {
             path: rel,
             size: record.size,
-            blake3: record.blake3.clone(),
+            file_id: record.file_id.clone(),
             mtime: record.mtime_ns,
             indexed_at,
             tags: tags
@@ -721,10 +721,6 @@ fn cmd_show(cli: &Cli, file: PathBuf) -> Result<()> {
     } else {
         println!("Path:    {}", rel);
         println!("Size:    {}", format_size(record.size));
-        println!(
-            "BLAKE3:  {}",
-            record.blake3.as_deref().unwrap_or("(not hashed)")
-        );
         println!("Indexed: {}", indexed_at);
         let tag_strs: Vec<String> = tags.iter().map(|(n, v)| format_tag(n, v)).collect();
         println!(
@@ -981,22 +977,24 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
         None => root.clone(),
     };
 
+    // Step 1: Find all files that are missing from disk
     let mut stmt =
-        conn.prepare("SELECT id, path, blake3 FROM files WHERE blake3 IS NOT NULL ORDER BY path")?;
+        conn.prepare("SELECT id, path, file_id, size FROM files ORDER BY path")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
 
-    let mut missing_files: Vec<(i64, String, String)> = Vec::new();
+    let mut missing_files: Vec<(i64, String, Option<String>, i64)> = Vec::new();
     for row in rows {
-        let (id, path, hash) = row?;
+        let (id, path, file_id, size) = row?;
         let abs = root.join(&path);
         if !abs.exists() {
-            missing_files.push((id, path, hash));
+            missing_files.push((id, path, file_id, size));
         }
     }
 
@@ -1011,15 +1009,29 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
         missing_files.len()
     );
 
-    let mut hash_to_missing: std::collections::HashMap<String, Vec<(i64, String)>> =
+    // Step 2: Build lookup maps
+    // file_id -> (db_id, old_path)  [strong match]
+    let mut fid_to_missing: std::collections::HashMap<String, Vec<(i64, String)>> =
         std::collections::HashMap::new();
-    for (id, path, hash) in &missing_files {
-        hash_to_missing
-            .entry(hash.clone())
+    // (filename, size) -> (db_id, old_path)  [weak match / candidate]
+    let mut name_size_to_missing: std::collections::HashMap<(String, i64), Vec<(i64, String)>> =
+        std::collections::HashMap::new();
+
+    for (id, path, file_id, size) in &missing_files {
+        if let Some(fid) = file_id {
+            fid_to_missing
+                .entry(fid.clone())
+                .or_default()
+                .push((*id, path.clone()));
+        }
+        let filename = path.rsplit('/').next().unwrap_or(path).to_string();
+        name_size_to_missing
+            .entry((filename, *size))
             .or_default()
             .push((*id, path.clone()));
     }
 
+    // Step 3: Walk search_dir, match against missing files
     let mut repaired = 0;
     let pb = if !cli.quiet && io::stderr().is_terminal() {
         let pb = ProgressBar::new_spinner();
@@ -1052,49 +1064,60 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
             Err(_) => continue,
         };
 
+        // Skip files already in the database
         if db::file_by_path(&conn, &rel_path)?.is_some() {
             continue;
         }
 
-        let hash = {
-            use std::io::Read;
-            let mut file = match std::fs::File::open(entry.path()) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            let mut hasher = blake3::Hasher::new();
-            let mut buf = [0u8; 65536];
-            loop {
-                let n = match file.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
-                hasher.update(&buf[..n]);
-            }
-            hasher.finalize().to_hex().to_string()
+        let meta = match std::fs::metadata(entry.path()) {
+            Ok(m) => m,
+            Err(_) => continue,
         };
 
-        if let Some(entries) = hash_to_missing.get(&hash)
+        // Try file_id match first (strong: same inode = same file, moved)
+        #[cfg(unix)]
+        let candidate_fid = {
+            use std::os::unix::fs::MetadataExt;
+            Some(format!("{}:{}", meta.dev(), meta.ino()))
+        };
+        #[cfg(not(unix))]
+        let candidate_fid: Option<String> = None;
+
+        let matched = if let Some(ref fid) = candidate_fid
+            && let Some(entries) = fid_to_missing.get(fid)
             && let Some((id, old_path)) = entries.first()
         {
-            if dry_run {
-                println!("would repair: {} -> {}", old_path, rel_path);
+            Some((*id, old_path.clone(), "file_id"))
+        } else {
+            // Fallback: match on (filename, size)
+            let filename = rel_path.rsplit('/').next().unwrap_or(&rel_path).to_string();
+            let size = meta.len() as i64;
+            if let Some(entries) = name_size_to_missing.get(&(filename, size))
+                && let Some((id, old_path)) = entries.first()
+            {
+                Some((*id, old_path.clone(), "name+size"))
             } else {
-                let meta = std::fs::metadata(entry.path())?;
-                let size = meta.len() as i64;
-                let mtime = meta
-                    .modified()
-                    .ok()
-                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos() as i64)
-                    .unwrap_or(0);
+                None
+            }
+        };
 
+        if let Some((id, old_path, method)) = matched {
+            let size = meta.len() as i64;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+
+            if dry_run {
+                println!("would repair: {} -> {} (matched by {})", old_path, rel_path, method);
+            } else {
                 conn.execute(
-                    "UPDATE files SET path = ?1, size = ?2, mtime_ns = ?3, indexed_at = datetime('now') WHERE id = ?4",
-                    rusqlite::params![rel_path, size, mtime, id],
+                    "UPDATE files SET path = ?1, file_id = ?2, size = ?3, mtime_ns = ?4, indexed_at = datetime('now') WHERE id = ?5",
+                    rusqlite::params![rel_path, candidate_fid, size, mtime, id],
                 )?;
-                println!("repaired: {} -> {}", old_path, rel_path);
+                println!("repaired: {} -> {} (matched by {})", old_path, rel_path, method);
             }
             repaired += 1;
         }
@@ -1407,8 +1430,8 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
                 // Insert file record into child DB
                 child_conn.execute(
-                    "INSERT OR IGNORE INTO files (path, blake3, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![child_path, f.blake3, f.size, f.mtime_ns],
+                    "INSERT OR IGNORE INTO files (path, file_id, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![child_path, f.file_id, f.size, f.mtime_ns],
                 )?;
                 let child_file_id: i64 = child_conn.query_row(
                     "SELECT id FROM files WHERE path = ?1",
@@ -1513,8 +1536,8 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
                 // Insert file record into parent DB
                 parent_tx.execute(
-                    "INSERT OR IGNORE INTO files (path, blake3, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![parent_path, f.blake3, f.size, f.mtime_ns],
+                    "INSERT OR IGNORE INTO files (path, file_id, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![parent_path, f.file_id, f.size, f.mtime_ns],
                 )?;
                 let parent_file_id: i64 = parent_tx.query_row(
                     "SELECT id FROM files WHERE path = ?1",
