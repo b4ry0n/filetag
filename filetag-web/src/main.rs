@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -73,6 +73,15 @@ fn open_conn(state: &AppState) -> anyhow::Result<Connection> {
          PRAGMA busy_timeout = 5000;",
     )?;
     Ok(conn)
+}
+
+/// Resolve a relative path under `root`, rejecting directory traversal.
+fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
+    let joined = root.join(rel);
+    let canonical = std::fs::canonicalize(&joined)
+        .with_context(|| format!("resolving {}", joined.display()))?;
+    anyhow::ensure!(canonical.starts_with(root), "path escapes database root");
+    Ok(canonical)
 }
 
 // ---------------------------------------------------------------------------
@@ -245,35 +254,85 @@ async fn api_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileListParams>,
 ) -> Result<Json<ApiDirListing>, AppError> {
+    let dir = if params.path.is_empty() {
+        state.root.clone()
+    } else {
+        safe_path(&state.root, &params.path)?
+    };
+
+    let prefix = if params.path.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", params.path.trim_end_matches('/'))
+    };
+
     let conn = open_conn(&state)?;
-    let entries = db::list_directory(&conn, &params.path).map_err(AppError)?;
+    let mut tag_stmt = conn.prepare_cached(
+        "SELECT COUNT(*) FROM file_tags ft \
+         JOIN files f ON f.id = ft.file_id WHERE f.path = ?1",
+    )?;
+
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+
+    let rd = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading directory {}", dir.display()))?;
+
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == ".filetag" {
+            continue;
+        }
+
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if meta.is_dir() {
+            let child_count = std::fs::read_dir(entry.path())
+                .map(|rd| rd.flatten().count() as i64)
+                .unwrap_or(0);
+            dirs.push(ApiDirEntry {
+                name,
+                is_dir: true,
+                size: None,
+                mtime: None,
+                file_count: Some(child_count),
+                tag_count: None,
+            });
+        } else if meta.is_file() {
+            let rel_path = format!("{}{}", prefix, name);
+            let size = meta.len() as i64;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+
+            let tag_count: i64 = tag_stmt
+                .query_row(rusqlite::params![&rel_path], |r| r.get(0))
+                .unwrap_or(0);
+
+            files.push(ApiDirEntry {
+                name,
+                is_dir: false,
+                size: Some(size),
+                mtime: Some(mtime),
+                file_count: None,
+                tag_count: Some(tag_count),
+            });
+        }
+    }
+
+    dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    dirs.extend(files);
 
     Ok(Json(ApiDirListing {
         path: params.path,
-        entries: entries
-            .into_iter()
-            .map(|e| {
-                if e.is_dir {
-                    ApiDirEntry {
-                        name: e.name,
-                        is_dir: true,
-                        size: None,
-                        mtime: None,
-                        file_count: Some(e.file_count),
-                        tag_count: None,
-                    }
-                } else {
-                    ApiDirEntry {
-                        name: e.name,
-                        is_dir: false,
-                        size: Some(e.size),
-                        mtime: Some(e.mtime_ns),
-                        file_count: None,
-                        tag_count: Some(e.tag_count),
-                    }
-                }
-            })
-            .collect(),
+        entries: dirs,
     }))
 }
 
@@ -305,38 +364,59 @@ async fn api_file_detail(
     Query(params): Query<FileDetailParams>,
 ) -> Result<Json<ApiFileDetail>, AppError> {
     let conn = open_conn(&state)?;
-    let record = db::file_by_path(&conn, &params.path)
-        .map_err(AppError)?
-        .ok_or_else(|| AppError(anyhow::anyhow!("file not found: {}", params.path)))?;
-    let tags = db::tags_for_file(&conn, record.id).map_err(AppError)?;
 
-    let indexed_at: String = conn.query_row(
-        "SELECT indexed_at FROM files WHERE id = ?1",
-        rusqlite::params![record.id],
-        |r| r.get(0),
-    )?;
+    if let Some(record) = db::file_by_path(&conn, &params.path).map_err(AppError)? {
+        let tags = db::tags_for_file(&conn, record.id).map_err(AppError)?;
+        let indexed_at: String = conn.query_row(
+            "SELECT indexed_at FROM files WHERE id = ?1",
+            rusqlite::params![record.id],
+            |r| r.get(0),
+        )?;
 
-    Ok(Json(ApiFileDetail {
-        path: params.path,
-        size: record.size,
-        blake3: record.blake3,
-        mtime: record.mtime_ns,
-        indexed_at,
-        tags: tags
-            .into_iter()
-            .map(|(name, value)| ApiFileTag { name, value })
-            .collect(),
-    }))
+        Ok(Json(ApiFileDetail {
+            path: params.path,
+            size: record.size,
+            blake3: record.blake3,
+            mtime: record.mtime_ns,
+            indexed_at,
+            tags: tags
+                .into_iter()
+                .map(|(name, value)| ApiFileTag { name, value })
+                .collect(),
+        }))
+    } else {
+        // File not yet indexed: return filesystem metadata
+        let abs = safe_path(&state.root, &params.path)?;
+        let meta = std::fs::metadata(&abs)
+            .with_context(|| format!("reading {}", abs.display()))?;
+        let size = meta.len() as i64;
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        Ok(Json(ApiFileDetail {
+            path: params.path,
+            size,
+            blake3: None,
+            mtime,
+            indexed_at: String::new(),
+            tags: vec![],
+        }))
+    }
 }
 
 async fn api_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    safe_path(&state.root, &body.path)?;
     let conn = open_conn(&state)?;
-    let record = db::file_by_path(&conn, &body.path)
-        .map_err(AppError)?
-        .ok_or_else(|| AppError(anyhow::anyhow!("file not found: {}", body.path)))?;
+    // Auto-index the file if not yet in the database
+    let record =
+        db::get_or_index_file(&conn, &body.path, &state.root).map_err(AppError)?;
 
     let mut added = 0i64;
     for tag_str in &body.tags {
