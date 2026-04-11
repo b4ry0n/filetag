@@ -136,12 +136,14 @@ async function addTagToFile(path, tagStr) {
     await apiPost('/api/tag', { path, tags: [tagStr] });
     await loadFileDetail(path);
     await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
 }
 
 async function removeTagFromFile(path, tagStr) {
     await apiPost('/api/untag', { path, tags: [tagStr] });
     await loadFileDetail(path);
     await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +410,7 @@ function renderDetail() {
         <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
         <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
         <div class="detail-meta-row"><span class="detail-meta-label">BLAKE3</span><span class="detail-meta-value">${f.blake3 || '(not hashed)'}</span></div>
-        <div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>
+        ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}
     `;
 
     // Tags
