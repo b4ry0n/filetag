@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::{
+    Router,
     extract::{Query, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
-    Router,
 };
 use clap::Parser;
 use filetag_lib::{db, query};
@@ -65,8 +65,7 @@ impl From<rusqlite::Error> for AppError {
 }
 
 fn open_conn(state: &AppState) -> anyhow::Result<Connection> {
-    let conn =
-        Connection::open(&state.db_path).context("opening database")?;
+    let conn = Connection::open(&state.db_path).context("opening database")?;
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA foreign_keys = ON;
@@ -215,21 +214,13 @@ async fn favicon() -> impl IntoResponse {
 // API handlers
 // ---------------------------------------------------------------------------
 
-async fn api_info(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<ApiInfo>, AppError> {
+async fn api_info(State(state): State<Arc<AppState>>) -> Result<Json<ApiInfo>, AppError> {
     let conn = open_conn(&state)?;
-    let files: i64 =
-        conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
-    let tags: i64 =
-        conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))?;
-    let assignments: i64 =
-        conn.query_row("SELECT COUNT(*) FROM file_tags", [], |r| r.get(0))?;
-    let total_size: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(size), 0) FROM files",
-        [],
-        |r| r.get(0),
-    )?;
+    let files: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
+    let tags: i64 = conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))?;
+    let assignments: i64 = conn.query_row("SELECT COUNT(*) FROM file_tags", [], |r| r.get(0))?;
+    let total_size: i64 =
+        conn.query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |r| r.get(0))?;
 
     Ok(Json(ApiInfo {
         root: state.root.display().to_string(),
@@ -240,9 +231,7 @@ async fn api_info(
     }))
 }
 
-async fn api_tags(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<ApiTag>>, AppError> {
+async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiTag>>, AppError> {
     let conn = open_conn(&state)?;
     let tags = db::all_tags(&conn).map_err(AppError)?;
     Ok(Json(
@@ -277,8 +266,8 @@ async fn api_files(
     let mut dirs = Vec::new();
     let mut files = Vec::new();
 
-    let rd = std::fs::read_dir(&dir)
-        .with_context(|| format!("reading directory {}", dir.display()))?;
+    let rd =
+        std::fs::read_dir(&dir).with_context(|| format!("reading directory {}", dir.display()))?;
 
     for entry in rd.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -389,8 +378,7 @@ async fn api_file_detail(
     } else {
         // File not yet indexed: return filesystem metadata
         let abs = safe_path(&state.root, &params.path)?;
-        let meta = std::fs::metadata(&abs)
-            .with_context(|| format!("reading {}", abs.display()))?;
+        let meta = std::fs::metadata(&abs).with_context(|| format!("reading {}", abs.display()))?;
         let size = meta.len() as i64;
         let mtime = meta
             .modified()
@@ -417,8 +405,7 @@ async fn api_tag(
     safe_path(&state.root, &body.path)?;
     let conn = open_conn(&state)?;
     // Auto-index the file if not yet in the database
-    let record =
-        db::get_or_index_file(&conn, &body.path, &state.root).map_err(AppError)?;
+    let record = db::get_or_index_file(&conn, &body.path, &state.root).map_err(AppError)?;
 
     let mut added = 0i64;
     for tag_str in &body.tags {
@@ -447,8 +434,7 @@ async fn api_untag(
             "SELECT id FROM tags WHERE name = ?1",
             rusqlite::params![&name],
             |r| r.get::<_, i64>(0),
-        )
-            && db::remove_tag(&conn, record.id, tag_id, value.as_deref()).map_err(AppError)?
+        ) && db::remove_tag(&conn, record.id, tag_id, value.as_deref()).map_err(AppError)?
         {
             removed += 1;
         }
@@ -508,8 +494,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let root = args.path.unwrap_or_else(|| ".".into());
-    let root = std::fs::canonicalize(&root)
-        .with_context(|| format!("resolving {}", root.display()))?;
+    let root =
+        std::fs::canonicalize(&root).with_context(|| format!("resolving {}", root.display()))?;
 
     // Verify database exists
     let (conn, root) = db::find_and_open(&root)?;

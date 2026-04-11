@@ -978,8 +978,7 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
     };
 
     // Step 1: Find all files that are missing from disk
-    let mut stmt =
-        conn.prepare("SELECT id, path, file_id, size FROM files ORDER BY path")?;
+    let mut stmt = conn.prepare("SELECT id, path, file_id, size FROM files ORDER BY path")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -1111,13 +1110,19 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
                 .unwrap_or(0);
 
             if dry_run {
-                println!("would repair: {} -> {} (matched by {})", old_path, rel_path, method);
+                println!(
+                    "would repair: {} -> {} (matched by {})",
+                    old_path, rel_path, method
+                );
             } else {
                 conn.execute(
                     "UPDATE files SET path = ?1, file_id = ?2, size = ?3, mtime_ns = ?4, indexed_at = datetime('now') WHERE id = ?5",
                     rusqlite::params![rel_path, candidate_fid, size, mtime, id],
                 )?;
-                println!("repaired: {} -> {} (matched by {})", old_path, rel_path, method);
+                println!(
+                    "repaired: {} -> {} (matched by {})",
+                    old_path, rel_path, method
+                );
             }
             repaired += 1;
         }
