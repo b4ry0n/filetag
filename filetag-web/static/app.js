@@ -73,7 +73,8 @@ const state = {
     entries: [],
     searchQuery: '',
     searchResults: [],
-    selectedFile: null,
+    selectedFile: null,  // { path, size, blake3, mtime, indexed_at, tags } | null
+    selectedDir: null,   // { path, name, file_count } | null
     info: null,
 };
 
@@ -137,6 +138,13 @@ async function searchFiles(query) {
 
 async function loadFileDetail(path) {
     state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path));
+    state.selectedDir = null;
+}
+
+function selectDir(path, name, fileCount) {
+    state.selectedDir = { path, name, file_count: fileCount };
+    state.selectedFile = null;
+    render();
 }
 
 async function addTagToFile(path, tagStr) {
@@ -279,7 +287,9 @@ function renderGrid(items) {
         const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : formatSize(entry.size);
 
         if (isDir) {
-            html += `<div class="card folder" ondblclick="navigateTo('${esc(fullPath(entry))}')">
+            const dirPath = fullPath(entry);
+            const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
+            html += `<div class="card folder${dirSelected}" onclick="selectDir('${esc(dirPath)}','${esc(name)}',${entry.file_count})" ondblclick="navigateTo('${esc(dirPath)}')">
                 <div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -313,7 +323,9 @@ function renderList(items) {
         const tags = isDir ? `${entry.file_count} files` : (entry.tag_count != null ? `${entry.tag_count} tags` : '');
 
         if (isDir) {
-            html += `<div class="list-row folder" ondblclick="navigateTo('${esc(fullPath(entry))}')">
+            const dirPath = fullPath(entry);
+            const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
+            html += `<div class="list-row folder${dirSelected}" onclick="selectDir('${esc(dirPath)}','${esc(name)}',${entry.file_count})" ondblclick="navigateTo('${esc(dirPath)}')">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -387,7 +399,7 @@ function renderDetail() {
     const panel = document.getElementById('detail');
     const layout = document.getElementById('layout');
 
-    if (!state.selectedFile) {
+    if (!state.selectedFile && !state.selectedDir) {
         panel.hidden = true;
         layout.classList.remove('has-detail');
         return;
@@ -396,6 +408,21 @@ function renderDetail() {
     panel.hidden = false;
     layout.classList.add('has-detail');
 
+    // Directory selected
+    if (state.selectedDir) {
+        const d = state.selectedDir;
+        document.getElementById('detail-name').textContent = d.name;
+        document.getElementById('detail-preview').innerHTML =
+            `<div class="no-preview" style="color:#fab005;font-size:64px">${ICONS.folder}</div>`;
+        document.getElementById('detail-meta').innerHTML = `
+            <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(d.path)}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">Items</span><span class="detail-meta-value">${d.file_count}</span></div>
+        `;
+        document.querySelector('.detail-tags-section').hidden = true;
+        return;
+    }
+
+    document.querySelector('.detail-tags-section').hidden = false;
     const f = state.selectedFile;
     const name = f.path.split('/').pop();
     const type_ = fileType(name);
@@ -535,6 +562,7 @@ function toggleTagGroup(btn) {
 
 function closeDetail() {
     state.selectedFile = null;
+    state.selectedDir = null;
     render();
 }
 
