@@ -166,7 +166,7 @@ To completely remove filetag from a directory tree, delete the `.filetag/` folde
 
 ## How it works
 
-The database is created in `.filetag/` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's BLAKE3 hash, size, and mtime are stored. Subsequent operations skip rehashing if size and mtime are unchanged.
+The database lives in `.filetag/db.sqlite3` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's BLAKE3 hash, size, and mtime are stored. Subsequent operations skip rehashing if size and mtime are unchanged.
 
 The `view` command creates a directory of relative symlinks pointing back to the original files, letting you browse query results in any file manager.
 
