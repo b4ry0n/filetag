@@ -103,13 +103,13 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE files ADD COLUMN file_id TEXT;
              CREATE INDEX IF NOT EXISTS idx_files_file_id ON files(file_id);",
-        ).ok(); // ignore "duplicate column" if fresh DB already has it
+        )
+        .ok(); // ignore "duplicate column" if fresh DB already has it
     }
 
     if version < 4 {
-        conn.execute_batch(
-            "ALTER TABLE tags ADD COLUMN color TEXT;",
-        ).ok(); // ignore if fresh DB already has it
+        conn.execute_batch("ALTER TABLE tags ADD COLUMN color TEXT;")
+            .ok(); // ignore if fresh DB already has it
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -301,7 +301,11 @@ pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64, Option<String>)>>
          ORDER BY t.name",
     )?;
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
     })?;
     let mut result = Vec::new();
     for row in rows {
