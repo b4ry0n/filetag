@@ -236,10 +236,20 @@ function renderTags() {
         if (slash > 0) {
             const prefix = tag.name.slice(0, slash);
             const suffix = tag.name.slice(slash + 1);
-            if (!groups[prefix]) groups[prefix] = [];
-            groups[prefix].push({ suffix, fullName: tag.name, count: tag.count, color: tag.color });
+            if (!groups[prefix]) groups[prefix] = { root: null, children: [] };
+            groups[prefix].children.push({ suffix, fullName: tag.name, count: tag.count, color: tag.color });
         } else {
             standalone.push(tag);
+        }
+    }
+
+    // Merge standalone tags that share a name with a group prefix into that group
+    const trulyStandalone = [];
+    for (const tag of standalone) {
+        if (groups[tag.name]) {
+            groups[tag.name].root = tag;
+        } else {
+            trulyStandalone.push(tag);
         }
     }
 
@@ -248,8 +258,10 @@ function renderTags() {
     // Grouped tags
     const groupNames = Object.keys(groups).sort();
     for (const prefix of groupNames) {
-        const items = groups[prefix].sort((a, b) => a.suffix.localeCompare(b.suffix));
-        const totalCount = items.reduce((s, i) => s + i.count, 0);
+        const { root, children } = groups[prefix];
+        const items = children.sort((a, b) => a.suffix.localeCompare(b.suffix));
+        const rootCount = root ? root.count : 0;
+        const totalCount = items.reduce((s, i) => s + i.count, 0) + rootCount;
         html += `<div class="tag-group">
             <button class="tag-group-label" onclick="toggleTagGroup(this)">
                 <span class="chevron">▸</span>
@@ -257,6 +269,14 @@ function renderTags() {
                 <span class="count">${totalCount}</span>
             </button>
             <div class="tag-group-items">`;
+        // If a bare prefix tag exists (e.g. "kunst"), show it first
+        if (root) {
+            const q = quoteTag(root.name);
+            const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
+            html += `<button class="tag-item tag-item-root${active}" onclick="doTagSearch('${esc(root.name)}')" oncontextmenu="showTagMenu(event, '${esc(root.name)}')">
+                ${colorDot(root.color)}<em>${esc(root.name)}</em> <span class="count">${root.count}</span>
+            </button>`;
+        }
         for (const item of items) {
             const q = quoteTag(item.fullName);
             const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
@@ -267,8 +287,8 @@ function renderTags() {
         html += '</div></div>';
     }
 
-    // Standalone tags
-    for (const tag of standalone.sort((a, b) => a.name.localeCompare(b.name))) {
+    // Standalone tags (those that are not a prefix of any group)
+    for (const tag of trulyStandalone.sort((a, b) => a.name.localeCompare(b.name))) {
         const q = quoteTag(tag.name);
         const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
         html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${esc(tag.name)}')" oncontextmenu="showTagMenu(event, '${esc(tag.name)}')">
