@@ -1066,8 +1066,6 @@ function toggleTagGroup(labelEl) {
 }
 
 async function doTagGroupSearch(prefix) {
-    // Include files with the bare prefix tag (e.g. "kunst") as well as sub-tags ("kunst/*")
-async function doTagGroupSearch(prefix) {
     const hasRoot = state.tags.some(t => t.name === prefix);
     const q = hasRoot ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
     document.getElementById('search-input').value = q;
