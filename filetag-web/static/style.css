@@ -162,9 +162,7 @@ h3, h4 { font-weight: 600; }
     height: calc(100vh - var(--header-height));
 }
 
-.layout.has-detail {
-    grid-template-columns: var(--sidebar-width) 1fr var(--detail-width);
-}
+/* detail panel no longer affects grid - it overlays */
 
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                            */
@@ -480,14 +478,24 @@ h3, h4 { font-weight: 600; }
 /* ------------------------------------------------------------------ */
 
 .detail {
+    position: fixed;
+    top: var(--header-height);
+    right: 0;
+    width: var(--detail-width);
+    height: calc(100vh - var(--header-height));
     background: var(--bg-surface);
     border-left: 1px solid var(--border);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    z-index: 100;
+    box-shadow: -4px 0 16px rgba(0,0,0,0.08);
+    transition: transform 0.2s ease;
 }
 
-.detail[hidden] { display: none; }
+.detail[hidden] {
+    display: none;
+}
 
 .detail-header {
     display: flex;

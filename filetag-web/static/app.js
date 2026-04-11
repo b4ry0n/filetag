@@ -395,18 +395,14 @@ function renderContent() {
 // Render: Detail panel
 // ---------------------------------------------------------------------------
 
-function renderDetail() {
-    const panel = document.getElementById('detail');
-    const layout = document.getElementById('layout');
+function renderDetail() {\n    const panel = document.getElementById('detail');
 
     if (!state.selectedFile && !state.selectedDir) {
         panel.hidden = true;
-        layout.classList.remove('has-detail');
         return;
     }
 
     panel.hidden = false;
-    layout.classList.add('has-detail');
 
     // Directory selected
     if (state.selectedDir) {
