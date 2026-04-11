@@ -77,11 +77,13 @@ const state = {
     selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
     selectedPaths: new Set(), // multi-select: Set of paths
+    selectedFilesData: new Map(), // path → file detail (for tag aggregation)
     info: null,
     detailOpen: true,
 };
 
 let _lastClickedPath = null; // for shift-range selection
+let _armedBulkTag = null;    // two-step delete: which tag is armed
 
 // ---------------------------------------------------------------------------
 // API
@@ -140,7 +142,9 @@ async function searchFiles(query) {
         state.selectedFile = null;
     }
     state.selectedPaths.clear();
+    state.selectedFilesData.clear();
     _lastClickedPath = null;
+    _armedBulkTag = null;
 }
 
 async function loadFileDetail(path) {
@@ -519,17 +523,20 @@ function renderDetail() {
     // Multi-select bulk panel
     if (state.selectedPaths.size > 1) {
         const count = state.selectedPaths.size;
+        const bulkTags = aggregateBulkTags();
+        const chipsHtml = renderBulkTagChips(bulkTags, count);
         panel.innerHTML = `
             <div class="detail-header">
                 <h3>${count} files selected</h3>
                 <button class="detail-close" onclick="clearSelection()" title="Clear selection">&times;</button>
             </div>
             <div class="bulk-tag-section">
-                <p class="bulk-hint">Add or remove a tag on all selected files.</p>
+                ${bulkTags.length > 0 ? `<p class="bulk-section-label">Tags on selected files</p>
+                <div class="bulk-tag-chips" id="bulk-tag-chips">${chipsHtml}</div>` : ''}
+                <p class="bulk-section-label" style="margin-top:12px">Add tag</p>
                 <div class="tag-add-form">
                     <input type="text" id="bulk-tag-input" placeholder="Tag (e.g. genre/rock)">
                     <button onclick="doBulkAddTag()">Add</button>
-                    <button class="btn-secondary" onclick="doBulkRemoveTag()">Remove</button>
                 </div>
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
@@ -632,6 +639,81 @@ function renderDetailTagsOnly() {
 }
 
 // ---------------------------------------------------------------------------
+// Bulk tag helpers (multi-select)
+// ---------------------------------------------------------------------------
+
+function aggregateBulkTags() {
+    const counts = new Map(); // tagStr → count of selected files that have it
+    for (const [path, data] of state.selectedFilesData) {
+        if (!state.selectedPaths.has(path)) continue;
+        for (const t of (data.tags || [])) {
+            const str = formatTag(t);
+            counts.set(str, (counts.get(str) || 0) + 1);
+        }
+    }
+    return [...counts.entries()]
+        .map(([tagStr, count]) => ({ tagStr, count }))
+        .sort((a, b) => b.count - a.count || a.tagStr.localeCompare(b.tagStr));
+}
+
+function renderBulkTagChips(bulkTags, total) {
+    if (bulkTags.length === 0) return '';
+    return bulkTags.map(({ tagStr, count }) => {
+        const stateTag = state.tags.find(st => st.name === tagStr || st.name === tagStr.split('=')[0]);
+        const chipBorder = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+        const countBadge = count < total
+            ? `<span class="bulk-chip-count">${count}/${total}</span>`
+            : '';
+        const isArmed = _armedBulkTag === tagStr;
+        if (isArmed) {
+            return `<span class="bulk-chip armed"${chipBorder}>
+                <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
+                <button class="bulk-chip-cancel" onclick="armBulkTag('${esc(tagStr)}')" title="Cancel">&#8617;</button>
+                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${esc(tagStr)}')">Remove</button>
+            </span>`;
+        }
+        return `<span class="bulk-chip"${chipBorder}>
+            <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
+            <button class="bulk-chip-arm" onclick="armBulkTag('${esc(tagStr)}')" title="Remove from selection">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            </button>
+        </span>`;
+    }).join('');
+}
+
+function armBulkTag(tagStr) {
+    _armedBulkTag = _armedBulkTag === tagStr ? null : tagStr;
+    const el = document.getElementById('bulk-tag-chips');
+    if (el) {
+        const total = state.selectedPaths.size;
+        el.innerHTML = renderBulkTagChips(aggregateBulkTags(), total);
+    }
+}
+
+async function doBulkRemoveTagChip(tagStr) {
+    _armedBulkTag = null;
+    // Only remove from files that actually have this tag
+    const paths = [...state.selectedPaths].filter(p => {
+        const data = state.selectedFilesData.get(p);
+        return data && data.tags.some(t => formatTag(t) === tagStr);
+    });
+    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr] })));
+    // Update cache locally
+    for (const p of paths) {
+        const d = state.selectedFilesData.get(p);
+        if (d) d.tags = d.tags.filter(t => formatTag(t) !== tagStr);
+    }
+    await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
+    const status = document.getElementById('bulk-status');
+    if (status) status.textContent = `Removed "${tagStr}" from ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    const el = document.getElementById('bulk-tag-chips');
+    if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
+    renderTags();
+    renderContent();
+}
+
+// ---------------------------------------------------------------------------
 // Render: DB info header
 // ---------------------------------------------------------------------------
 
@@ -662,7 +744,9 @@ async function navigateTo(path) {
     state.selectedFile = null;
     state.selectedDir = null;
     state.selectedPaths.clear();
+    state.selectedFilesData.clear();
     _lastClickedPath = null;
+    _armedBulkTag = null;
     await loadFiles(path);
     render();
 }
@@ -709,7 +793,12 @@ async function selectFile(path, event) {
             state.selectedPaths.delete(path);
         } else {
             state.selectedPaths.add(path);
+            if (!state.selectedFilesData.has(path)) {
+                const data = await api('/api/file?path=' + encodeURIComponent(path));
+                state.selectedFilesData.set(path, data);
+            }
         }
+        _armedBulkTag = null;
         _lastClickedPath = path;
         // Keep selectedFile in sync with the most recently toggled file, or clear if set is empty
         if (state.selectedPaths.size === 1) {
@@ -731,7 +820,15 @@ async function selectFile(path, event) {
             const [lo, hi] = a < b ? [a, b] : [b, a];
             for (let i = lo; i <= hi; i++) state.selectedPaths.add(paths[i]);
         }
+        _armedBulkTag = null;
         state.selectedDir = null;
+        // Batch-fetch file data for newly added paths
+        await Promise.all([...state.selectedPaths].map(async p => {
+            if (!state.selectedFilesData.has(p)) {
+                const data = await api('/api/file?path=' + encodeURIComponent(p));
+                state.selectedFilesData.set(p, data);
+            }
+        }));
     } else {
         // Plain click: single select
         state.selectedPaths.clear();
@@ -771,9 +868,11 @@ async function doRemoveTag(path, tagStr) {
 
 function clearSelection() {
     state.selectedPaths.clear();
+    state.selectedFilesData.clear();
     state.selectedFile = null;
     state.selectedDir = null;
     _lastClickedPath = null;
+    _armedBulkTag = null;
     render();
 }
 
@@ -785,29 +884,20 @@ async function doBulkAddTag() {
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
     await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr] })));
+    // Refresh cached data for all selected files
+    await Promise.all(paths.map(async p => {
+        const data = await api('/api/file?path=' + encodeURIComponent(p));
+        state.selectedFilesData.set(p, data);
+    }));
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     input.value = '';
     status.textContent = `Added "${tagStr}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
     renderTags();
     renderContent();
-    input.focus();
-}
-
-async function doBulkRemoveTag() {
-    const input = document.getElementById('bulk-tag-input');
-    const tagStr = input.value.trim();
-    if (!tagStr) return;
-    const paths = [...state.selectedPaths];
-    const status = document.getElementById('bulk-status');
-    status.textContent = 'Removing...';
-    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr] })));
-    await loadTags();
-    if (state.mode === 'browse') await loadFiles(state.currentPath);
-    input.value = '';
-    status.textContent = `Removed "${tagStr}" from ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
-    renderTags();
-    renderContent();
+    const el = document.getElementById('bulk-tag-chips');
+    if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
+    else renderDetail(); // chips container not in DOM yet (first tag added)
     input.focus();
 }
 

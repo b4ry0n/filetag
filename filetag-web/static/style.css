@@ -769,11 +769,76 @@ h3, h4 { font-weight: 600; }
     padding: 16px;
 }
 
-.bulk-hint {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin: 0 0 12px;
+.bulk-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    margin: 0 0 8px;
 }
+
+.bulk-tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.bulk-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px 3px 8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+}
+
+.bulk-chip.armed {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.bulk-chip-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.bulk-chip-count {
+    font-size: 10px;
+    opacity: 0.7;
+    font-weight: 400;
+}
+
+.bulk-chip-arm,
+.bulk-chip-cancel {
+    display: flex;
+    align-items: center;
+    padding: 1px 3px;
+    border-radius: 50%;
+    opacity: 0.6;
+    line-height: 1;
+}
+
+.bulk-chip-arm:hover { background: rgba(0,0,0,0.1); opacity: 1; }
+.bulk-chip-cancel:hover { background: rgba(220,38,38,0.15); opacity: 1; }
+
+.bulk-chip-fire {
+    padding: 2px 8px;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 2px;
+}
+
+.bulk-chip-fire:hover { background: #b91c1c; }
 
 .bulk-status {
     margin-top: 10px;
