@@ -27,9 +27,17 @@ mkdir -p "$DIST"
 # ---------------------------------------------------------------------------
 
 use_cross=0
-if command -v cross &>/dev/null; then
-    use_cross=1
-    echo "Using 'cross' for Linux targets."
+if command -v cross &>/dev/null && docker info &>/dev/null 2>&1; then
+    # cross 0.2.5 has a bug where it tries to install a native Linux toolchain
+    # on the macOS host even when Docker is available. Use it only if the
+    # Homebrew toolchain is NOT present (i.e. no other option).
+    if ! command -v x86_64-unknown-linux-gnu-gcc &>/dev/null; then
+        use_cross=1
+        echo "Using 'cross' for Linux targets (Docker)."
+    fi
+fi
+if [[ $use_cross -eq 0 ]]; then
+    echo "Using Homebrew cross-compilation toolchains for Linux targets."
 fi
 
 # ---------------------------------------------------------------------------
@@ -41,6 +49,9 @@ build_target() {
     local artifact="$2"
     echo ""
     echo "==> Building $target ..."
+
+    # Ensure the rustup target is installed (cross also needs this)
+    rustup target add "$target" 2>/dev/null || true
 
     local cargo_cmd="cargo"
     if [[ $use_cross -eq 1 && "$target" == *linux* ]]; then
