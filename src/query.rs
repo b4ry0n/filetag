@@ -7,9 +7,9 @@ use rusqlite::{Connection, params_from_iter};
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Tag(String),                             // tag exists on file
-    TagValue(String, CmpOp, String),         // tag <op> value
-    Glob(String),                            // genre/* style wildcard
+    Tag(String),                     // tag exists on file
+    TagValue(String, CmpOp, String), // tag <op> value
+    Glob(String),                    // genre/* style wildcard
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
@@ -266,9 +266,15 @@ impl QueryBuilder {
                     CmpOp::Gt => ">",
                     CmpOp::Ge => ">=",
                 };
+                // Use numeric comparison when the query value is a number
+                let value_expr = if value.parse::<f64>().is_ok() {
+                    format!("CAST(ft.value AS REAL) {} CAST({} AS REAL)", sql_op, pv)
+                } else {
+                    format!("ft.value {} {}", sql_op, pv)
+                };
                 format!(
-                    "f.id IN (SELECT ft.file_id FROM file_tags ft JOIN tags t ON t.id = ft.tag_id WHERE t.name = {} AND ft.value {} {})",
-                    pn, sql_op, pv
+                    "f.id IN (SELECT ft.file_id FROM file_tags ft JOIN tags t ON t.id = ft.tag_id WHERE t.name = {} AND {})",
+                    pn, value_expr
                 )
             }
             Expr::And(a, b) => {
@@ -311,10 +317,7 @@ pub fn execute(conn: &Connection, expr: &Expr) -> Result<Vec<String>> {
 }
 
 /// Execute a query and return paths with their tags.
-pub fn execute_with_tags(
-    conn: &Connection,
-    expr: &Expr,
-) -> Result<Vec<(String, Vec<(String, Option<String>)>)>> {
+pub fn execute_with_tags(conn: &Connection, expr: &Expr) -> Result<Vec<(String, crate::TagList)>> {
     let paths = execute(conn, expr)?;
     let mut result = Vec::new();
     for path in paths {
@@ -358,7 +361,9 @@ mod tests {
     #[test]
     fn parse_tag_value() {
         let expr = parse("year >= 2020").unwrap();
-        assert!(matches!(expr, Expr::TagValue(ref t, CmpOp::Ge, ref v) if t == "year" && v == "2020"));
+        assert!(
+            matches!(expr, Expr::TagValue(ref t, CmpOp::Ge, ref v) if t == "year" && v == "2020")
+        );
     }
 
     #[test]

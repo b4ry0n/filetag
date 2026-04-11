@@ -5,14 +5,13 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 /// Open (or create) the database inside the given root directory.
 /// Creates `.filetag/db.sqlite3` under `root`.
 pub fn init(root: &Path) -> Result<Connection> {
     let db_dir = root.join(DB_DIR);
-    std::fs::create_dir_all(&db_dir)
-        .with_context(|| format!("creating {}", db_dir.display()))?;
+    std::fs::create_dir_all(&db_dir).with_context(|| format!("creating {}", db_dir.display()))?;
     let db_path = db_dir.join(DB_FILE);
     let conn = open_at(&db_path)?;
     migrate(&conn)?;
@@ -43,10 +42,11 @@ pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
 }
 
 fn open_at(path: &Path) -> Result<Connection> {
-    let conn = Connection::open(path)
-        .with_context(|| format!("opening database {}", path.display()))?;
+    let conn =
+        Connection::open(path).with_context(|| format!("opening database {}", path.display()))?;
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
          PRAGMA foreign_keys = ON;
          PRAGMA busy_timeout = 5000;",
     )?;
@@ -87,6 +87,15 @@ fn migrate(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    if version < 2 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS child_databases (
+                id       INTEGER PRIMARY KEY,
+                rel_path TEXT NOT NULL UNIQUE
+            );",
+        )?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -95,15 +104,13 @@ fn migrate(conn: &Connection) -> Result<()> {
 pub fn relative_to_root(path: &Path, root: &Path) -> Result<String> {
     let abs = std::fs::canonicalize(path)
         .with_context(|| format!("canonicalizing {}", path.display()))?;
-    let rel = abs
-        .strip_prefix(root)
-        .with_context(|| {
-            format!(
-                "{} is not under database root {}",
-                abs.display(),
-                root.display()
-            )
-        })?;
+    let rel = abs.strip_prefix(root).with_context(|| {
+        format!(
+            "{} is not under database root {}",
+            abs.display(),
+            root.display()
+        )
+    })?;
     Ok(rel.to_string_lossy().into_owned())
 }
 
@@ -114,6 +121,7 @@ pub fn relative_to_root(path: &Path, root: &Path) -> Result<String> {
 /// Metadata stored per file in the database.
 pub struct FileRecord {
     pub id: i64,
+    #[allow(dead_code)]
     pub path: String,
     pub blake3: Option<String>,
     pub size: i64,
@@ -275,7 +283,9 @@ pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64)>> {
          GROUP BY t.id
          ORDER BY t.name",
     )?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
     let mut result = Vec::new();
     for row in rows {
         result.push(row?);
@@ -298,4 +308,188 @@ pub fn file_by_path(conn: &Connection, rel_path: &str) -> Result<Option<FileReco
         })
         .ok();
     Ok(rec)
+}
+
+// ---------------------------------------------------------------------------
+// Child database management
+// ---------------------------------------------------------------------------
+
+/// Register a child database by its path relative to the current DB root.
+pub fn add_child(conn: &Connection, rel_path: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO child_databases (rel_path) VALUES (?1)",
+        params![rel_path],
+    )?;
+    Ok(())
+}
+
+/// Remove a child database registration.
+pub fn remove_child(conn: &Connection, rel_path: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "DELETE FROM child_databases WHERE rel_path = ?1",
+        params![rel_path],
+    )?;
+    Ok(changed > 0)
+}
+
+/// List all registered child database paths.
+pub fn list_children(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT rel_path FROM child_databases ORDER BY rel_path")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// A file record with all its tags, used for transferring between databases.
+pub struct FileWithTags {
+    pub rel_path: String,
+    pub blake3: Option<String>,
+    pub size: i64,
+    pub mtime_ns: i64,
+    /// (tag_name, value) pairs
+    pub tags: Vec<(String, String)>,
+}
+
+/// Find all files whose path starts with `prefix/` and return them with their tags.
+pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWithTags>> {
+    let pattern = format!("{}/%", prefix.trim_end_matches('/'));
+    let mut stmt = conn.prepare(
+        "SELECT f.id, f.path, f.blake3, f.size, f.mtime_ns
+         FROM files f
+         WHERE f.path LIKE ?1",
+    )?;
+    let mut tag_stmt = conn.prepare(
+        "SELECT t.name, ft.value
+         FROM file_tags ft
+         JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.file_id = ?1",
+    )?;
+    let mut results = Vec::new();
+    let rows = stmt.query_map(params![pattern], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, path, blake3, size, mtime_ns) = row?;
+        let tags: Vec<(String, String)> = tag_stmt
+            .query_map(params![id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        results.push(FileWithTags {
+            rel_path: path,
+            blake3,
+            size,
+            mtime_ns,
+            tags,
+        });
+    }
+    Ok(results)
+}
+
+/// Delete a file and its tags from the database (cascade via FK).
+pub fn delete_file_by_path(conn: &Connection, rel_path: &str) -> Result<bool> {
+    let changed = conn.execute("DELETE FROM files WHERE path = ?1", params![rel_path])?;
+    Ok(changed > 0)
+}
+
+/// Get all files with their tags from the database.
+pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
+    let mut stmt =
+        conn.prepare("SELECT f.id, f.path, f.blake3, f.size, f.mtime_ns FROM files f")?;
+    let mut tag_stmt = conn.prepare(
+        "SELECT t.name, ft.value
+         FROM file_tags ft
+         JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.file_id = ?1",
+    )?;
+    let mut results = Vec::new();
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, path, blake3, size, mtime_ns) = row?;
+        let tags: Vec<(String, String)> = tag_stmt
+            .query_map(params![id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        results.push(FileWithTags {
+            rel_path: path,
+            blake3,
+            size,
+            mtime_ns,
+            tags,
+        });
+    }
+    Ok(results)
+}
+
+/// An opened database with its root directory.
+pub struct OpenDb {
+    pub conn: Connection,
+    pub root: PathBuf,
+}
+
+/// Collect this database and all reachable child databases recursively.
+/// Gracefully skips missing or broken databases. Uses cycle detection on
+/// canonical root paths.
+pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<OpenDb>> {
+    use std::collections::HashSet;
+
+    let mut result = Vec::new();
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut queue: Vec<(Connection, PathBuf)> = vec![(conn, root)];
+
+    while let Some((c, r)) = queue.pop() {
+        let canonical = match std::fs::canonicalize(&r) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if !visited.insert(canonical) {
+            continue; // cycle detection
+        }
+
+        // Collect children before moving the connection
+        let children = list_children(&c).unwrap_or_default();
+        for child_rel in children {
+            let child_root = r.join(&child_rel);
+            let child_db_path = child_root.join(DB_DIR).join(DB_FILE);
+            match open_at(&child_db_path) {
+                Ok(child_conn) => {
+                    // Run migration in case the child is an older schema version
+                    if migrate(&child_conn).is_ok() {
+                        queue.push((child_conn, child_root));
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: skipping child database {}: {}",
+                        child_db_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        result.push(OpenDb { conn: c, root: r });
+    }
+
+    Ok(result)
 }

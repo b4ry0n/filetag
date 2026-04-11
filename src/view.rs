@@ -42,7 +42,9 @@ pub struct ViewStats {
     pub created: usize,
     pub skipped: usize,
     pub missing: usize,
+    #[allow(dead_code)]
     pub broken_removed: usize,
+    #[allow(dead_code)]
     pub empty_dirs_removed: usize,
 }
 
@@ -140,22 +142,22 @@ fn cleanup_empty_dirs(dir: &Path) -> Result<usize> {
     let mut seen = HashSet::new();
     loop {
         let mut found_empty = false;
-        for entry in walkdir::WalkDir::new(dir)
-            .min_depth(1)
-            .contents_first(true)
-        {
+        for entry in walkdir::WalkDir::new(dir).min_depth(1).contents_first(true) {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => continue,
             };
             let path = entry.path();
-            if path.is_dir() && !seen.contains(path) {
-                if std::fs::read_dir(path).map(|mut d| d.next().is_none()).unwrap_or(false) {
-                    std::fs::remove_dir(path).ok();
-                    seen.insert(path.to_path_buf());
-                    removed += 1;
-                    found_empty = true;
-                }
+            if path.is_dir()
+                && !seen.contains(path)
+                && std::fs::read_dir(path)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false)
+            {
+                std::fs::remove_dir(path).ok();
+                seen.insert(path.to_path_buf());
+                removed += 1;
+                found_empty = true;
             }
         }
         if !found_empty {
