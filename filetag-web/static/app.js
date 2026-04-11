@@ -262,12 +262,12 @@ function renderTags() {
         const items = children.sort((a, b) => a.suffix.localeCompare(b.suffix));
         const rootCount = root ? root.count : 0;
         const totalCount = items.reduce((s, i) => s + i.count, 0) + rootCount;
+        const groupActive = state.mode === 'search' && state.searchQuery === `${prefix}/*` ? ' active' : '';
         html += `<div class="tag-group">
-            <button class="tag-group-label" onclick="toggleTagGroup(this)">
-                <span class="chevron">▸</span>
-                ${esc(prefix)}/
-                <span class="count">${totalCount}</span>
-            </button>
+            <div class="tag-group-label${groupActive}">
+                <button class="tag-group-chevron" onclick="toggleTagGroup(this.parentElement)" title="Expand/collapse"><span class="chevron">▸</span></button>
+                <button class="tag-group-name" onclick="doTagGroupSearch('${esc(prefix)}')">${esc(prefix)}/ <span class="count">${totalCount}</span></button>
+            </div>
             <div class="tag-group-items">`;
         // If a bare prefix tag exists (e.g. "kunst"), show it first
         if (root) {
@@ -1065,10 +1065,18 @@ function setCardSize(size) {
     document.getElementById('content').style.setProperty('--card-size', size + 'px');
 }
 
-function toggleTagGroup(btn) {
-    btn.classList.toggle('expanded');
-    const items = btn.nextElementSibling;
+function toggleTagGroup(labelEl) {
+    labelEl.classList.toggle('expanded');
+    const items = labelEl.nextElementSibling;
     items.classList.toggle('open');
+}
+
+async function doTagGroupSearch(prefix) {
+    const q = `${prefix}/*`;
+    document.getElementById('search-input').value = q;
+    await searchFiles(q);
+    document.getElementById('search-clear').hidden = false;
+    render();
 }
 
 function closeDetail() {
