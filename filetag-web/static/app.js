@@ -395,7 +395,8 @@ function renderContent() {
 // Render: Detail panel
 // ---------------------------------------------------------------------------
 
-function renderDetail() {\n    const panel = document.getElementById('detail');
+function renderDetail() {
+    const panel = document.getElementById('detail');
 
     if (!state.selectedFile && !state.selectedDir) {
         panel.hidden = true;
