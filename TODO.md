@@ -26,3 +26,14 @@ Overwegingen:
 - Preview van entries in de web-UI (afbeeldingen, tekst)
 - `file_id` voor entries binnen een archief: hash van inhoud (geen inode beschikbaar)
 - CLI: `filetag tag archive.zip::subfile.txt -t tagname`
+
+### Meer preview-formaten (web-UI)
+Meeste afbeeldingen werken al via `<img>`. Ontbrekend:
+
+- **Video** – meer containers/codecs (mkv, avi, mov, wmv) via browser-native `<video>`; melding als codec niet ondersteund wordt
+- **Audio** – waveform-weergave of simpelweg `<audio>` voor mp3/flac/ogg/opus/aac
+- **ZIP / archief** – inhoudsopgave tonen (bestandsnamen, groottes); eventueel koppelen aan in-archief-taggen (zie hierboven)
+- **PDF** – eerste pagina renderen via `<canvas>` + PDF.js (optioneel, als dependency)
+- **Tekst/code** – plain-text bestanden tonen met syntax-highlighting (bijv. via highlight.js)
+- **SVG** – inline renderen (werkt al deels via `<img>`, maar interactieve SVG kan meer)
+- Fallback: bestandsgrootte + extensie + "geen preview beschikbaar"
