@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 const ICONS = {
-    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
     file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
     image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
     audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
@@ -121,11 +121,18 @@ async function loadFiles(path) {
 }
 
 async function searchFiles(query) {
-    const data = await api('/api/search?q=' + encodeURIComponent(query));
-    state.searchQuery = query;
-    state.searchResults = data.results;
-    state.mode = 'search';
-    state.selectedFile = null;
+    try {
+        const data = await api('/api/search?q=' + encodeURIComponent(query));
+        state.searchQuery = query;
+        state.searchResults = data.results;
+        state.mode = 'search';
+        state.selectedFile = null;
+    } catch (e) {
+        state.searchQuery = query;
+        state.searchResults = [];
+        state.mode = 'search';
+        state.selectedFile = null;
+    }
 }
 
 async function loadFileDetail(path) {
@@ -197,7 +204,8 @@ function renderTags() {
             </button>
             <div class="tag-group-items">`;
         for (const item of items) {
-            const active = state.mode === 'search' && state.searchQuery === item.fullName ? ' active' : '';
+            const q = quoteTag(item.fullName);
+            const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
             html += `<button class="tag-item${active}" onclick="doTagSearch('${esc(item.fullName)}')">
                 ${esc(item.suffix)} <span class="count">${item.count}</span>
             </button>`;
@@ -207,7 +215,8 @@ function renderTags() {
 
     // Standalone tags
     for (const tag of standalone.sort((a, b) => a.name.localeCompare(b.name))) {
-        const active = state.mode === 'search' && state.searchQuery === tag.name ? ' active' : '';
+        const q = quoteTag(tag.name);
+        const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
         html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${esc(tag.name)}')">
             ${esc(tag.name)} <span class="count">${tag.count}</span>
         </button>`;
@@ -472,9 +481,16 @@ function doClearSearch() {
     navigateTo(state.currentPath || '');
 }
 
+/// Quote a tag name for the query language if it contains special characters.
+function quoteTag(name) {
+    if (/[\s()"']/.test(name)) return '"' + name.replace(/"/g, "'") + '"';
+    return name;
+}
+
 async function doTagSearch(tagName) {
-    document.getElementById('search-input').value = tagName;
-    await searchFiles(tagName);
+    const q = quoteTag(tagName);
+    document.getElementById('search-input').value = q;
+    await searchFiles(q);
     document.getElementById('search-clear').hidden = false;
     render();
 }

@@ -73,6 +73,24 @@ fn tokenize(input: &str) -> Result<Vec<String>> {
             chars.next();
             continue;
         }
+        // Quoted strings
+        if ch == '"' || ch == '\'' {
+            let quote = ch;
+            chars.next();
+            let mut word = String::new();
+            loop {
+                match chars.next() {
+                    Some(c) if c == quote => break,
+                    Some(c) => word.push(c),
+                    None => bail!("unterminated quoted string"),
+                }
+            }
+            if word.is_empty() {
+                bail!("empty quoted string");
+            }
+            tokens.push(word);
+            continue;
+        }
         // Multi-char operators
         if ch == '!' {
             chars.next();
@@ -375,6 +393,18 @@ mod tests {
     #[test]
     fn parse_parens() {
         let expr = parse("(a or b) and c").unwrap();
+        assert!(matches!(expr, Expr::And(_, _)));
+    }
+
+    #[test]
+    fn parse_quoted_tag() {
+        let expr = parse("\"Extra models\"").unwrap();
+        assert!(matches!(expr, Expr::Tag(ref s) if s == "Extra models"));
+    }
+
+    #[test]
+    fn parse_quoted_and() {
+        let expr = parse("\"Extra models\" and 3D").unwrap();
         assert!(matches!(expr, Expr::And(_, _)));
     }
 }
