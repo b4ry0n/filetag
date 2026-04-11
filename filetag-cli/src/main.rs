@@ -1,7 +1,4 @@
-mod db;
-mod query;
-mod registry;
-mod view;
+use filetag_lib::{TagList, db, query, registry, view};
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
@@ -263,8 +260,6 @@ enum DbAction {
     /// List all globally registered databases
     Registered,
 }
-
-pub type TagList = Vec<(String, Option<String>)>;
 
 // ---------------------------------------------------------------------------
 // JSON output types

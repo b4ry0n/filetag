@@ -1,0 +1,16 @@
+[package]
+name = "filetag-lib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core library for filetag: SQLite-backed file tagging with content hashing"
+
+[dependencies]
+anyhow.workspace = true
+blake3.workspace = true
+dirs = "6"
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
