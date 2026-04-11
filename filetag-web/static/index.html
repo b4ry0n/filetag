@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>filetag</title>
+    <link rel="icon" href="/favicon.svg">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <span class="header-logo">🏷</span>
+            <span class="header-title">filetag</span>
+        </div>
+        <div class="header-search">
+            <input type="text" id="search-input"
+                   placeholder="Search tags (e.g. genre/rock and year>=2020)">
+            <button id="search-btn" title="Search">Search</button>
+            <button id="search-clear" title="Clear search" hidden>Clear</button>
+        </div>
+        <div class="header-right">
+            <span id="db-info" class="db-info"></span>
+        </div>
+    </header>
+    <div class="layout" id="layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h3>Tags</h3>
+            </div>
+            <div class="sidebar-content" id="tag-list"></div>
+        </aside>
+        <main class="main">
+            <div class="toolbar">
+                <nav class="breadcrumb" id="breadcrumb"></nav>
+                <div class="toolbar-right">
+                    <span id="entry-count" class="entry-count"></span>
+                    <div class="view-toggle">
+                        <button id="view-grid" class="view-btn active" title="Grid view">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                                <rect x="14" y="14" width="7" height="7" rx="1"/>
+                            </svg>
+                        </button>
+                        <button id="view-list" class="view-btn" title="List view">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="3" y="4" width="18" height="2" rx="1"/>
+                                <rect x="3" y="11" width="18" height="2" rx="1"/>
+                                <rect x="3" y="18" width="18" height="2" rx="1"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="content" class="file-grid"></div>
+        </main>
+        <aside class="detail" id="detail" hidden>
+            <div class="detail-header">
+                <h3 id="detail-name"></h3>
+                <button id="detail-close" class="detail-close" title="Close">&times;</button>
+            </div>
+            <div id="detail-preview" class="detail-preview"></div>
+            <div id="detail-meta" class="detail-meta"></div>
+            <div class="detail-tags-section">
+                <h4>Tags</h4>
+                <div id="detail-tags" class="detail-tags"></div>
+                <div class="tag-add-form">
+                    <input type="text" id="tag-input" placeholder="Add tag (e.g. genre/rock)">
+                    <button id="tag-add-btn">Add</button>
+                </div>
+            </div>
+        </aside>
+    </div>
+    <script src="/app.js"></script>
+</body>
+</html>
