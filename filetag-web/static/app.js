@@ -525,6 +525,10 @@ function renderGrid(items) {
             preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
+        } else if (type_ === 'pdf') {
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+                data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
+                `<div class="card-filmstrip-badge">${ICONS.pdf}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
         }
