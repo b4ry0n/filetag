@@ -1269,7 +1269,8 @@ fn sevenz_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(data)
 }
 
-fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {    let ext = path
+fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
+    let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
