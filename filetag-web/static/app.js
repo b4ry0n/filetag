@@ -1522,6 +1522,7 @@ const _cv = {
     pages: [],
     current: 0,
     spread: false,   // two-page spread mode
+    thumbs: false,   // thumbnail strip visible
     img1: null,
     img2: null,
 };
@@ -1548,6 +1549,7 @@ async function openComicViewer(path) {
         document.getElementById('cv-status').textContent = 'No images in ZIP';
         return;
     }
+    cvBuildThumbs();
     cvShowPage(0);
     document.addEventListener('keydown', _cvKeyHandler);
 }
@@ -1558,6 +1560,45 @@ function closeComicViewer() {
     document.removeEventListener('keydown', _cvKeyHandler);
     _cv.path = null; _cv.pages = []; _cv.current = 0;
     document.getElementById('cv-pages').innerHTML = '';
+    document.getElementById('cv-thumbs').innerHTML = '';
+}
+
+function cvToggleThumbs() {
+    _cv.thumbs = !_cv.thumbs;
+    const panel = document.getElementById('cv-thumbs');
+    panel.hidden = !_cv.thumbs;
+    document.getElementById('cv-thumbs-btn').classList.toggle('active', _cv.thumbs);
+    if (_cv.thumbs) cvScrollThumbIntoView(_cv.current);
+}
+
+function cvBuildThumbs() {
+    const panel = document.getElementById('cv-thumbs');
+    panel.innerHTML = '';
+    _cv.pages.forEach((_name, i) => {
+        const cell = document.createElement('div');
+        cell.className = 'cv-thumb' + (i === 0 ? ' active' : '');
+        cell.dataset.page = i;
+        cell.onclick = () => cvShowPage(i);
+        const url = `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}`;
+        cell.innerHTML = `<img src="${url}" loading="lazy" alt="page ${i + 1}">` +
+            `<div class="cv-thumb-num">${i + 1}</div>`;
+        panel.appendChild(cell);
+    });
+}
+
+function cvUpdateThumbActive(idx) {
+    const panel = document.getElementById('cv-thumbs');
+    panel.querySelectorAll('.cv-thumb').forEach(el => {
+        el.classList.toggle('active', Number(el.dataset.page) === idx);
+    });
+    cvScrollThumbIntoView(idx);
+}
+
+function cvScrollThumbIntoView(idx) {
+    if (!_cv.thumbs) return;
+    const panel = document.getElementById('cv-thumbs');
+    const cell = panel.querySelector(`.cv-thumb[data-page="${idx}"]`);
+    if (cell) cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 const _cvExpandIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
@@ -1599,6 +1640,7 @@ function cvShowPage(idx) {
         ? `${idx + 1}${url2 ? '–' + (idx + 2) : ''} / ${_cv.pages.length}`
         : `${idx + 1} / ${_cv.pages.length}`;
     document.getElementById('cv-status').textContent = total;
+    cvUpdateThumbActive(idx);
 }
 
 function cvNext() {
@@ -1621,6 +1663,7 @@ function _cvKeyHandler(e) {
     if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); cvNext(); }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); cvPrev(); }
     else if (e.key === 'f' || e.key === 'F') cvToggleFullscreen();
+    else if (e.key === 't' || e.key === 'T') cvToggleThumbs();
     else if (e.key === 'Escape') closeComicViewer();
 }
 

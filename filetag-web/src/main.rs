@@ -969,6 +969,73 @@ async fn api_zip_page(
     }
 }
 
+// --- API: serve resized thumbnail for a single page inside a ZIP ---
+
+/// Returns a cache path for a specific ZIP page thumbnail.
+/// Key: `<mtime>_<size>_<stem>_p<page>.thumb.jpg`
+fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<PathBuf> {
+    let meta = std::fs::metadata(abs).ok()?;
+    let mtime = meta.modified().ok()?
+        .duration_since(std::time::UNIX_EPOCH).ok()?
+        .as_secs();
+    let size = meta.len();
+    let stem = abs.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.jpg");
+    let dir = root.join(".filetag").join("cache").join("zip-pages");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(key))
+}
+
+#[derive(Deserialize)]
+struct ZipThumbParams { path: String, page: usize }
+
+async fn api_zip_thumb(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ZipThumbParams>,
+) -> Response {
+    let abs = match preview_safe_path(&state.root, &params.path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+    let page_idx = params.page;
+
+    // Serve from cache if available
+    if let Some(cache) = zip_page_thumb_cache_path(&abs, &state.root, page_idx) {
+        if let Ok(data) = tokio::fs::read(&cache).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+
+        // Extract the page, write to temp, resize, cache, serve
+        let result = tokio::task::spawn_blocking(move || {
+            let pages = zip_image_entries(&abs)?;
+            let name = pages.into_iter().nth(page_idx)
+                .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
+            zip_read_entry(&abs, &name)
+        })
+        .await;
+
+        if let Ok(Ok((img_bytes, _mime))) = result {
+            let tmp = state.root.join(".filetag").join("tmp")
+                .join(format!("zp_{page_idx}.jpg"));
+            let _ = tokio::fs::create_dir_all(tmp.parent().unwrap()).await;
+            if tokio::fs::write(&tmp, &img_bytes).await.is_ok() {
+                if let Some(small) = image_thumb_jpeg(&tmp).await {
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    let _ = tokio::fs::write(&cache, &small).await;
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], small).into_response();
+                }
+                let _ = tokio::fs::remove_file(&tmp).await;
+            }
+            // Fallback: serve raw bytes uncached
+            return ([(header::CONTENT_TYPE, "image/jpeg")], img_bytes).into_response();
+        }
+        return (StatusCode::NOT_FOUND, "Page not found").into_response();
+    }
+    (StatusCode::INTERNAL_SERVER_ERROR, "Cache unavailable").into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Static files (embedded)
 // ---------------------------------------------------------------------------
@@ -1404,6 +1471,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/delete-tag", post(api_delete_tag))
         .route("/api/zip/pages", get(api_zip_pages))
         .route("/api/zip/page", get(api_zip_page))
+        .route("/api/zip/thumb", get(api_zip_thumb))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .with_state(state);
