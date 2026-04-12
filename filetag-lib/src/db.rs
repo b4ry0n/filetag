@@ -5,7 +5,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 /// Open (or create) the database inside the given root directory.
 /// Creates `.filetag/db.sqlite3` under `root`.
@@ -28,6 +28,7 @@ pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
         let candidate = dir.join(DB_DIR).join(DB_FILE);
         if candidate.is_file() {
             let conn = open_at(&candidate)?;
+            migrate(&conn)?;
             return Ok((conn, dir.to_path_buf()));
         }
         match dir.parent() {
@@ -110,6 +111,14 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version < 4 {
         conn.execute_batch("ALTER TABLE tags ADD COLUMN color TEXT;")
             .ok(); // ignore if fresh DB already has it
+    }
+
+    if version < 5 {
+        // Rename table and column: child_databases.rel_path -> linked_databases.path
+        conn.execute_batch(
+            "ALTER TABLE child_databases RENAME TO linked_databases;
+             ALTER TABLE linked_databases RENAME COLUMN rel_path TO path;",
+        )?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -359,27 +368,28 @@ pub fn file_by_path(conn: &Connection, rel_path: &str) -> Result<Option<FileReco
 // Child database management
 // ---------------------------------------------------------------------------
 
-/// Register a child database by its path relative to the current DB root.
-pub fn add_child(conn: &Connection, rel_path: &str) -> Result<()> {
+/// Register a linked database. Stores a path relative to the current root when the
+/// target is under this root (child), or an absolute path otherwise (partner/parent).
+pub fn link_database(conn: &Connection, path: &str) -> Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO child_databases (rel_path) VALUES (?1)",
-        params![rel_path],
+        "INSERT OR IGNORE INTO linked_databases (path) VALUES (?1)",
+        params![path],
     )?;
     Ok(())
 }
 
-/// Remove a child database registration.
-pub fn remove_child(conn: &Connection, rel_path: &str) -> Result<bool> {
+/// Remove a linked database registration.
+pub fn unlink_database(conn: &Connection, path: &str) -> Result<bool> {
     let changed = conn.execute(
-        "DELETE FROM child_databases WHERE rel_path = ?1",
-        params![rel_path],
+        "DELETE FROM linked_databases WHERE path = ?1",
+        params![path],
     )?;
     Ok(changed > 0)
 }
 
-/// List all registered child database paths.
-pub fn list_children(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT rel_path FROM child_databases ORDER BY rel_path")?;
+/// List all registered linked database paths (relative or absolute).
+pub fn list_linked(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM linked_databases ORDER BY path")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
     let mut result = Vec::new();
     for row in rows {
@@ -493,9 +503,13 @@ pub struct OpenDb {
     pub root: PathBuf,
 }
 
-/// Collect this database and all reachable child databases recursively.
+/// Collect this database and all reachable linked databases recursively.
 /// Gracefully skips missing or broken databases. Uses cycle detection on
 /// canonical root paths.
+///
+/// Linked paths may be relative (child, under current root) or absolute
+/// (partner/parent, outside current root). `PathBuf::join` handles both:
+/// joining with an absolute path replaces the base entirely.
 pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<OpenDb>> {
     use std::collections::HashSet;
 
@@ -512,22 +526,23 @@ pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<Open
             continue; // cycle detection
         }
 
-        // Collect children before moving the connection
-        let children = list_children(&c).unwrap_or_default();
-        for child_rel in children {
-            let child_root = r.join(&child_rel);
-            let child_db_path = child_root.join(DB_DIR).join(DB_FILE);
-            match open_at(&child_db_path) {
-                Ok(child_conn) => {
-                    // Run migration in case the child is an older schema version
-                    if migrate(&child_conn).is_ok() {
-                        queue.push((child_conn, child_root));
+        // Collect linked databases before moving the connection.
+        // Relative paths resolve under r; absolute paths (partner DBs) replace r entirely.
+        let linked = list_linked(&c).unwrap_or_default();
+        for linked_path in linked {
+            let linked_root = r.join(&linked_path);
+            let linked_db_path = linked_root.join(DB_DIR).join(DB_FILE);
+            match open_at(&linked_db_path) {
+                Ok(linked_conn) => {
+                    // Run migration in case the linked DB is an older schema version
+                    if migrate(&linked_conn).is_ok() {
+                        queue.push((linked_conn, linked_root));
                     }
                 }
                 Err(e) => {
                     eprintln!(
-                        "warning: skipping child database {}: {}",
-                        child_db_path.display(),
+                        "warning: skipping linked database {}: {}",
+                        linked_db_path.display(),
                         e
                     );
                 }
