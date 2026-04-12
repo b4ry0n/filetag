@@ -525,6 +525,8 @@ function renderGrid(items) {
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else {
+            preview = `<div class="card-icon">${fileIcon(name)}</div>`;
+        }
 
         const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : formatSize(entry.size);
 
@@ -542,7 +544,7 @@ function renderGrid(items) {
                 ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const dblFn = fileType(name) === 'zip' ? `openComicViewer('${esc(path)}')` : `openLightbox('${esc(path)}','${fileType(name)}')`;
-            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">`;
+            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">
                 ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -586,7 +588,7 @@ function renderList(items) {
                 ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const dblFnL = fileType(name) === 'zip' ? `openComicViewer('${esc(path)}')` : `openLightbox('${esc(path)}','${fileType(name)}')`;
-            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">`;
+            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
