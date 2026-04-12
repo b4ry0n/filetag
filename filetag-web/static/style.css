@@ -1416,6 +1416,9 @@ h3, h4 { font-weight: 600; }
     justify-content: center;
     max-width: 100%;
     max-height: 100%;
+    transform-origin: center center;
+    will-change: transform;
+    user-select: none;
 }
 
 .cv-page {
