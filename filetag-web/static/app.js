@@ -1524,8 +1524,10 @@ const _cv = {
     spread: false,   // two-page spread mode
     thumbs: false,   // thumbnail strip visible
     rtl: false,      // right-to-left reading (manga)
-    scroll: false,   // vertical continuous scroll mode
-    scrollWidth: 100, // image width % in scroll mode
+    scroll: false,   // continuous scroll mode
+    scrollDir: 'v',  // 'v' vertical | 'h' horizontal
+    scrollWidth: 100, // image width % in vertical scroll mode
+    scrollHeight: 90, // image height in vh in horizontal scroll mode
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -1629,31 +1631,48 @@ function cvScrollThumbIntoView(idx) {
 }
 
 // ---------------------------------------------------------------------------
-// Comic viewer – vertical scroll mode
+// Comic viewer – vertical + horizontal scroll mode
 // ---------------------------------------------------------------------------
 
 let _cvScrollObserver = null;
 
-function cvToggleScroll() {
-    _cv.scroll = !_cv.scroll;
-    document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll);
-    // Spread is incompatible with scroll mode; disable it while scrolling
-    document.getElementById('cv-spread-btn').disabled = _cv.scroll;
-    if (_cv.scroll) {
-        cvBuildScrollView();
-    } else {
-        cvExitScrollView();
-    }
+function _cvSetScrollButtons() {
+    document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll && _cv.scrollDir === 'v');
+    document.getElementById('cv-hscroll-btn').classList.toggle('active', _cv.scroll && _cv.scrollDir === 'h');
+    document.getElementById('cv-spread-btn').disabled = !!_cv.scroll;
 }
 
-function cvApplyScrollZoom(newWidth) {
-    if (newWidth !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newWidth));
+function cvToggleScroll() {
+    if (_cv.scroll && _cv.scrollDir === 'v') {
+        _cv.scroll = false; cvExitScrollView();
+    } else {
+        if (_cv.scroll) cvExitScrollView();
+        _cv.scrollDir = 'v'; _cv.scroll = true; cvBuildScrollView();
+    }
+    _cvSetScrollButtons();
+}
+
+function cvToggleHScroll() {
+    if (_cv.scroll && _cv.scrollDir === 'h') {
+        _cv.scroll = false; cvExitScrollView();
+    } else {
+        if (_cv.scroll) cvExitScrollView();
+        _cv.scrollDir = 'h'; _cv.scroll = true; cvBuildScrollView();
+    }
+    _cvSetScrollButtons();
+}
+
+function cvApplyScrollZoom(newSize) {
     const stage = document.getElementById('cv-stage');
-    if (stage) stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-    const btn = document.getElementById('cv-zoom-reset-btn');
-    if (btn) {
-        btn.textContent = Math.round(_cv.scrollWidth) + '%';
-        btn.style.display = _cv.scrollWidth === 100 ? 'none' : '';
+    const btn   = document.getElementById('cv-zoom-reset-btn');
+    if (_cv.scrollDir === 'h') {
+        if (newSize !== undefined) _cv.scrollHeight = Math.max(20, Math.min(200, newSize));
+        if (stage) stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
+        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.display = _cv.scrollHeight === 90 ? 'none' : ''; }
+    } else {
+        if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
+        if (stage) stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
+        if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.display = _cv.scrollWidth === 100 ? 'none' : ''; }
     }
 }
 
@@ -1661,7 +1680,7 @@ function cvBuildScrollView() {
     const stage     = document.getElementById('cv-stage');
     const container = document.getElementById('cv-pages');
 
-    stage.classList.add('cv-scroll-mode');
+    stage.classList.add(_cv.scrollDir === 'h' ? 'cv-hscroll-mode' : 'cv-scroll-mode');
     container.style.transform = 'none';
     container.innerHTML = '';
 
@@ -1701,8 +1720,13 @@ function cvBuildScrollView() {
     // Scroll to the page that was open before entering scroll mode
     const target = container.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
     if (target) {
-        // Use requestAnimationFrame so the DOM is laid out first
-        requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+        requestAnimationFrame(() => {
+            if (_cv.scrollDir === 'h') {
+                target.scrollIntoView({ inline: 'start', block: 'nearest' });
+            } else {
+                target.scrollIntoView({ block: 'start' });
+            }
+        });
     }
     document.getElementById('cv-status').textContent =
         `${_cv.current + 1} / ${_cv.pages.length}`;
@@ -1712,12 +1736,14 @@ function cvExitScrollView() {
     if (_cvScrollObserver) { _cvScrollObserver.disconnect(); _cvScrollObserver = null; }
     const stage = document.getElementById('cv-stage');
     stage.classList.remove('cv-scroll-mode');
+    stage.classList.remove('cv-hscroll-mode');
     stage.style.removeProperty('--cv-scroll-width');
+    stage.style.removeProperty('--cv-scroll-height');
     const container = document.getElementById('cv-pages');
     container.style.transform = '';
     container.innerHTML = '';
     document.getElementById('cv-spread-btn').disabled = false;
-    _cv.scrollWidth = 100;
+    _cv.scrollWidth = 100; _cv.scrollHeight = 90;
     cvShowPage(_cv.current);
 }
 
@@ -1746,7 +1772,7 @@ function cvApplyTransform() {
 }
 
 function cvResetZoom() {
-    if (_cv.scroll) { cvApplyScrollZoom(100); return; }
+    if (_cv.scroll) { cvApplyScrollZoom(_cv.scrollDir === 'h' ? 90 : 100); return; }
     _cv.zoom = 1; _cv.panX = 0; _cv.panY = 0;
     cvApplyTransform();
 }
@@ -1773,11 +1799,11 @@ function cvZoomTo(newZoom, originX, originY) {
 }
 
 function cvZoomIn()  {
-    if (_cv.scroll) { cvApplyScrollZoom(_cv.scrollWidth * 1.25); return; }
+    if (_cv.scroll) { cvApplyScrollZoom((_cv.scrollDir === 'h' ? _cv.scrollHeight : _cv.scrollWidth) * 1.25); return; }
     cvZoomTo(_cv.zoom * 1.25, 0, 0);
 }
 function cvZoomOut() {
-    if (_cv.scroll) { cvApplyScrollZoom(_cv.scrollWidth / 1.25); return; }
+    if (_cv.scroll) { cvApplyScrollZoom((_cv.scrollDir === 'h' ? _cv.scrollHeight : _cv.scrollWidth) / 1.25); return; }
     cvZoomTo(_cv.zoom / 1.25, 0, 0);
 }
 
@@ -1791,7 +1817,8 @@ function _cvInitStageEvents() {
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
                 const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-                cvApplyScrollZoom(_cv.scrollWidth * factor);
+                const cur = _cv.scrollDir === 'h' ? _cv.scrollHeight : _cv.scrollWidth;
+                cvApplyScrollZoom(cur * factor);
             }
             // Otherwise: let the browser scroll natively
             return;
@@ -1912,7 +1939,13 @@ function cvShowPage(idx) {
     if (_cv.scroll) {
         const container = document.getElementById('cv-pages');
         const target = container.querySelector(`img.cv-page[data-page="${idx}"]`);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (target) {
+            if (_cv.scrollDir === 'h') {
+                target.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+            } else {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
         document.getElementById('cv-status').textContent = `${idx + 1} / ${_cv.pages.length}`;
         cvUpdateThumbActive(idx);
         return;
@@ -1979,6 +2012,7 @@ function _cvKeyHandler(e) {
     else if (e.key === 't' || e.key === 'T') cvToggleThumbs();
     else if (e.key === 'r' || e.key === 'R') cvToggleRtl();
     else if (e.key === 'v' || e.key === 'V') cvToggleScroll();
+    else if (e.key === 'h' || e.key === 'H') cvToggleHScroll();
     else if (e.key === '+' || e.key === '=') cvZoomIn();
     else if (e.key === '-') cvZoomOut();
     else if (e.key === '0') cvResetZoom();

@@ -1378,6 +1378,39 @@ h3, h4 { font-weight: 600; }
     display: block;
 }
 
+/* Horizontal scroll mode */
+.cv-stage.cv-hscroll-mode {
+    overflow-x: auto;
+    overflow-y: hidden;
+    justify-content: flex-start;
+    cursor: default;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+.cv-stage.cv-hscroll-mode .cv-pages {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-start;
+    max-width: none;
+    max-height: none;
+    width: max-content;
+    height: 100%;
+    transform: none !important;
+    gap: 8px;
+    padding: 0 20px;
+}
+.cv-stage.cv-hscroll-mode .cv-page {
+    height: var(--cv-scroll-height, 90vh);
+    width: auto;
+    max-width: none;
+    max-height: none;
+    flex-shrink: 0;
+    display: block;
+    margin: 0;
+}
+
 /* Body row that holds the optional thumbnail strip + the stage */
 .cv-body {
     flex: 1;
