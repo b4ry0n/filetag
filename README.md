@@ -200,7 +200,7 @@ These files are safe to delete at any time; they will be regenerated on demand.
 
 ### Browser-side caching
 
-The server does not send `Cache-Control` headers, so the browser may cache previewed files in its HTTP cache (typically in memory or in the browser's own disk cache, not on your filesystem). The categories below describe what reaches the browser and what stays server-side:
+The server does not send `Cache-Control` headers, so the browser may cache previewed files in its HTTP cache. On most systems that cache lives on disk in a browser-managed directory (e.g. `~/Library/Caches/Google/Chrome/` on macOS, `~/.cache/chromium/` on Linux), separate from your own files but still part of your filesystem.
 
 | What | Leaves the server? | Where the browser may cache it |
 | :--- | :--- | :--- |
