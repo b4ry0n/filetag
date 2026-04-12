@@ -816,9 +816,10 @@ h3, h4 { font-weight: 600; }
     right: 24px;
     background: rgba(255,255,255,0.12);
     border: none;
+    padding: 0;
     color: #fff;
-    font-size: 28px;
-    line-height: 1;
+    font-size: 26px;
+    line-height: 40px;
     width: 40px;
     height: 40px;
     border-radius: 50%;
