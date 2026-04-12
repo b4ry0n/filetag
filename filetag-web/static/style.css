@@ -1368,6 +1368,12 @@ h3, h4 { font-weight: 600; }
     -webkit-user-drag: none;
 }
 
+/* In native full-screen the toolbar is still 54 px, rest is the image */
+#comic-viewer:fullscreen { background: #000; }
+#comic-viewer:-webkit-full-screen { background: #000; }
+#comic-viewer:fullscreen .cv-page { max-height: calc(100vh - 54px); }
+#comic-viewer:-webkit-full-screen .cv-page { max-height: calc(100vh - 54px); }
+
 /* Zip cover in detail panel */
 .zip-cover-wrap {
     display: flex;
