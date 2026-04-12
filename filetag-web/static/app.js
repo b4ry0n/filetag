@@ -934,22 +934,57 @@ function _previewVideoError(video) {
 function _cardThumbError(img) {
     const src = img.src;
     const name = img.dataset.name || '';
+    const wrap = img.closest('.card-preview');
 
     // Retry thumbnail URLs when the server is busy (503 — queue full).
-    // Retries up to 10 times with a linearly increasing delay (1 s, 2 s, … 8 s max).
+    // Show a grey loading placeholder immediately (no broken-image icon),
+    // then poll with a hidden Image() so the card only updates when the
+    // thumbnail is actually ready.
     if (src && (src.includes('/thumb/') || src.includes('/api/zip/thumb'))) {
         const retries = parseInt(img.dataset.thumbRetries || '0', 10);
         if (retries < 10) {
-            img.dataset.thumbRetries = retries + 1;
-            const delay = Math.min(1000 * (retries + 1), 8000);
-            setTimeout(() => { img.src = ''; img.src = src; }, delay);
+            // Replace visible img with a quiet placeholder so no broken icon shows.
+            if (wrap && !wrap.querySelector('.card-thumb-pending')) {
+                const cls = img.className ? ` class="${img.className}"` : '';
+                // Keep a hidden sentinel so we know a retry is in flight.
+                wrap.innerHTML =
+                    `<div class="card-thumb-pending" data-src="${esc(src)}" data-name="${esc(name)}" data-retries="${retries + 1}"${cls ? ' data-class="' + esc(img.className) + '"' : ''}></div>`;
+            }
+            const pending = wrap && wrap.querySelector('.card-thumb-pending');
+            const attempt = pending ? parseInt(pending.dataset.retries || '1', 10) : retries + 1;
+            const delay = Math.min(1000 * attempt, 8000);
+            setTimeout(() => _retryThumbPending(wrap, src, name, attempt), delay);
             return;
         }
     }
 
-    // Fall back to generic file icon when card thumbnail fails to load
-    const wrap = img.closest('.card-preview');
+    // Fall back to generic file icon after all retries are exhausted.
     if (wrap) wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
+}
+
+function _retryThumbPending(wrap, src, name, attempt) {
+    if (!wrap || !wrap.isConnected) return; // card was removed from DOM
+    const p = wrap.querySelector('.card-thumb-pending');
+    if (!p) return;
+    const probe = new Image();
+    probe.onload = () => {
+        if (!wrap.isConnected) return;
+        const cls = p.dataset.class || '';
+        wrap.innerHTML = `<img src="${esc(src)}"${cls ? ` class="${esc(cls)}"` : ''} alt="" data-name="${esc(name)}"`
+            + ` onerror="_cardThumbError(this)">`;
+    };
+    probe.onerror = () => {
+        if (!wrap.isConnected) return;
+        if (attempt >= 10) {
+            wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
+            return;
+        }
+        const next = attempt + 1;
+        if (p.isConnected) p.dataset.retries = next;
+        const delay = Math.min(1000 * next, 8000);
+        setTimeout(() => _retryThumbPending(wrap, src, name, next), delay);
+    };
+    probe.src = src;
 }
 
 // ---------------------------------------------------------------------------
