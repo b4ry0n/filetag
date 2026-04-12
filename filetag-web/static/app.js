@@ -514,6 +514,10 @@ function renderGrid(items) {
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<img src="/preview/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">`;
+        } else if (type_ === 'video') {
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+                class="card-thumb-strip" data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
+                `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
         }
