@@ -218,8 +218,10 @@ const TAG_COLORS = [
 ];
 
 function colorDot(color) {
-    if (!color) return '';
-    return `<span class="tag-color-dot" style="background:${color}"></span>`;
+    if (color) {
+        return `<span class="tag-color-dot" style="background:${color}"></span>`;
+    }
+    return `<span class="tag-color-dot tag-color-dot-empty"></span>`;
 }
 
 function renderTags() {
