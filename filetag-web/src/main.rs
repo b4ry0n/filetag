@@ -427,6 +427,160 @@ async fn preview_heic(path: &Path) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// Video thumbnail strip (2×2 contact sheet via ffmpeg)
+// ---------------------------------------------------------------------------
+
+/// Return a cache path for this file's thumbnail, keyed by mtime + size.
+fn thumb_cache_path(abs: &Path) -> Option<PathBuf> {
+    let meta = std::fs::metadata(abs).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let size = meta.len();
+    let stem = abs
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = format!("{mtime}_{size}_{stem}.thumb.jpg");
+    let dir = std::env::temp_dir().join("filetag_thumbs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(key))
+}
+
+/// Get video duration in seconds via ffprobe.
+async fn video_duration(path: &Path) -> Option<f64> {
+    let out = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+    if out.status.success() {
+        std::str::from_utf8(&out.stdout)
+            .ok()?
+            .trim()
+            .parse::<f64>()
+            .ok()
+    } else {
+        None
+    }
+}
+
+/// Generate a 2×2 JPEG contact-sheet thumbnail for a video file.
+/// Uses ffmpeg fast-seek (-ss before -i) for each of 4 frames.
+async fn video_thumb_strip(path: &Path) -> Response {
+    // Serve from cache if available
+    if let Some(cache) = thumb_cache_path(path) {
+        if let Ok(data) = tokio::fs::read(&cache).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+
+        // Determine seek positions
+        let dur = video_duration(path).await;
+        let positions: [f64; 4] = match dur {
+            Some(d) if d > 0.5 => [d * 0.08, d * 0.33, d * 0.62, d * 0.87],
+            // Fallback: fixed offsets; ffmpeg will just grab what's available
+            _ => [2.0, 10.0, 30.0, 60.0],
+        };
+
+        let mut cmd = tokio::process::Command::new("ffmpeg");
+        for t in &positions {
+            cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(path);
+        }
+        // Build a 2×2 grid: top row = frames 0+1, bottom row = 2+3
+        cmd.args([
+            "-filter_complex",
+            "[0:v]scale=240:-2,setsar=1[a];\
+             [1:v]scale=240:-2,setsar=1[b];\
+             [2:v]scale=240:-2,setsar=1[c];\
+             [3:v]scale=240:-2,setsar=1[d];\
+             [a][b]hstack[top];\
+             [c][d]hstack[bot];\
+             [top][bot]vstack",
+            "-frames:v", "1",
+            "-f", "image2",
+            "-vcodec", "mjpeg",
+            "-q:v", "5",
+        ])
+        .arg(&cache)
+        .stderr(std::process::Stdio::null());
+
+        if let Ok(status) = cmd.status().await {
+            if status.success() {
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+            }
+        }
+
+        // 4-input hstack failed (e.g. video shorter than all seek points).
+        // Fall back to single frame at ~10% or 5 s.
+        let ss = match dur {
+            Some(d) if d > 1.0 => format!("{:.2}", d * 0.1),
+            _ => "5".to_string(),
+        };
+        let out = tokio::process::Command::new("ffmpeg")
+            .args(["-ss", &ss, "-i"])
+            .arg(path)
+            .args([
+                "-vframes", "1",
+                "-vf", "scale=480:-2",
+                "-f", "image2",
+                "-vcodec", "mjpeg",
+                "-q:v", "5",
+            ])
+            .arg(&cache)
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+
+        if out.map(|s| s.success()).unwrap_or(false) {
+            if let Ok(data) = tokio::fs::read(&cache).await {
+                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            }
+        }
+    }
+
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "Video thumbnail unavailable — install ffmpeg",
+    )
+        .into_response()
+}
+
+/// Thumbnail endpoint — generates a JPEG thumbnail for any previewable file.
+/// For video: returns a 2×2 contact-sheet. For others: delegates to preview_handler.
+async fn thumb_handler(
+    AxumPath(rel_path): AxumPath<String>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let abs = match preview_safe_path(&state.root, &rel_path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    let ext = abs
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp"
+        | "f4v" => video_thumb_strip(&abs).await,
+        // For all other types, fall through to the regular preview handler
+        _ => preview_handler(AxumPath(rel_path), State(state)).await,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Static files (embedded)
 // ---------------------------------------------------------------------------
 
@@ -777,6 +931,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/tag-color", post(api_tag_color))
         .route("/api/delete-tag", post(api_delete_tag))
         .route("/preview/*path", get(preview_handler))
+        .route("/thumb/*path", get(thumb_handler))
         .with_state(state);
 
     let addr = format!("{}:{}", args.bind, args.port);

@@ -546,6 +546,37 @@ h3, h4 { font-weight: 600; }
     object-fit: cover;
 }
 
+/* Video contact-sheet: 2×2 grid, fill the card preview area */
+.card-preview img.card-thumb-strip {
+    object-fit: cover;
+    object-position: top left;
+}
+
+/* Filmstrip overlay on video cards */
+.card-preview {
+    position: relative;
+}
+.card:not(.folder) .card-preview img.card-thumb-strip::after {
+    content: '';
+}
+/* Thin filmstrip border overlay rendered via a sibling div added by JS */
+.card-filmstrip-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 9px;
+    line-height: 14px;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+.card-filmstrip-badge svg { width: 10px; height: 10px; }
+
 .card-icon {
     font-size: 36px;
     color: var(--text-tertiary);
