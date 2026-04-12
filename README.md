@@ -165,19 +165,48 @@ Open `http://127.0.0.1:3000` (default) in your browser. The full query language 
 
 Double-clicking a file in the grid or list opens a preview. Supported types:
 
-| Type | How it works |
-| :--- | :--- |
-| JPEG, PNG, GIF, WebP, SVG, BMP, AVIF | Served as-is; displayed in the browser |
-| RAW camera files (ARW, CR2, CR3, NEF, DNG, ...) | Embedded JPEG extracted via `dcraw`/`exiftool`; cached in `.filetag/cache/raw/` |
-| HEIC / HEIF | Converted to JPEG via `magick` or `ffmpeg`; cached in `.filetag/cache/raw/` |
-| Video (MP4, MKV, MOV, ...) | Streamed; thumbnail is a 2×2 contact sheet via `ffmpeg`; cached in `.filetag/cache/thumbs/` |
-| Audio (MP3, FLAC, WAV, ...) | Played in the browser's `<audio>` element |
-| PDF | Served as `application/pdf`; rendered by the browser's built-in PDF viewer (see note below) |
-| Markdown | Rendered to HTML in the browser |
-| Text, source code | Displayed as plain text |
-| ZIP / CBZ | First image page extracted and resized as thumbnail; opened with the built-in comic viewer |
+| Type                                          | How it works |
+| :-------------------------------------------- | :--- |
+| JPEG, PNG, GIF, WebP, SVG, BMP, AVIF          | Served as-is; displayed in the image viewer |
+| RAW camera files (ARW, CR2, CR3, NEF, DNG, …) | Embedded JPEG extracted via `dcraw`/`exiftool`; cached in `.filetag/cache/raw/` |
+| HEIC / HEIF                                   | Converted to JPEG via `magick` or `ffmpeg`; cached in `.filetag/cache/raw/` |
+| Video (MP4, MKV, MOV, …)                      | Streamed; thumbnail is a 2×2 contact sheet via `ffmpeg`; cached in `.filetag/cache/thumbs/` |
+| Audio (MP3, FLAC, WAV, …)                     | Played in the browser's `<audio>` element |
+| PDF                                           | Served as `application/pdf`; rendered by the browser's built-in PDF viewer (see note below) |
+| Markdown                                      | Rendered to HTML in the browser |
+| Text, source code                             | Displayed as plain text |
+| ZIP / CBZ                                     | First image page extracted and resized as thumbnail; opened with the built-in comic/image viewer |
 
 **Thumbnail cache.** All generated thumbnails (resized images, RAW previews, video contact sheets) are written to `.filetag/cache/thumbs/` or `.filetag/cache/raw/`. They are keyed by mtime and file size, so stale entries accumulate when files are replaced. Use the refresh button (↺) in the toolbar to clear the cache for the current directory, or the drop-down next to it to clear the entire cache.
+
+### Image and comic viewer
+
+Images (JPEG, PNG, WebP, RAW, HEIC, etc.) open in a full-screen viewer that also doubles as a comic book reader for ZIP/CBZ archives. The viewer loads all images from the same directory as navigation context, so you can page through a folder without leaving the viewer.
+
+**Keyboard shortcuts:**
+
+| Key               | Action |
+| :---------------- | :----- |
+| `←` / `→` or `A` / `D` | Previous / next image or page |
+| `+` / `-`         | Zoom in / out |
+| `0`               | Reset zoom and pan |
+| `V`               | Toggle vertical scroll mode (continuous scroll) |
+| `H`               | Toggle horizontal scroll mode (side-by-side scroll) |
+| `S`               | Toggle two-page spread |
+| `T`               | Toggle thumbnail strip |
+| `R`               | Toggle right-to-left (manga) mode |
+| `F`               | Toggle full-screen |
+| `Escape`          | Close viewer |
+
+**Mouse / trackpad:**
+
+| Gesture | Action |
+| :------ | :----- |
+| Scroll (no modifier) | Pan (when zoomed in single-page mode), or scroll pages (scroll modes) |
+| Pinch / Ctrl+scroll  | Zoom towards cursor position |
+| Drag                 | Pan (when zoomed) |
+| Double-click (centre zone) | Zoom in; double-click again to reset |
+| Click left/right edge | Previous / next page |
 
 ## How it works
 
