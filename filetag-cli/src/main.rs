@@ -1402,7 +1402,9 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, path)?;
             // Push only makes sense when the linked DB is under the current root (child relationship)
             if PathBuf::from(&linked_path).is_absolute() {
-                anyhow::bail!("push/pull is only supported for databases under the current root (child relationship)");
+                anyhow::bail!(
+                    "push/pull is only supported for databases under the current root (child relationship)"
+                );
             }
 
             let files = db::files_under_prefix(&conn, &linked_path)?;
@@ -1485,7 +1487,9 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, path)?;
             // Pull only makes sense when the linked DB is under the current root (child relationship)
             if PathBuf::from(&linked_path).is_absolute() {
-                anyhow::bail!("push/pull is only supported for databases under the current root (child relationship)");
+                anyhow::bail!(
+                    "push/pull is only supported for databases under the current root (child relationship)"
+                );
             }
             let linked_conn = open_linked_conn(&linked_db_path)?;
 

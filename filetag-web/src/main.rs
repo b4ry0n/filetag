@@ -1099,7 +1099,11 @@ fn sevenz_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool
 // ---------------------------------------------------------------------------
 
 fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     match ext.as_str() {
         "zip" | "cbz" => zip_image_entries(path),
         "rar" | "cbr" => rar_image_entries(path),
@@ -1109,7 +1113,11 @@ fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
 }
 
 fn archive_read_entry(path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     match ext.as_str() {
         "zip" | "cbz" => zip_read_entry(path, entry_name),
         "rar" | "cbr" => rar_read_entry(path, entry_name),
@@ -1119,7 +1127,11 @@ fn archive_read_entry(path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>,
 }
 
 fn archive_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     match ext.as_str() {
         "zip" | "cbz" => zip_list_entries_raw(path),
         "rar" | "cbr" => rar_list_entries_raw(path),
@@ -1391,14 +1403,11 @@ async fn api_zip_entries(
     };
 
     // Enumerate all entries in a blocking thread
-    let raw: Vec<(String, u64, bool)> = match tokio::task::spawn_blocking(move || {
-        archive_list_entries_raw(&abs)
-    })
-    .await
-    {
-        Ok(Ok(v)) => v,
-        _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read archive").into_response(),
-    };
+    let raw: Vec<(String, u64, bool)> =
+        match tokio::task::spawn_blocking(move || archive_list_entries_raw(&abs)).await {
+            Ok(Ok(v)) => v,
+            _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read archive").into_response(),
+        };
 
     // Query tag counts from DB (sync, on async thread — Connection is Send here)
     let conn = match open_conn(&state) {
