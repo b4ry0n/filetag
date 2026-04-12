@@ -1091,7 +1091,11 @@ async fn api_zip_entries(
         for i in 0..archive.len() {
             if let Ok(entry) = archive.by_index(i) {
                 if !entry.is_dir() {
-                    let name  = entry.name().to_owned();
+                    let name = entry.name().to_owned();
+                    // Skip macOS AppleDouble resource forks
+                    if name.starts_with("__MACOSX/") { continue; }
+                    let basename = name.rsplit('/').next().unwrap_or(&name);
+                    if basename.starts_with("._") { continue; }
                     let size  = entry.size();
                     let is_im = is_zip_image(&name);
                     entries.push((name, size, is_im));
