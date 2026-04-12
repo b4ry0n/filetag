@@ -10,6 +10,8 @@ const ICONS = {
     video:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
     pdf:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><polyline points="9 9 10 9"/></svg>',
     text:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>',
+    markdown:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 15V9l3 3 3-3v6"/><line x1="16" y1="9" x2="16" y2="15"/><polyline points="13.5 15 16 15"/></svg>',
+    raw:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="18" y1="0" x2="18" y2="6"/></svg>',
     gotoDir:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4.5v7A1.5 1.5 0 002.5 13h11A1.5 1.5 0 0015 11.5V6a1.5 1.5 0 00-1.5-1.5H7L5.5 3H2.5A1.5 1.5 0 001 4.5z"/><polyline points="9 8 11 10 9 12"/><line x1="6" y1="10" x2="11" y2="10"/></svg>',
 };
 
@@ -18,14 +20,17 @@ const ICONS = {
 // ---------------------------------------------------------------------------
 
 const EXT_MAP = {
-    image: ['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','avif'],
-    audio: ['mp3','flac','wav','ogg','opus','aac','m4a','wma','aiff','alac'],
-    video: ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts'],
-    pdf:   ['pdf'],
-    text:  ['txt','md','markdown','rst','csv','tsv','log','ini','cfg','conf',
-            'json','yaml','yml','toml','xml','html','htm','css','js','ts',
-            'jsx','tsx','py','rb','rs','go','java','c','cpp','h','hpp',
-            'sh','bash','zsh','fish','sql','diff','patch','gitignore'],
+    image:    ['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','avif'],
+    audio:    ['mp3','flac','wav','ogg','opus','aac','m4a','wma','aiff','alac'],
+    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v'],
+    pdf:      ['pdf'],
+    markdown: ['md','markdown'],
+    text:     ['txt','rst','csv','tsv','log','ini','cfg','conf',
+               'json','yaml','yml','toml','xml','html','htm','css','js','ts',
+               'jsx','tsx','py','rb','rs','go','java','c','cpp','h','hpp',
+               'sh','bash','zsh','fish','sql','diff','patch','gitignore','env'],
+    raw:      ['arw','cr2','cr3','nef','orf','rw2','dng','raf','pef','srw',
+               'raw','3fr','x3f','rwl','iiq','mef','mos','heic','heif'],
 };
 
 function fileType(name) {
@@ -67,6 +72,84 @@ function formatDate(mtimeNs) {
 function formatTag(tag) {
     if (tag.value) return tag.name + '=' + tag.value;
     return tag.name;
+}
+
+// ---------------------------------------------------------------------------
+// Markdown renderer (local, no external deps)
+// ---------------------------------------------------------------------------
+
+function renderMarkdown(src) {
+    // Protect fenced code blocks first
+    const fenced = [];
+    src = src.replace(/```([\w]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+        const i = fenced.length;
+        const langClass = lang ? ` class="lang-${escMd(lang)}"` : '';
+        fenced.push(`<pre class="md-pre"><code${langClass}>${escMd(code.replace(/\n$/, ''))}</code></pre>`);
+        return `\x00F${i}\x00`;
+    });
+    // Inline code
+    src = src.replace(/`([^`\n]+)`/g, (_, c) => `<code class="md-code">${escMd(c)}</code>`);
+
+    // Headings
+    src = src.replace(/^(#{1,6}) +(.+)$/gm, (_, h, t) =>
+        `<h${h.length} class="md-h md-h${h.length}">${t.trim()}</h${h.length}>`);
+
+    // Horizontal rule
+    src = src.replace(/^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/gm, '<hr class="md-hr">');
+
+    // Bold + italic combined
+    src = src.replace(/\*{3}(.+?)\*{3}/g, '<strong><em>$1</em></strong>');
+    src = src.replace(/_{3}(.+?)_{3}/g, '<strong><em>$1</em></strong>');
+    // Bold
+    src = src.replace(/\*{2}(.+?)\*{2}/g, '<strong>$1</strong>');
+    src = src.replace(/_{2}(.+?)_{2}/g, '<strong>$1</strong>');
+    // Italic
+    src = src.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+    src = src.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+    // Strikethrough
+    src = src.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+    // Images — render as placeholder (no external fetching)
+    src = src.replace(/!\[([^\]]*)\]\([^)]*\)/g,
+        (_, alt) => `<span class="md-img">[image${alt ? ': ' + escMd(alt) : ''}]</span>`);
+    // Links — keep text, discard href (safer for local preview)
+    src = src.replace(/\[([^\]]+)\]\([^)]+\)/g, '<span class="md-link">$1</span>');
+    // Auto-links
+    src = src.replace(/https?:\/\/\S+/g, url => `<span class="md-link">${escMd(url)}</span>`);
+
+    // Blockquotes
+    src = src.replace(/^(>[ \t]*.+\n?)+/gm, m => {
+        const inner = m.replace(/^>[ \t]?/gm, '').trim();
+        return `<blockquote class="md-bq">${inner}</blockquote>\n`;
+    });
+
+    // Unordered lists (simple, single-level)
+    src = src.replace(/^[ \t]*[-*+] (.+)$/gm, '<li>$1</li>');
+    src = src.replace(/(<li>.*<\/li>\n?)+/g, m => `<ul class="md-ul">${m}</ul>`);
+
+    // Ordered lists
+    src = src.replace(/^[ \t]*\d+\. (.+)$/gm, '<li>$1</li>');
+
+    // Paragraphs: blank-line-separated
+    const paras = src.split(/\n{2,}/);
+    src = paras.map(p => {
+        p = p.trim();
+        if (!p) return '';
+        // Don't wrap block-level elements
+        if (/^<(h[1-6]|ul|ol|li|blockquote|pre|hr)/.test(p)) return p;
+        return `<p class="md-p">${p.replace(/\n/g, '<br>')}</p>`;
+    }).join('\n');
+
+    // Restore fenced blocks
+    src = src.replace(/\x00F(\d+)\x00/g, (_, i) => fenced[+i]);
+    return src;
+}
+
+function escMd(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 // ---------------------------------------------------------------------------
@@ -611,15 +694,25 @@ function renderDetail() {
     let preview;
     if (type_ === 'image') {
         preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','image')" title="Click to enlarge">` +
-                  `<img src="${previewUrl}" alt="${esc(name)}"></a>`;
+                  `<img src="${previewUrl}" alt="${esc(name)}"` +
+                  ` onerror="this.closest('.detail-preview').innerHTML='<div class=\\'no-preview\\'>${fileIcon(name)}</div>'"></a>`;
+    } else if (type_ === 'raw') {
+        preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','raw')" title="Click to enlarge">` +
+                  `<img src="${previewUrl}" alt="${esc(name)}"` +
+                  ` onerror="this.closest('.detail-preview').innerHTML='<div class=\\'no-preview raw-unavail\\'>` +
+                  `${fileIcon(name)}<div class=\\'preview-unavail-msg\\'>RAW preview: install dcraw or exiftool</div></div>'"></a>`;
     } else if (type_ === 'audio') {
         preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${esc(f.path)}','audio')"></audio>`;
     } else if (type_ === 'video') {
         preview = `<video controls preload="metadata" src="${previewUrl}"` +
-                  ` onclick="openLightbox('${esc(f.path)}','video')" style="cursor:zoom-in"></video>`;
+                  ` onclick="openLightbox('${esc(f.path)}','video')" style="cursor:zoom-in"` +
+                  ` onerror="this.replaceWith((() => { const d=document.createElement('div'); d.className='no-preview'; d.innerHTML='${fileIcon(name)}<div class=\\'preview-unavail-msg\\'>Browser cannot play this format</div>'; return d; })())"></video>`;
     } else if (type_ === 'pdf') {
         preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}"></iframe>` +
                   `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${esc(f.path)}','pdf')">Full-size PDF</button></div>`;
+    } else if (type_ === 'markdown') {
+        preview = `<div class="preview-markdown" id="preview-md-content" ondblclick="openLightbox('${esc(f.path)}','markdown')"` +
+                  ` title="Double-click to enlarge">Loading…</div>`;
     } else if (type_ === 'text') {
         preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${esc(f.path)}','text')"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
@@ -658,18 +751,27 @@ function renderDetail() {
 
     attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
 
-    // Async-fetch text content after DOM is set
+    // Async-fetch text/markdown content after DOM is set
     if (type_ === 'text') {
         const el = document.getElementById('preview-text-content');
         if (el) {
-            const maxBytes = 32 * 1024; // 32 KiB
-            fetch(previewUrl + '?raw=1').then(r => {
+            fetch(previewUrl).then(r => {
                 if (!r.ok) throw new Error(r.statusText);
                 return r.text();
             }).then(txt => {
-                if (el) {
-                    el.textContent = txt.length > 60000 ? txt.slice(0, 60000) + '\n…' : txt;
-                }
+                if (el) el.textContent = txt.length > 60000 ? txt.slice(0, 60000) + '\n…' : txt;
+            }).catch(() => {
+                if (el) el.textContent = '(Could not load preview)';
+            });
+        }
+    } else if (type_ === 'markdown') {
+        const el = document.getElementById('preview-md-content');
+        if (el) {
+            fetch(previewUrl).then(r => {
+                if (!r.ok) throw new Error(r.statusText);
+                return r.text();
+            }).then(txt => {
+                if (el) el.innerHTML = renderMarkdown(txt);
             }).catch(() => {
                 if (el) el.textContent = '(Could not load preview)';
             });
@@ -1137,24 +1239,105 @@ function closeDetail() {
 // Lightbox
 // ---------------------------------------------------------------------------
 
+// Zoom/pan state for images
+const _lb = { scale: 1, dx: 0, dy: 0, dragging: false, sx: 0, sy: 0, isImg: false };
+
+function _lbApplyTransform() {
+    const img = document.querySelector('#lightbox-content img');
+    if (img) img.style.transform = `translate(${_lb.dx}px,${_lb.dy}px) scale(${_lb.scale})`;
+}
+
+function _lbWheel(e) {
+    if (!_lb.isImg) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    _lb.scale = Math.min(Math.max(_lb.scale * factor, 0.5), 12);
+    _lbApplyTransform();
+}
+
+function _lbMouseDown(e) {
+    if (!_lb.isImg || _lb.scale <= 1) return;
+    _lb.dragging = true;
+    _lb.sx = e.clientX - _lb.dx;
+    _lb.sy = e.clientY - _lb.dy;
+    e.preventDefault();
+}
+
+function _lbMouseMove(e) {
+    if (!_lb.dragging) return;
+    _lb.dx = e.clientX - _lb.sx;
+    _lb.dy = e.clientY - _lb.sy;
+    _lbApplyTransform();
+}
+
+function _lbMouseUp() { _lb.dragging = false; }
+
+function _lbDblClick(e) {
+    if (!_lb.isImg) return;
+    if (_lb.scale !== 1) {
+        _lb.scale = 1; _lb.dx = 0; _lb.dy = 0;
+    } else {
+        _lb.scale = 2;
+    }
+    _lbApplyTransform();
+    e.stopPropagation();
+}
+
+function _lbAttachZoom() {
+    const el = document.getElementById('lightbox');
+    el.addEventListener('wheel', _lbWheel, { passive: false });
+    el.addEventListener('mousedown', _lbMouseDown);
+    el.addEventListener('mousemove', _lbMouseMove);
+    el.addEventListener('mouseup', _lbMouseUp);
+    el.addEventListener('mouseleave', _lbMouseUp);
+    el.addEventListener('dblclick', _lbDblClick);
+}
+
+function _lbDetachZoom() {
+    const el = document.getElementById('lightbox');
+    if (!el) return;
+    el.removeEventListener('wheel', _lbWheel);
+    el.removeEventListener('mousedown', _lbMouseDown);
+    el.removeEventListener('mousemove', _lbMouseMove);
+    el.removeEventListener('mouseup', _lbMouseUp);
+    el.removeEventListener('mouseleave', _lbMouseUp);
+    el.removeEventListener('dblclick', _lbDblClick);
+}
+
 function openLightbox(path, type) {
     const url = '/preview/' + encodeURI(path);
     const lb = document.getElementById('lightbox');
     const content = document.getElementById('lightbox-content');
+    _lb.scale = 1; _lb.dx = 0; _lb.dy = 0; _lb.dragging = false;
+    _lb.isImg = (type === 'image' || type === 'raw');
+
     let html = '';
-    if (type === 'image') {
-        html = `<img src="${url}" alt="${esc(path.split('/').pop())}">`;
+    if (type === 'image' || type === 'raw') {
+        html = `<img src="${url}" alt="${esc(path.split('/').pop())}"
+                     onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Preview unavailable',className:'lightbox-error'}))">`;
     } else if (type === 'video') {
-        html = `<video controls autoplay src="${url}"></video>`;
+        html = `<video controls autoplay src="${url}"
+                       onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Cannot play this video format',className:'lightbox-error'}))"></video>`;
     } else if (type === 'audio') {
         html = `<audio controls autoplay src="${url}"></audio>`;
     } else if (type === 'pdf') {
         html = `<iframe class="lightbox-pdf" src="${url}" title="${esc(path.split('/').pop())}"></iframe>`;
-    } else if (type === 'text') {
+    } else if (type === 'text' || type === 'markdown') {
         html = `<pre class="lightbox-text" id="lightbox-text-pre">Loading…</pre>`;
     }
     content.innerHTML = html;
     lb.hidden = false;
+
+    // Zoom hint for images
+    if (_lb.isImg) {
+        _lbAttachZoom();
+        const hint = document.createElement('div');
+        hint.className = 'lightbox-hint';
+        hint.textContent = 'Scroll to zoom · drag to pan · double-click to reset';
+        lb.appendChild(hint);
+        setTimeout(() => hint.remove(), 2500);
+    }
+
     document.addEventListener('keydown', _lightboxKeyHandler, { once: true });
 
     if (type === 'text') {
@@ -1165,25 +1348,40 @@ function openLightbox(path, type) {
             const el = document.getElementById('lightbox-text-pre');
             if (el) el.textContent = '(Could not load file)';
         });
+    } else if (type === 'markdown') {
+        fetch(url).then(r => r.text()).then(txt => {
+            const pre = document.getElementById('lightbox-text-pre');
+            if (!pre) return;
+            const div = document.createElement('div');
+            div.className = 'lightbox-markdown';
+            div.innerHTML = renderMarkdown(txt);
+            pre.replaceWith(div);
+        }).catch(() => {
+            const el = document.getElementById('lightbox-text-pre');
+            if (el) el.textContent = '(Could not load file)';
+        });
     }
 }
 
 function closeLightbox(event) {
-    // Close when: close button clicked, backdrop clicked, or called without event
     if (event && event.target !== document.getElementById('lightbox') &&
         !event.target.classList.contains('lightbox-close')) return;
+    _lbDetachZoom();
     const lb = document.getElementById('lightbox');
     lb.hidden = true;
     document.getElementById('lightbox-content').innerHTML = '';
+    // Remove leftover hint if any
+    lb.querySelectorAll('.lightbox-hint').forEach(h => h.remove());
 }
 
 function _lightboxKeyHandler(e) {
     if (e.key === 'Escape') {
+        _lbDetachZoom();
         const lb = document.getElementById('lightbox');
         lb.hidden = true;
         document.getElementById('lightbox-content').innerHTML = '';
+        lb.querySelectorAll('.lightbox-hint').forEach(h => h.remove());
     } else {
-        // Re-attach for next keypress if not Escape
         document.addEventListener('keydown', _lightboxKeyHandler, { once: true });
     }
 }
