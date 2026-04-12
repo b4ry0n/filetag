@@ -1589,6 +1589,11 @@ function cvToggleRtl() {
         thumbs.style.borderRight = '1px solid rgba(255,255,255,0.08)';
         thumbs.style.borderLeft  = '';
     }
+    // In horizontal scroll mode, also flip the pages row without rebuilding
+    if (_cv.scroll && _cv.scrollDir === 'h') {
+        const container = document.getElementById('cv-pages');
+        container.style.flexDirection = _cv.rtl ? 'row-reverse' : '';
+    }
     cvShowPage(_cv.current);
 }
 
@@ -1682,6 +1687,8 @@ function cvBuildScrollView() {
 
     stage.classList.add(_cv.scrollDir === 'h' ? 'cv-hscroll-mode' : 'cv-scroll-mode');
     container.style.transform = 'none';
+    // RTL in horizontal mode: reverse the row so first page is on the right
+    if (_cv.scrollDir === 'h' && _cv.rtl) container.style.flexDirection = 'row-reverse';
     container.innerHTML = '';
 
     _cv.pages.forEach((_name, i) => {
@@ -1741,6 +1748,7 @@ function cvExitScrollView() {
     stage.style.removeProperty('--cv-scroll-height');
     const container = document.getElementById('cv-pages');
     container.style.transform = '';
+    container.style.flexDirection = '';
     container.innerHTML = '';
     document.getElementById('cv-spread-btn').disabled = false;
     _cv.scrollWidth = 100; _cv.scrollHeight = 90;
