@@ -1524,6 +1524,8 @@ const _cv = {
     spread: false,   // two-page spread mode
     thumbs: false,   // thumbnail strip visible
     rtl: false,      // right-to-left reading (manga)
+    scroll: false,   // vertical continuous scroll mode
+    scrollWidth: 100, // image width % in scroll mode
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -1552,12 +1554,17 @@ async function openComicViewer(path) {
         return;
     }
     cvBuildThumbs();
-    cvShowPage(0);
+    if (_cv.scroll) {
+        cvBuildScrollView();
+    } else {
+        cvShowPage(0);
+    }
     document.addEventListener('keydown', _cvKeyHandler);
 }
 
 function closeComicViewer() {
     if (document.fullscreenElement) document.exitFullscreen();
+    if (_cv.scroll) cvExitScrollView();
     document.getElementById('comic-viewer').hidden = true;
     document.removeEventListener('keydown', _cvKeyHandler);
     _cv.path = null; _cv.pages = []; _cv.current = 0;
@@ -1622,6 +1629,99 @@ function cvScrollThumbIntoView(idx) {
 }
 
 // ---------------------------------------------------------------------------
+// Comic viewer – vertical scroll mode
+// ---------------------------------------------------------------------------
+
+let _cvScrollObserver = null;
+
+function cvToggleScroll() {
+    _cv.scroll = !_cv.scroll;
+    document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll);
+    // Spread is incompatible with scroll mode; disable it while scrolling
+    document.getElementById('cv-spread-btn').disabled = _cv.scroll;
+    if (_cv.scroll) {
+        cvBuildScrollView();
+    } else {
+        cvExitScrollView();
+    }
+}
+
+function cvApplyScrollZoom(newWidth) {
+    if (newWidth !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newWidth));
+    const stage = document.getElementById('cv-stage');
+    if (stage) stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
+    const btn = document.getElementById('cv-zoom-reset-btn');
+    if (btn) {
+        btn.textContent = Math.round(_cv.scrollWidth) + '%';
+        btn.style.display = _cv.scrollWidth === 100 ? 'none' : '';
+    }
+}
+
+function cvBuildScrollView() {
+    const stage     = document.getElementById('cv-stage');
+    const container = document.getElementById('cv-pages');
+
+    stage.classList.add('cv-scroll-mode');
+    container.style.transform = 'none';
+    container.innerHTML = '';
+
+    _cv.pages.forEach((_name, i) => {
+        const url = `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}`;
+        const img = document.createElement('img');
+        img.className = 'cv-page';
+        img.dataset.page = i;
+        img.src = url;
+        img.alt = `page ${i + 1}`;
+        img.loading = 'lazy';
+        container.appendChild(img);
+    });
+
+    // Track which page is most visible and update status + thumbnail strip
+    _cvScrollObserver = new IntersectionObserver(entries => {
+        let best = -1, bestRatio = 0;
+        entries.forEach(entry => {
+            if (entry.intersectionRatio > bestRatio) {
+                bestRatio = entry.intersectionRatio;
+                best = Number(entry.target.dataset.page);
+            }
+        });
+        if (best >= 0 && best !== _cv.current) {
+            _cv.current = best;
+            cvUpdateThumbActive(best);
+            document.getElementById('cv-status').textContent = `${best + 1} / ${_cv.pages.length}`;
+        }
+    }, { root: stage, threshold: [0, 0.25, 0.5, 0.75, 1.0] });
+
+    container.querySelectorAll('img.cv-page[data-page]').forEach(img => {
+        _cvScrollObserver.observe(img);
+    });
+
+    cvApplyScrollZoom();
+
+    // Scroll to the page that was open before entering scroll mode
+    const target = container.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
+    if (target) {
+        // Use requestAnimationFrame so the DOM is laid out first
+        requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+    }
+    document.getElementById('cv-status').textContent =
+        `${_cv.current + 1} / ${_cv.pages.length}`;
+}
+
+function cvExitScrollView() {
+    if (_cvScrollObserver) { _cvScrollObserver.disconnect(); _cvScrollObserver = null; }
+    const stage = document.getElementById('cv-stage');
+    stage.classList.remove('cv-scroll-mode');
+    stage.style.removeProperty('--cv-scroll-width');
+    const container = document.getElementById('cv-pages');
+    container.style.transform = '';
+    container.innerHTML = '';
+    document.getElementById('cv-spread-btn').disabled = false;
+    _cv.scrollWidth = 100;
+    cvShowPage(_cv.current);
+}
+
+// ---------------------------------------------------------------------------
 // Comic viewer – zoom / pan
 // ---------------------------------------------------------------------------
 
@@ -1629,6 +1729,7 @@ const _cvDrag = { active: false, moved: false, startX: 0, startY: 0, startPanX: 
 let _cvPinchStart = null;  // { dist, zoom, midX, midY }
 
 function cvApplyTransform() {
+    if (_cv.scroll) return;  // scroll mode uses width-based zoom, not CSS transform
     const container = document.getElementById('cv-pages');
     if (container) {
         container.style.transform =
@@ -1645,6 +1746,7 @@ function cvApplyTransform() {
 }
 
 function cvResetZoom() {
+    if (_cv.scroll) { cvApplyScrollZoom(100); return; }
     _cv.zoom = 1; _cv.panX = 0; _cv.panY = 0;
     cvApplyTransform();
 }
@@ -1670,15 +1772,30 @@ function cvZoomTo(newZoom, originX, originY) {
     cvApplyTransform();
 }
 
-function cvZoomIn()  { cvZoomTo(_cv.zoom * 1.25, 0, 0); }
-function cvZoomOut() { cvZoomTo(_cv.zoom / 1.25, 0, 0); }
+function cvZoomIn()  {
+    if (_cv.scroll) { cvApplyScrollZoom(_cv.scrollWidth * 1.25); return; }
+    cvZoomTo(_cv.zoom * 1.25, 0, 0);
+}
+function cvZoomOut() {
+    if (_cv.scroll) { cvApplyScrollZoom(_cv.scrollWidth / 1.25); return; }
+    cvZoomTo(_cv.zoom / 1.25, 0, 0);
+}
 
 function _cvInitStageEvents() {
     const stage = document.getElementById('cv-stage');
 
-    // Wheel: zoom towards cursor
+    // Wheel: zoom towards cursor (or scroll width in scroll mode with Ctrl held)
     stage.addEventListener('wheel', e => {
         if (document.getElementById('comic-viewer').hidden) return;
+        if (_cv.scroll) {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                cvApplyScrollZoom(_cv.scrollWidth * factor);
+            }
+            // Otherwise: let the browser scroll natively
+            return;
+        }
         e.preventDefault();
         const rect  = stage.getBoundingClientRect();
         const ox = e.clientX - rect.left  - rect.width  / 2;
@@ -1687,9 +1804,10 @@ function _cvInitStageEvents() {
         cvZoomTo(_cv.zoom * factor, ox, oy);
     }, { passive: false });
 
-    // Mousedown: start drag when zoomed
+    // Mousedown: start drag when zoomed (not in scroll mode)
     stage.addEventListener('mousedown', e => {
         if (document.getElementById('comic-viewer').hidden) return;
+        if (_cv.scroll) return;
         _cvDrag.moved   = false;
         _cvDrag.startX  = e.clientX;  _cvDrag.startY  = e.clientY;
         _cvDrag.startPanX = _cv.panX; _cvDrag.startPanY = _cv.panY;
@@ -1790,6 +1908,16 @@ function cvShowPage(idx) {
     idx = Math.max(0, Math.min(idx, _cv.pages.length - 1));
     _cv.current = idx;
 
+    // In scroll mode: scroll to the page instead of replacing content
+    if (_cv.scroll) {
+        const container = document.getElementById('cv-pages');
+        const target = container.querySelector(`img.cv-page[data-page="${idx}"]`);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('cv-status').textContent = `${idx + 1} / ${_cv.pages.length}`;
+        cvUpdateThumbActive(idx);
+        return;
+    }
+
     const container = document.getElementById('cv-pages');
     const url1 = `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx })}`;
     // In spread mode, RTL shows the next page to the LEFT of the current one
@@ -1843,24 +1971,28 @@ function cvToggleSpread() {
 function _cvKeyHandler(e) {
     if (document.getElementById('comic-viewer').hidden) return;
     // ArrowRight = forward in reading direction (RTL: lower index; LTR: higher index)
-    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); _cv.rtl ? cvPrev() : cvNext(); }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); _cv.rtl ? cvNext() : cvPrev(); }
-    else if (e.key === 'f' || e.key === 'F') cvToggleFullscreen();
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || (e.key === ' ' && !_cv.scroll)) {
+        e.preventDefault(); _cv.rtl ? cvPrev() : cvNext();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault(); _cv.rtl ? cvNext() : cvPrev();
+    } else if (e.key === 'f' || e.key === 'F') cvToggleFullscreen();
     else if (e.key === 't' || e.key === 'T') cvToggleThumbs();
     else if (e.key === 'r' || e.key === 'R') cvToggleRtl();
+    else if (e.key === 'v' || e.key === 'V') cvToggleScroll();
     else if (e.key === '+' || e.key === '=') cvZoomIn();
     else if (e.key === '-') cvZoomOut();
     else if (e.key === '0') cvResetZoom();
     else if (e.key === 'Escape') {
-        if (_cv.zoom > 1) { cvResetZoom(); } else { closeComicViewer(); }
+        if (_cv.zoom > 1 || _cv.scrollWidth !== 100) { cvResetZoom(); }
+        else { closeComicViewer(); }
     }
 }
 
 function cvClickNav(e) {
+    if (_cv.scroll) return;  // no click-nav in scroll mode
     if (_cv.zoom > 1 || _cvDrag.moved) return;
     const x = e.clientX / window.innerWidth;
     if (_cv.rtl) {
-        // RTL: clicking the right third goes forward (lower index)
         if (x > 0.7) cvNext();
         else if (x < 0.3) cvPrev();
     } else {
