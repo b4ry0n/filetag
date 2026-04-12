@@ -1282,8 +1282,8 @@ fn resolve_registered_child(
     root: &std::path::Path,
     path: &PathBuf,
 ) -> Result<(String, PathBuf)> {
-    let abs = std::fs::canonicalize(path)
-        .with_context(|| format!("resolving {}", path.display()))?;
+    let abs =
+        std::fs::canonicalize(path).with_context(|| format!("resolving {}", path.display()))?;
     let child_db_path = abs.join(".filetag").join("db.sqlite3");
     if !child_db_path.is_file() {
         anyhow::bail!(
