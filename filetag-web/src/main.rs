@@ -722,7 +722,12 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 
         // Acquire a concurrency permit so we don't spawn dozens of ffmpeg processes
         // in parallel when browsing directories with many large video files.
-        let _permit = THUMB_LIMITER.acquire().await.ok();
+        let _permit = match THUMB_LIMITER.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+            }
+        };
 
         // Determine seek positions
         let dur = video_duration(path).await;
@@ -837,7 +842,13 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                let _permit = THUMB_LIMITER.acquire().await.ok();
+                let _permit = match THUMB_LIMITER.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
+                            .into_response();
+                    }
+                };
                 let result = tokio::task::spawn_blocking(move || archive_cover_image(&abs)).await;
                 if let Ok(Ok(img_bytes)) = result {
                     // Write to a temp file so image_thumb_jpeg can read it
@@ -869,7 +880,13 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                let _permit = THUMB_LIMITER.acquire().await.ok();
+                let _permit = match THUMB_LIMITER.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
+                            .into_response();
+                    }
+                };
                 // Convert to JPEG first, then resize
                 let full = preview_heic(&abs, &root).await;
                 // preview_heic returns a Response; we can't easily re-use its bytes here,
@@ -890,7 +907,13 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                let _permit = THUMB_LIMITER.acquire().await.ok();
+                let _permit = match THUMB_LIMITER.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
+                            .into_response();
+                    }
+                };
                 // Get the full preview JPEG, then downscale it
                 if let Some(full_jpeg) = raw_extract_jpeg(&abs).await {
                     // Write full preview to a temp path, resize it
@@ -917,7 +940,13 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                let _permit = THUMB_LIMITER.acquire().await.ok();
+                let _permit = match THUMB_LIMITER.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
+                            .into_response();
+                    }
+                };
                 if let Some(data) = pdf_thumb_jpeg(&abs, &root).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
@@ -934,7 +963,13 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                let _permit = THUMB_LIMITER.acquire().await.ok();
+                let _permit = match THUMB_LIMITER.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
+                            .into_response();
+                    }
+                };
                 if let Some(data) = image_thumb_jpeg(&abs).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
@@ -1519,7 +1554,12 @@ async fn api_zip_thumb(
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
-        let _permit = THUMB_LIMITER.acquire().await.ok();
+        let _permit = match THUMB_LIMITER.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+            }
+        };
 
         // Extract the page, write to temp, resize, cache, serve
         let result = tokio::task::spawn_blocking(move || {

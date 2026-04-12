@@ -932,8 +932,22 @@ function _previewVideoError(video) {
 }
 
 function _cardThumbError(img) {
-    // Fall back to generic file icon when card thumbnail fails to load
+    const src = img.src;
     const name = img.dataset.name || '';
+
+    // Retry thumbnail URLs when the server is busy (503 — queue full).
+    // Retries up to 10 times with a linearly increasing delay (1 s, 2 s, … 8 s max).
+    if (src && (src.includes('/thumb/') || src.includes('/api/zip/thumb'))) {
+        const retries = parseInt(img.dataset.thumbRetries || '0', 10);
+        if (retries < 10) {
+            img.dataset.thumbRetries = retries + 1;
+            const delay = Math.min(1000 * (retries + 1), 8000);
+            setTimeout(() => { img.src = ''; img.src = src; }, delay);
+            return;
+        }
+    }
+
+    // Fall back to generic file icon when card thumbnail fails to load
     const wrap = img.closest('.card-preview');
     if (wrap) wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
 }
