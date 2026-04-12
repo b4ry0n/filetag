@@ -201,7 +201,7 @@ async fn preview_handler(
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw"
         | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos"
         | "psd" | "psb" | "xcf" | "ai" | "eps" => {
-            preview_raw(&abs).await
+            preview_raw(&abs, &state.root).await
         }
         "heic" | "heif" => preview_heic(&abs, &state.root).await,
         _ => serve_file_bytes(&abs).await,
@@ -281,9 +281,60 @@ async fn serve_file_bytes(path: &Path) -> Response {
     }
 }
 
+/// Return the cache path for a RAW preview JPEG, keyed by mtime + size.
+/// Stored in <root>/.filetag/cache/raw/.
+fn raw_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
+    let meta = std::fs::metadata(abs).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let size = meta.len();
+    let stem = abs
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = format!("{mtime}_{size}_{stem}.prev.jpg");
+    let dir = root.join(".filetag").join("cache").join("raw");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(key))
+}
+
 /// Try to extract a JPEG preview from a RAW file using available tools.
-/// Attempt order: dcraw -e -c → exiftool → ffmpeg
-async fn preview_raw(path: &Path) -> Response {
+/// Attempt order: dcraw -e -c → exiftool → ffmpeg → ImageMagick.
+/// Result is cached in <root>/.filetag/cache/raw/ keyed by mtime+size.
+async fn preview_raw(path: &Path, root: &Path) -> Response {
+    // Serve from cache if available
+    if let Some(cache) = raw_cache_path(path, root) {
+        if let Ok(data) = tokio::fs::read(&cache).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+
+        // Cache miss: run the tool chain, then persist the result
+        let jpeg = raw_extract_jpeg(path).await;
+        if let Some(data) = jpeg {
+            let _ = tokio::fs::write(&cache, &data).await;
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+    } else {
+        // Could not determine cache path (e.g. no metadata); try without cache
+        if let Some(data) = raw_extract_jpeg(path).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+    }
+
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "RAW preview unavailable — install dcraw, exiftool, ffmpeg, or ImageMagick",
+    )
+        .into_response()
+}
+
+/// Inner extraction logic for `preview_raw`: tries tools in order and returns
+/// the first JPEG bytes found, or `None` if all tools fail.
+async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
     // dcraw: extract embedded thumbnail to stdout
     if let Ok(out) = tokio::process::Command::new("dcraw")
         .args(["-e", "-c"])
@@ -292,7 +343,7 @@ async fn preview_raw(path: &Path) -> Response {
         .await
     {
         if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+            return Some(out.stdout);
         }
     }
 
@@ -305,7 +356,7 @@ async fn preview_raw(path: &Path) -> Response {
             .await
         {
             if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-                return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+                return Some(out.stdout);
             }
         }
     }
@@ -327,7 +378,7 @@ async fn preview_raw(path: &Path) -> Response {
         .await
     {
         if out.status.success() && !out.stdout.is_empty() {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+            return Some(out.stdout);
         }
     }
 
@@ -341,17 +392,12 @@ async fn preview_raw(path: &Path) -> Response {
             .await
         {
             if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-                return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+                return Some(out.stdout);
             }
         }
     }
 
-    // Fallback: send a structured error so the frontend can show a message
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "RAW preview unavailable — install dcraw, exiftool, ffmpeg, or ImageMagick",
-    )
-        .into_response()
+    None
 }
 
 /// Convert HEIC/HEIF to JPEG for browser display.
