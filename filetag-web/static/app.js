@@ -511,8 +511,9 @@ function renderGrid(items) {
         let preview = '';
         if (isDir) {
             preview = `<div class="card-icon">${ICONS.folder}</div>`;
-        } else if (type_ === 'image') {
-            preview = `<img src="/preview/${encodeURI(fullPath(entry))}" loading="lazy" alt="">`;
+        } else if (type_ === 'image' || type_ === 'raw') {
+            preview = `<img src="/preview/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+                data-name="${esc(name)}" onerror="_cardThumbError(this)">`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
         }
@@ -655,6 +656,13 @@ function _previewVideoError(video) {
     d.className = 'no-preview';
     d.innerHTML = `${fileIcon(n)}<div class="preview-unavail-msg">Browser cannot play this format</div>`;
     video.replaceWith(d);
+}
+
+function _cardThumbError(img) {
+    // Fall back to generic file icon when card thumbnail fails to load
+    const name = img.dataset.name || '';
+    const wrap = img.closest('.card-preview');
+    if (wrap) wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
 }
 
 // ---------------------------------------------------------------------------
