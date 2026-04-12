@@ -410,6 +410,7 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
     if let Ok(out) = tokio::process::Command::new("dcraw")
         .args(["-e", "-c"])
         .arg(path)
+        .kill_on_drop(true)
         .output()
         .await
         && out.status.success()
@@ -423,6 +424,7 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
         if let Ok(out) = tokio::process::Command::new("exiftool")
             .args(["-b", tag])
             .arg(path)
+            .kill_on_drop(true)
             .output()
             .await
             && out.status.success()
@@ -446,6 +448,7 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
             "mjpeg",
             "pipe:1",
         ])
+        .kill_on_drop(true)
         .output()
         .await
         && out.status.success()
@@ -460,6 +463,7 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
         if let Ok(out) = tokio::process::Command::new(cmd)
             .arg(&path_layer)
             .args(["-flatten", "-quality", "85", "jpg:-"])
+            .kill_on_drop(true)
             .output()
             .await
             && out.status.success()
@@ -503,6 +507,7 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
         .arg(path)
         .arg("--out")
         .arg(&tmp)
+        .kill_on_drop(true)
         .output()
         .await
         && out.status.success()
@@ -525,6 +530,7 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
             "mjpeg",
             "pipe:1",
         ])
+        .kill_on_drop(true)
         .output()
         .await
         && out.status.success()
@@ -539,6 +545,7 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
         .arg(path)
         .args(["-auto-orient"])
         .arg(&tmp)
+        .kill_on_drop(true)
         .output()
         .await
         && out.status.success()
@@ -585,6 +592,7 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
                 "jpg:-",
             ])
             .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
             .output()
             .await
             && out.status.success()
@@ -618,6 +626,7 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
             "pipe:1",
         ])
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await
         && out.status.success()
@@ -661,6 +670,7 @@ async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
         .arg(path)
         .arg(&tmp_prefix)
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .status()
         .await;
 
@@ -697,6 +707,7 @@ async fn video_duration(path: &Path) -> Option<f64> {
             "csv=p=0",
         ])
         .arg(path)
+        .kill_on_drop(true)
         .output()
         .await
         .ok()?;
@@ -795,6 +806,7 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             ])
             .arg(&cache)
             .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
             .status()
             .await;
 
