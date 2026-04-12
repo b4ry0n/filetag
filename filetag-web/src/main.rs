@@ -746,25 +746,25 @@ async fn thumb_handler(
         .to_lowercase();
 
     match ext.as_str() {
-        // ZIP/CBZ: thumbnail = first image page, resized
-        "zip" | "cbz" => {
+        // ZIP/CBZ/RAR/CBR/7z/CB7: thumbnail = first image page, resized
+        "zip" | "cbz" | "rar" | "cbr" | "7z" | "cb7" => {
             if let Some(cache) = thumb_cache_path(&abs, &state.root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
                 let result = tokio::task::spawn_blocking(move || {
-                    let pages = zip_image_entries(&abs)?;
+                    let pages = archive_image_entries(&abs)?;
                     let first = pages
                         .into_iter()
                         .next()
-                        .ok_or_else(|| anyhow::anyhow!("no images in ZIP"))?;
-                    let (data, _) = zip_read_entry(&abs, &first)?;
+                        .ok_or_else(|| anyhow::anyhow!("no images in archive"))?;
+                    let (data, _) = archive_read_entry(&abs, &first)?;
                     Ok::<Vec<u8>, anyhow::Error>(data)
                 })
                 .await;
                 if let Ok(Ok(img_bytes)) = result {
                     // Write to a temp file so image_thumb_jpeg can read it
-                    let tmp = cache.with_extension("zip_src.jpg");
+                    let tmp = cache.with_extension("archive_src.jpg");
                     if tokio::fs::write(&tmp, &img_bytes).await.is_ok() {
                         if let Some(small) = image_thumb_jpeg(&tmp).await {
                             let _ = tokio::fs::remove_file(&tmp).await;
@@ -778,7 +778,7 @@ async fn thumb_handler(
                     }
                 }
             }
-            (StatusCode::UNPROCESSABLE_ENTITY, "No images in ZIP").into_response()
+            (StatusCode::UNPROCESSABLE_ENTITY, "No images in archive").into_response()
         }
 
         // Video: 2×2 contact-sheet
@@ -962,6 +962,172 @@ fn zip_read_entry(zip_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>,
     Ok((buf, mime))
 }
 
+/// List all (name, unpacked_size, is_image) entries from a ZIP, sorted naturally.
+fn zip_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
+    let file = std::fs::File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut entries: Vec<(String, u64, bool)> = Vec::new();
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i)
+            && !entry.is_dir()
+        {
+            let name = entry.name().to_owned();
+            if name.starts_with("__MACOSX/") {
+                continue;
+            }
+            let basename = name.rsplit('/').next().unwrap_or(&name);
+            if basename.starts_with("._") {
+                continue;
+            }
+            let size = entry.size();
+            let is_im = is_zip_image(&name);
+            entries.push((name, size, is_im));
+        }
+    }
+    entries.sort_by(|a, b| natord(&a.0, &b.0));
+    Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// RAR / CBR comic viewer
+// ---------------------------------------------------------------------------
+
+fn rar_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
+    let archive = unrar::Archive::new(path).open_for_listing()?;
+    let mut names: Vec<String> = archive
+        .filter_map(|e| e.ok())
+        .filter(|e| e.is_file())
+        .map(|e| e.filename.to_string_lossy().replace('\\', "/"))
+        .filter(|name| is_zip_image(name))
+        .collect();
+    names.sort_by(|a, b| natord(a, b));
+    Ok(names)
+}
+
+fn rar_read_entry(rar_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
+    let mut archive = unrar::Archive::new(rar_path).open_for_processing()?;
+    while let Some(header) = archive.read_header()? {
+        if header.entry().filename.to_string_lossy().replace('\\', "/") == entry_name {
+            let (data, _rest) = header.read()?;
+            let ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+            return Ok((data, mime_for_ext(&ext)));
+        }
+        archive = header.skip()?;
+    }
+    anyhow::bail!("entry not found: {entry_name}")
+}
+
+fn rar_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
+    let archive = unrar::Archive::new(path).open_for_listing()?;
+    let mut entries: Vec<(String, u64, bool)> = archive
+        .filter_map(|e| e.ok())
+        .filter(|e| e.is_file())
+        .map(|e| {
+            let name = e.filename.to_string_lossy().replace('\\', "/");
+            let size = e.unpacked_size;
+            let is_im = is_zip_image(&name);
+            (name, size, is_im)
+        })
+        .collect();
+    entries.sort_by(|a, b| natord(&a.0, &b.0));
+    Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// 7z / CB7 comic viewer
+// ---------------------------------------------------------------------------
+
+fn sevenz_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
+    let sz = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())?;
+    let mut names: Vec<String> = sz
+        .archive()
+        .files
+        .iter()
+        .filter(|e| !e.is_directory() && e.has_stream())
+        .map(|e| e.name().replace('\\', "/"))
+        .filter(|name| is_zip_image(name))
+        .collect();
+    names.sort_by(|a, b| natord(a, b));
+    Ok(names)
+}
+
+fn sevenz_read_entry(path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
+    let target = entry_name.replace('\\', "/");
+    let mut found: Option<Vec<u8>> = None;
+    let mut read_err: Option<std::io::Error> = None;
+    let mut sz = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())?;
+    sz.for_each_entries(|entry, reader| {
+        if !entry.is_directory() && entry.name().replace('\\', "/") == target {
+            let mut buf = Vec::new();
+            match reader.read_to_end(&mut buf) {
+                Ok(_) => found = Some(buf),
+                Err(e) => read_err = Some(e),
+            }
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    })?;
+    if let Some(e) = read_err {
+        return Err(anyhow::anyhow!("read error: {e}"));
+    }
+    let data = found.ok_or_else(|| anyhow::anyhow!("entry not found: {entry_name}"))?;
+    let ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+    Ok((data, mime_for_ext(&ext)))
+}
+
+fn sevenz_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
+    let sz = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())?;
+    let mut entries: Vec<(String, u64, bool)> = sz
+        .archive()
+        .files
+        .iter()
+        .filter(|e| !e.is_directory() && e.has_stream())
+        .map(|e| {
+            let name = e.name().replace('\\', "/");
+            let size = e.size();
+            let is_im = is_zip_image(&name);
+            (name, size, is_im)
+        })
+        .collect();
+    entries.sort_by(|a, b| natord(&a.0, &b.0));
+    Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// Archive format dispatcher (ZIP + RAR + 7z)
+// ---------------------------------------------------------------------------
+
+fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "zip" | "cbz" => zip_image_entries(path),
+        "rar" | "cbr" => rar_image_entries(path),
+        "7z" | "cb7" => sevenz_image_entries(path),
+        e => anyhow::bail!("unsupported archive format: {e}"),
+    }
+}
+
+fn archive_read_entry(path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "zip" | "cbz" => zip_read_entry(path, entry_name),
+        "rar" | "cbr" => rar_read_entry(path, entry_name),
+        "7z" | "cb7" => sevenz_read_entry(path, entry_name),
+        e => anyhow::bail!("unsupported archive format: {e}"),
+    }
+}
+
+fn archive_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "zip" | "cbz" => zip_list_entries_raw(path),
+        "rar" | "cbr" => rar_list_entries_raw(path),
+        "7z" | "cb7" => sevenz_list_entries_raw(path),
+        e => anyhow::bail!("unsupported archive format: {e}"),
+    }
+}
+
 // --- API: list pages ---
 
 // --- API: list image files in a directory ---
@@ -1056,12 +1222,12 @@ async fn api_zip_pages(
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
-    match tokio::task::spawn_blocking(move || zip_image_entries(&abs)).await {
+    match tokio::task::spawn_blocking(move || archive_image_entries(&abs)).await {
         Ok(Ok(pages)) => {
             let count = pages.len();
             (StatusCode::OK, Json(ZipPagesResponse { pages, count })).into_response()
         }
-        _ => (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read ZIP").into_response(),
+        _ => (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read archive").into_response(),
     }
 }
 
@@ -1083,12 +1249,12 @@ async fn api_zip_page(
     };
     let page_idx = params.page;
     let result = tokio::task::spawn_blocking(move || {
-        let pages = zip_image_entries(&abs)?;
+        let pages = archive_image_entries(&abs)?;
         let name = pages
             .into_iter()
             .nth(page_idx)
             .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
-        zip_read_entry(&abs, &name)
+        archive_read_entry(&abs, &name)
     })
     .await;
     match result {
@@ -1145,12 +1311,12 @@ async fn api_zip_thumb(
 
         // Extract the page, write to temp, resize, cache, serve
         let result = tokio::task::spawn_blocking(move || {
-            let pages = zip_image_entries(&abs)?;
+            let pages = archive_image_entries(&abs)?;
             let name = pages
                 .into_iter()
                 .nth(page_idx)
                 .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
-            zip_read_entry(&abs, &name)
+            archive_read_entry(&abs, &name)
         })
         .await;
 
@@ -1226,34 +1392,12 @@ async fn api_zip_entries(
 
     // Enumerate all entries in a blocking thread
     let raw: Vec<(String, u64, bool)> = match tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&abs)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-        let mut entries: Vec<(String, u64, bool)> = Vec::new();
-        for i in 0..archive.len() {
-            if let Ok(entry) = archive.by_index(i)
-                && !entry.is_dir()
-            {
-                let name = entry.name().to_owned();
-                // Skip macOS AppleDouble resource forks
-                if name.starts_with("__MACOSX/") {
-                    continue;
-                }
-                let basename = name.rsplit('/').next().unwrap_or(&name);
-                if basename.starts_with("._") {
-                    continue;
-                }
-                let size = entry.size();
-                let is_im = is_zip_image(&name);
-                entries.push((name, size, is_im));
-            }
-        }
-        entries.sort_by(|a, b| natord(&a.0, &b.0));
-        anyhow::Ok(entries)
+        archive_list_entries_raw(&abs)
     })
     .await
     {
         Ok(Ok(v)) => v,
-        _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read ZIP").into_response(),
+        _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read archive").into_response(),
     };
 
     // Query tag counts from DB (sync, on async thread — Connection is Send here)
