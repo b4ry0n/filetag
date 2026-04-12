@@ -580,7 +580,7 @@ function renderGrid(items) {
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
-                const dblFn = `openLightbox('${esc(path)}','${fileType(name)}')`;
+                const dblFn = `cvOpenFile('${esc(path)}','${fileType(name)}')`;
                 html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">
                     ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
@@ -634,7 +634,7 @@ function renderList(items) {
                     <span class="tags-count">${tags}${gotoDirBtn}</span>
                 </div>`;
             } else {
-                const dblFnL = `openLightbox('${esc(path)}','${fileType(name)}')`;
+                const dblFnL = `cvOpenFile('${esc(path)}','${fileType(name)}')`;
                 html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}</span>
@@ -908,11 +908,11 @@ function renderDetail() {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
-        preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','image')" title="Click to enlarge">` +
+        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${esc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewImgError(this)"></a>`;
     } else if (type_ === 'raw') {
-        preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','raw')" title="Click to enlarge">` +
+        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${esc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewRawError(this)"></a>`;
     } else if (type_ === 'audio') {
@@ -1577,6 +1577,12 @@ function _lbDetachZoom() {
     el.removeEventListener('dblclick', _lbDblClick);
 }
 
+// Dispatch: images open in the directory viewer; everything else in the lightbox.
+function cvOpenFile(path, type) {
+    if (type === 'image' || type === 'raw') { openFileInDirViewer(path); }
+    else { openLightbox(path, type); }
+}
+
 function openLightbox(path, type) {
     const url = '/preview/' + encodeURI(path);
     const lb = document.getElementById('lightbox');
@@ -1704,7 +1710,21 @@ const _cv = {
     zoom: 1,
     panX: 0,
     panY: 0,
+    mode: 'zip',     // 'zip' | 'dir'
+    filePaths: [],   // used in 'dir' mode: absolute relative paths per page
 };
+
+// Return the URL for a single page image.
+function cvPageUrl(i) {
+    if (_cv.mode === 'dir') return '/preview/' + encodeURI(_cv.filePaths[i]);
+    return `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}`;
+}
+
+// Return the URL for a thumbnail of a single page.
+function cvThumbUrl(i) {
+    if (_cv.mode === 'dir') return '/thumb/' + encodeURI(_cv.filePaths[i]);
+    return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}`;
+}
 
 async function openComicViewer(path, startPage = 0) {
     const overlay = document.getElementById('comic-viewer');
@@ -1737,12 +1757,60 @@ async function openComicViewer(path, startPage = 0) {
     document.addEventListener('keydown', _cvKeyHandler);
 }
 
+// Open the viewer for a list of plain image files from a directory.
+async function openDirViewer(filePaths, startIdx = 0) {
+    const overlay = document.getElementById('comic-viewer');
+    overlay.hidden = false;
+
+    _cv.mode = 'dir';
+    _cv.path = null;
+    _cv.filePaths = filePaths;
+    _cv.pages = filePaths.map(p => p.split('/').pop()); // names for display/count
+    _cv.current = Math.max(0, Math.min(startIdx, filePaths.length - 1));
+
+    document.getElementById('cv-status').textContent = 'Loading…';
+    document.getElementById('cv-pages').innerHTML = '';
+
+    if (_cv.pages.length === 0) {
+        document.getElementById('cv-status').textContent = 'No images found';
+        return;
+    }
+    cvBuildThumbs();
+    if (_cv.scroll) {
+        cvBuildScrollView();
+    } else {
+        cvShowPage(_cv.current);
+    }
+    document.addEventListener('keydown', _cvKeyHandler);
+}
+
+// Open the directory viewer starting at the given file, loading sibling images
+// from the same directory.
+async function openFileInDirViewer(filePath) {
+    const lastSlash = filePath.lastIndexOf('/');
+    const dirPath = lastSlash > 0 ? filePath.substring(0, lastSlash) : '';
+    let images = [filePath];
+    let startIdx = 0;
+    try {
+        const res = await fetch('/api/dir/images?' + new URLSearchParams({ path: dirPath || '.' }));
+        if (res.ok) {
+            const data = await res.json();
+            if (data.images && data.images.length > 0) {
+                images = data.images;
+                const idx = images.indexOf(filePath);
+                startIdx = idx >= 0 ? idx : 0;
+            }
+        }
+    } catch (_) { /* fall through with single file */ }
+    openDirViewer(images, startIdx);
+}
+
 function closeComicViewer() {
     if (document.fullscreenElement) document.exitFullscreen();
     if (_cv.scroll) cvExitScrollView();
     document.getElementById('comic-viewer').hidden = true;
     document.removeEventListener('keydown', _cvKeyHandler);
-    _cv.path = null; _cv.pages = []; _cv.current = 0;
+    _cv.mode = 'zip'; _cv.path = null; _cv.pages = []; _cv.filePaths = []; _cv.current = 0;
     document.getElementById('cv-pages').innerHTML = '';
     document.getElementById('cv-thumbs').innerHTML = '';
 }
@@ -1786,7 +1854,7 @@ function cvBuildThumbs() {
         cell.className = 'cv-thumb' + (i === 0 ? ' active' : '');
         cell.dataset.page = i;
         cell.onclick = () => cvShowPage(i);
-        const url = `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}`;
+        const url = cvThumbUrl(i);
         cell.innerHTML = `<img src="${url}" loading="lazy" alt="page ${i + 1}">` +
             `<div class="cv-thumb-num">${i + 1}</div>`;
         panel.appendChild(cell);
@@ -1884,7 +1952,7 @@ function cvBuildScrollView() {
     container.innerHTML = '';
 
     _cv.pages.forEach((_name, i) => {
-        const url = `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}`;
+        const url = cvPageUrl(i);
         const img = document.createElement('img');
         img.className = 'cv-page';
         img.dataset.page = i;
@@ -2168,10 +2236,10 @@ function cvShowPage(idx) {
     }
 
     const container = document.getElementById('cv-pages');
-    const url1 = `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx })}`;
+    const url1 = cvPageUrl(idx);
     // In spread mode, RTL shows the next page to the LEFT of the current one
     const url2 = _cv.spread && idx + 1 < _cv.pages.length
-        ? `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx + 1 })}`
+        ? cvPageUrl(idx + 1)
         : null;
 
     cvResetZoom();
