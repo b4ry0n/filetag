@@ -1187,7 +1187,14 @@ async function selectFile(path, event) {
             // Multi: update state but don't reload preview
             state.selectedDir = null;
         }
-    } else if (isShift && _lastClickedPath) {\n        // Range-select between _lastClickedPath and path\n        const items = state.mode === 'search' ? state.searchResults\n            : state.mode === 'zip' ? state.zipEntries.map(e => ({ path: state.zipPath + '::' + e.name }))\n            : state.entries;\n        const paths = items.filter(e => !e.is_dir).map(e => state.mode === 'search' ? e.path\n            : state.mode === 'zip' ? e.path\n            : fullPath(e));
+    } else if (isShift && _lastClickedPath) {
+        // Range-select between _lastClickedPath and path
+        const items = state.mode === 'search' ? state.searchResults
+            : state.mode === 'zip' ? state.zipEntries.map(e => ({ path: state.zipPath + '::' + e.name }))
+            : state.entries;
+        const paths = items.filter(e => !e.is_dir).map(e => state.mode === 'search' ? e.path
+            : state.mode === 'zip' ? e.path
+            : fullPath(e));
         const a = paths.indexOf(_lastClickedPath);
         const b = paths.indexOf(path);
         if (a !== -1 && b !== -1) {
