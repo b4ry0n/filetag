@@ -1266,7 +1266,12 @@ async function clearCache(all = false) {
     } catch (_) {
         // Reload regardless
     } finally {
-        window.location.reload(true);
+        btn.disabled = false;
+        if (state.mode === 'search') {
+            await doSearch();
+        } else {
+            await loadFiles(state.currentPath);
+        }
     }
 }
 
