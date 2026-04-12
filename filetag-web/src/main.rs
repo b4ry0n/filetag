@@ -41,7 +41,7 @@ struct Args {
 /// Limit concurrent heavy thumbnail/extraction operations to prevent spawning
 /// too many ffmpeg/ffprobe/unrar processes at once when browsing directories
 /// with many large media files.
-static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
 struct DbRoot {
     name: String,
