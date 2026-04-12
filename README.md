@@ -1,8 +1,10 @@
 # filetag
 
-SQLite-backed file tagging CLI with symlink views.
+A command-line tool for tagging files with arbitrary labels and querying them with boolean expressions. Tags are stored in a local SQLite database alongside your files; nothing is uploaded, synced, or tracked outside your own directories.
 
-Tag any file with arbitrary tags (including `key=value` pairs), query them with boolean expressions, and generate symlink views of the results.
+Use it to organise collections that don't fit neatly into folders: photos, music, scans, drawings, documents. Tag a file with as many labels as you like (`genre/rock`, `year=2024`, `favourite`), then find everything matching a query in milliseconds.
+
+A web interface is included for browsing, searching, and tagging through a browser.
 
 ## Features
 
