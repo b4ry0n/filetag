@@ -503,7 +503,10 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
     for cmd in &["magick", "convert"] {
         if let Ok(out) = tokio::process::Command::new(cmd)
             .arg(&path_layer)
-            .args(["-auto-orient", "-resize", "400x400>", "-quality", "80", "jpg:-"])
+            // -auto-orient physically rotates the pixels according to the EXIF
+            // Orientation tag; -strip then removes all metadata from the output
+            // so browsers cannot re-apply the orientation a second time.
+            .args(["-auto-orient", "-strip", "-resize", "400x400>", "-quality", "80", "jpg:-"])
             .stderr(std::process::Stdio::null())
             .output()
             .await
@@ -514,8 +517,10 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
         }
     }
 
-    // ffmpeg fallback: scale to fit 400×400, pipe JPEG to stdout.
-    // Modern ffmpeg (4.x+) applies EXIF rotation automatically for most cases.
+    // ffmpeg fallback.
+    // -map_metadata -1 strips all metadata (including the EXIF Orientation tag)
+    // from the output JPEG, so the already-rotated pixels are not rotated again
+    // by the browser.
     if let Ok(out) = tokio::process::Command::new("ffmpeg")
         .args(["-i"])
         .arg(path)
@@ -523,6 +528,7 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
             "-vf",
             "scale='if(gt(iw,ih),400,-2)':'if(gt(iw,ih),-2,400)':flags=lanczos",
             "-vframes", "1",
+            "-map_metadata", "-1",
             "-f", "image2pipe",
             "-vcodec", "mjpeg",
             "-q:v", "5",
