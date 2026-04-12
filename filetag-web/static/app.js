@@ -617,19 +617,15 @@ function renderGrid(items) {
         if (isDir) {
             preview = `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
-                data-name="${esc(name)}" onerror="_cardThumbError(this)">`;
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
-                class="card-thumb-strip" data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}" data-cls="card-thumb-strip"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else if (type_ === 'zip') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
-                data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else if (type_ === 'pdf') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
-                data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.pdf}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
@@ -863,7 +859,7 @@ function renderZipGrid(entries) {
         let preview;
         if (entry.is_image) {
             const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + rootParam('&');
-            preview = `<img src="${thumbUrl}" loading="lazy" alt="" data-name="${esc(displayName)}" onerror="_cardThumbError(this)">`;
+            preview = `<div class="card-thumb-pending" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}"></div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
         }
@@ -931,60 +927,86 @@ function _previewVideoError(video) {
     video.replaceWith(d);
 }
 
-function _cardThumbError(img) {
-    const src = img.src;
-    const name = img.dataset.name || '';
-    const wrap = img.closest('.card-preview');
+// ---------------------------------------------------------------------------
+// Thumbnail queue: serial loader, visible-first via IntersectionObserver
+// ---------------------------------------------------------------------------
+// Cards render with <div class="card-thumb-pending" data-thumb-src="...">
+// instead of <img src="...">. _thumbInit() enqueues them after each render.
+// The IntersectionObserver promotes visible items to the front of the queue.
+// A single async worker processes one thumbnail at a time (matching the
+// server-side semaphore of 1). If the server returns 503, the item is
+// re-queued at the back after a short pause.
 
-    // Retry thumbnail URLs when the server is busy (503 — queue full).
-    // Show a grey loading placeholder immediately (no broken-image icon),
-    // then poll with a hidden Image() so the card only updates when the
-    // thumbnail is actually ready.
-    if (src && (src.includes('/thumb/') || src.includes('/api/zip/thumb'))) {
-        const retries = parseInt(img.dataset.thumbRetries || '0', 10);
-        if (retries < 10) {
-            // Replace visible img with a quiet placeholder so no broken icon shows.
-            if (wrap && !wrap.querySelector('.card-thumb-pending')) {
-                const cls = img.className ? ` class="${img.className}"` : '';
-                // Keep a hidden sentinel so we know a retry is in flight.
-                wrap.innerHTML =
-                    `<div class="card-thumb-pending" data-src="${esc(src)}" data-name="${esc(name)}" data-retries="${retries + 1}"${cls ? ' data-class="' + esc(img.className) + '"' : ''}></div>`;
-            }
-            const pending = wrap && wrap.querySelector('.card-thumb-pending');
-            const attempt = pending ? parseInt(pending.dataset.retries || '1', 10) : retries + 1;
-            const delay = Math.min(1000 * attempt, 8000);
-            setTimeout(() => _retryThumbPending(wrap, src, name, attempt), delay);
-            return;
-        }
+const _thumbQueue = [];
+let _thumbBusy = false;
+
+const _thumbObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const el = e.target;
+        _thumbObserver.unobserve(el);
+        // Promote to front so visible cards are processed first.
+        const i = _thumbQueue.indexOf(el);
+        if (i > 0) { _thumbQueue.splice(i, 1); _thumbQueue.unshift(el); }
+        else if (i < 0) _thumbQueue.unshift(el);
+        _thumbRun();
     }
+}, { rootMargin: '150px' });
 
-    // Fall back to generic file icon after all retries are exhausted.
-    if (wrap) wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
+function _thumbInit() {
+    // Enqueue all new pending placeholders found in the document.
+    document.querySelectorAll('.card-thumb-pending[data-thumb-src]').forEach(el => {
+        if (_thumbQueue.includes(el)) return;
+        _thumbQueue.push(el);
+        _thumbObserver.observe(el);
+    });
+    _thumbRun();
 }
 
-function _retryThumbPending(wrap, src, name, attempt) {
-    if (!wrap || !wrap.isConnected) return; // card was removed from DOM
-    const p = wrap.querySelector('.card-thumb-pending');
-    if (!p) return;
-    const probe = new Image();
-    probe.onload = () => {
-        if (!wrap.isConnected) return;
-        const cls = p.dataset.class || '';
-        wrap.innerHTML = `<img src="${esc(src)}"${cls ? ` class="${esc(cls)}"` : ''} alt="" data-name="${esc(name)}"`
-            + ` onerror="_cardThumbError(this)">`;
-    };
-    probe.onerror = () => {
-        if (!wrap.isConnected) return;
-        if (attempt >= 10) {
-            wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
-            return;
+async function _thumbRun() {
+    if (_thumbBusy) return;
+    _thumbBusy = true;
+    while (_thumbQueue.length > 0) {
+        const el = _thumbQueue.shift();
+        if (!el.isConnected) continue;
+        const src = el.dataset.thumbSrc;
+        if (!src) continue;
+        try {
+            const resp = await fetch(src);
+            if (!el.isConnected) continue;
+            if (resp.ok) {
+                const blob = await resp.blob();
+                if (!el.isConnected) continue;
+                const url = URL.createObjectURL(blob);
+                const img = document.createElement('img');
+                img.src = url;
+                if (el.dataset.cls) img.className = el.dataset.cls;
+                img.alt = '';
+                img.dataset.name = el.dataset.name || '';
+                img.onload = () => URL.revokeObjectURL(url);
+                img.onerror = () => URL.revokeObjectURL(url);
+                if (el.isConnected) el.replaceWith(img);
+            } else if (resp.status === 503) {
+                // Server busy: wait and re-queue at back.
+                await new Promise(r => setTimeout(r, 2000));
+                if (el.isConnected) {
+                    _thumbQueue.push(el);
+                    _thumbObserver.observe(el);
+                }
+            }
+            // Other errors: leave as grey placeholder.
+        } catch (_) {
+            // Network error or abort: leave as grey placeholder.
         }
-        const next = attempt + 1;
-        if (p.isConnected) p.dataset.retries = next;
-        const delay = Math.min(1000 * next, 8000);
-        setTimeout(() => _retryThumbPending(wrap, src, name, next), delay);
-    };
-    probe.src = src;
+    }
+    _thumbBusy = false;
+}
+
+// _cardThumbError is still used by detail-panel preview images (not thumb queue).
+function _cardThumbError(img) {
+    const name = img.dataset.name || '';
+    const wrap = img.closest('.card-preview');
+    if (wrap) wrap.innerHTML = `<div class="card-icon">${fileIcon(name)}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1267,6 +1289,7 @@ function render() {
     renderContent();
     renderDetail();
     renderInfo();
+    _thumbInit();
 }
 
 // ---------------------------------------------------------------------------
