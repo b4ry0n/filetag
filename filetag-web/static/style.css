@@ -741,6 +741,13 @@ h3, h4 { font-weight: 600; }
 
 /* Folder cards */
 .card.folder .card-preview { background: transparent; }
+
+/* Drag-and-drop reordering for root cards */
+.card.root-card { cursor: grab; }
+.card.root-card.drag-over {
+    outline: 2px dashed var(--accent, #7c9ef8);
+    outline-offset: -2px;
+}
 .card.folder .card-icon { color: #fab005; }
 
 /* ------------------------------------------------------------------ */
