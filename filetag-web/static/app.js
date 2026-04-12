@@ -221,6 +221,7 @@ async function loadFiles(path) {
     state.entries = data.entries;
     state.mode = 'browse';
     state.searchQuery = '';
+    sessionStorage.setItem('ft_path', state.currentPath);
 }
 
 async function searchFiles(query) {
@@ -956,20 +957,9 @@ async function navigateTo(path) {
     _lastClickedPath = null;
     _armedBulkTag = null;
     await loadFiles(path);
-    // Persist current directory in the URL hash so Cmd-R restores it.
-    const hash = state.currentPath ? '#' + state.currentPath : '#';
-    if (location.hash !== hash) history.pushState(null, '', hash);
     render();
 }
 
-// Restore directory from hash on browser back/forward.
-window.addEventListener('popstate', async () => {
-    const path = decodeURIComponent(location.hash.slice(1));
-    if (path !== state.currentPath) {
-        await loadFiles(path);
-        render();
-    }
-});
 
 async function doSearch() {
     const input = document.getElementById('search-input');
@@ -1682,8 +1672,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Initial load: restore directory from URL hash if present.
-    const initialPath = decodeURIComponent(location.hash.slice(1));
+    // Initial load: restore directory from sessionStorage if present (survives Cmd-R).
+    const initialPath = sessionStorage.getItem('ft_path') || '';
     await Promise.all([loadInfo(), loadTags(), loadFiles(initialPath)]);
     render();
 });
