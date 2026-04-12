@@ -809,6 +809,13 @@ const ZIP_IMAGE_EXTS: &[&str] = &[
 ];
 
 fn is_zip_image(name: &str) -> bool {
+    // Skip macOS AppleDouble resource fork entries (stored under __MACOSX/ or
+    // with a ._-prefixed filename).  These carry a .jpg/.png extension but are
+    // not valid images and would break thumbnails and the comic viewer.
+    if name.starts_with("__MACOSX/") { return false; }
+    let basename = name.rsplit('/').next().unwrap_or(name);
+    if basename.starts_with("._") { return false; }
+
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
     ZIP_IMAGE_EXTS.contains(&ext.as_str())
 }
