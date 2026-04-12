@@ -179,33 +179,6 @@ Double-clicking a file in the grid or list opens a preview. Supported types:
 
 **Thumbnail cache.** All generated thumbnails (resized images, RAW previews, video contact sheets) are written to `.filetag/cache/thumbs/` or `.filetag/cache/raw/`. They are keyed by mtime and file size, so stale entries accumulate when files are replaced. Use the refresh button (↺) in the toolbar to clear the cache for the current directory, or the drop-down next to it to clear the entire cache.
 
-## Data safety
-
-filetag never modifies, moves, or deletes your files. It only reads them to collect metadata. All tag data lives in `.filetag/db.sqlite3`; all generated caches live under `.filetag/cache/`. Nothing is written outside that directory: no temp files, no global state (except the optional global registry described below).
-
-The only file written outside `.filetag/` is the optional global registry (`~/.config/filetag/databases.json`), created only when you explicitly run `filetag db register` or `filetag init --register`.
-
-To completely remove filetag from a directory tree, delete the `.filetag/` folder. If you previously registered the database, also run `filetag db unregister` (or manually remove the entry from `~/.config/filetag/databases.json`).
-
-### Caching in the web interface
-
-`filetag-web` caches two kinds of derived data, all inside `.filetag/cache/`:
-
-| Directory | Contents | Keyed by |
-| :-------- | :------- | :------- |
-| `.filetag/cache/thumbs/` | JPEG thumbnails for images, RAW, video, ZIP (400 px) | filename + mtime + file size |
-| `.filetag/cache/raw/` | Full-resolution JPEG conversions of RAW/HEIC files | filename + mtime + file size |
-
-These files are safe to delete at any time; they will be regenerated on demand.
-
-### Browser-side caching
-
-The server sends no `Cache-Control` headers, so the browser may keep previewed files in its HTTP cache between sessions. That cache lives in a browser-managed directory on your filesystem (e.g. `~/Library/Caches/Google/Chrome/` on macOS). For a private, single-user `localhost` setup this is normal behaviour and not a concern.
-
-Note that RAW, HEIC, and ZIP/CBZ files are never sent to the browser in their original form: the server converts them first and sends only a JPEG. PDF files are sent as-is and rendered by the browser's built-in viewer (Firefox: PDF.js; Chrome/Safari: native renderer); no external application is invoked and no file is written to your downloads folder unless you explicitly save or print.
-
-If you run `filetag-web` on a shared or public-facing server, add a reverse proxy (e.g. nginx or Caddy) that injects `Cache-Control: no-store` for the `/preview/*`, `/thumb/*`, and `/api/zip/page` routes.
-
 ## How it works
 
 The database lives in `.filetag/db.sqlite3` at the root of your tagged tree. Files are tracked by relative path. On first tag, the file's size, mtime, and a platform-specific file identifier (device:inode on Unix) are stored.

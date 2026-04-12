@@ -83,6 +83,11 @@ child_databases (
 
 Schema version 3. Migration from v1 to v2 adds `child_databases`. Migration from v2 to v3 adds `file_id` and removes `blake3` usage.
 
+## Core principles
+
+- **Data isolation:** filetag MUST NEVER write outside the `.filetag/` directory of the active database root. This applies to all temporary files, caches, logs, and any other artefacts. System directories such as `std::env::temp_dir()`, `$TMPDIR`, `/tmp`, or `~/.cache` are forbidden. All intermediate and cached files go under `.filetag/` (e.g. `.filetag/cache/`, `.filetag/tmp/`).
+- **Read-only towards your files:** filetag never modifies, moves, or deletes the files it describes. It only reads them to collect metadata.
+
 ## Key design decisions
 
 **SQLite per directory tree.** The database lives next to the files it describes. Moving the directory keeps everything intact. No central server required.
