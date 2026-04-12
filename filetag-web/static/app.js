@@ -2203,17 +2203,28 @@ function _cvKeyHandler(e) {
     }
 }
 
+let _cvClickNavTimer = null;
+
 function cvClickNav(e) {
     if (_cv.scroll) return;  // no click-nav in scroll mode
     if (_cv.zoom > 1 || _cvDrag.moved) return;
     const x = e.clientX / window.innerWidth;
+    let action = null;
     if (_cv.rtl) {
-        if (x > 0.7) cvNext();
-        else if (x < 0.3) cvPrev();
+        if (x > 0.7) action = 'next';
+        else if (x < 0.3) action = 'prev';
     } else {
-        if (x < 0.3) cvPrev();
-        else if (x > 0.7) cvNext();
+        if (x < 0.3) action = 'prev';
+        else if (x > 0.7) action = 'next';
     }
+    if (!action) return;
+
+    // Delay so a double-click fires dblclick (zoom) rather than two nav steps
+    if (_cvClickNavTimer) { clearTimeout(_cvClickNavTimer); _cvClickNavTimer = null; return; }
+    _cvClickNavTimer = setTimeout(() => {
+        _cvClickNavTimer = null;
+        if (action === 'next') cvNext(); else cvPrev();
+    }, 220);
 }
 
 // ---------------------------------------------------------------------------
