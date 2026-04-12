@@ -1288,3 +1288,97 @@ h3, h4 { font-weight: 600; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* ------------------------------------------------------------------ */
+/* Comic viewer                                                       */
+/* ------------------------------------------------------------------ */
+
+.comic-viewer {
+    position: fixed;
+    inset: 0;
+    background: #0a0a0a;
+    z-index: 9500;
+    display: flex;
+    flex-direction: column;
+}
+.comic-viewer[hidden] { display: none; }
+
+.cv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    background: rgba(0,0,0,0.75);
+    flex-shrink: 0;
+    backdrop-filter: blur(4px);
+}
+
+.cv-status {
+    flex: 1;
+    text-align: center;
+    color: rgba(255,255,255,0.75);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.cv-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+.cv-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.cv-btn.active { background: rgba(255,255,255,0.18); color: #fff; border-color: rgba(255,255,255,0.3); }
+.cv-close { margin-left: 8px; }
+
+.cv-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+}
+
+.cv-pages {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.cv-page {
+    max-width: 100%;
+    max-height: calc(100vh - 54px);
+    object-fit: contain;
+    display: block;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Zip cover in detail panel */
+.zip-cover-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+}
+.zip-cover {
+    max-width: 100%;
+    max-height: 260px;
+    object-fit: contain;
+    border-radius: 4px;
+}

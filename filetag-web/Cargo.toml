@@ -16,3 +16,4 @@ axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
