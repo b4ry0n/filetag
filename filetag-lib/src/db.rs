@@ -399,7 +399,10 @@ pub struct FileWithTags {
 }
 
 /// Collect tag (name, value) pairs for a file by its `files.id`.
-fn collect_file_tags(tag_stmt: &mut rusqlite::Statement<'_>, file_id: i64) -> Vec<(String, String)> {
+fn collect_file_tags(
+    tag_stmt: &mut rusqlite::Statement<'_>,
+    file_id: i64,
+) -> Vec<(String, String)> {
     tag_stmt
         .query_map(params![file_id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

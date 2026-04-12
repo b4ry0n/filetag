@@ -195,9 +195,8 @@ async fn preview_handler(
         .to_lowercase();
 
     match ext.as_str() {
-        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw"
-        | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos"
-        | "psd" | "psb" | "xcf" | "ai" | "eps" => {
+        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
+        | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             preview_raw(&abs, &state.root).await
         }
         "heic" | "heif" => preview_heic(&abs, &state.root).await,
@@ -344,10 +343,10 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
         .arg(path)
         .output()
         .await
+        && out.status.success()
+        && out.stdout.starts_with(&[0xFF, 0xD8])
     {
-        if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-            return Some(out.stdout);
-        }
+        return Some(out.stdout);
     }
 
     // exiftool: extract PreviewImage or ThumbnailImage
@@ -357,10 +356,10 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
             .arg(path)
             .output()
             .await
+            && out.status.success()
+            && out.stdout.starts_with(&[0xFF, 0xD8])
         {
-            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-                return Some(out.stdout);
-            }
+            return Some(out.stdout);
         }
     }
 
@@ -379,10 +378,10 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
         ])
         .output()
         .await
+        && out.status.success()
+        && !out.stdout.is_empty()
     {
-        if out.status.success() && !out.stdout.is_empty() {
-            return Some(out.stdout);
-        }
+        return Some(out.stdout);
     }
 
     // ImageMagick 7 (magick) or 6 (convert): composite/layered formats
@@ -393,10 +392,10 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
             .args(["-flatten", "-quality", "85", "jpg:-"])
             .output()
             .await
+            && out.status.success()
+            && out.stdout.starts_with(&[0xFF, 0xD8])
         {
-            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-                return Some(out.stdout);
-            }
+            return Some(out.stdout);
         }
     }
 
@@ -422,10 +421,10 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
     ));
 
     // Serve from cache if fresh
-    if tmp.exists() {
-        if let Ok(data) = tokio::fs::read(&tmp).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-        }
+    if tmp.exists()
+        && let Ok(data) = tokio::fs::read(&tmp).await
+    {
+        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
     // sips (macOS built-in)
@@ -436,12 +435,10 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
         .arg(&tmp)
         .output()
         .await
+        && out.status.success()
+        && let Ok(data) = tokio::fs::read(&tmp).await
     {
-        if out.status.success() {
-            if let Ok(data) = tokio::fs::read(&tmp).await {
-                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-            }
-        }
+        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
     // ffmpeg
@@ -459,11 +456,11 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
         ])
         .output()
         .await
+        && out.status.success()
+        && !out.stdout.is_empty()
     {
-        if out.status.success() && !out.stdout.is_empty() {
-            let _ = tokio::fs::write(&tmp, &out.stdout).await;
-            return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
-        }
+        let _ = tokio::fs::write(&tmp, &out.stdout).await;
+        return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
     }
 
     // ImageMagick convert (with -auto-orient to respect EXIF orientation)
@@ -473,12 +470,10 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
         .arg(&tmp)
         .output()
         .await
+        && out.status.success()
+        && let Ok(data) = tokio::fs::read(&tmp).await
     {
-        if out.status.success() {
-            if let Ok(data) = tokio::fs::read(&tmp).await {
-                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-            }
-        }
+        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
     (
@@ -509,14 +504,22 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
             // -auto-orient physically rotates the pixels according to the EXIF
             // Orientation tag; -strip then removes all metadata from the output
             // so browsers cannot re-apply the orientation a second time.
-            .args(["-auto-orient", "-strip", "-resize", "400x400>", "-quality", "80", "jpg:-"])
+            .args([
+                "-auto-orient",
+                "-strip",
+                "-resize",
+                "400x400>",
+                "-quality",
+                "80",
+                "jpg:-",
+            ])
             .stderr(std::process::Stdio::null())
             .output()
             .await
+            && out.status.success()
+            && out.stdout.starts_with(&[0xFF, 0xD8])
         {
-            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-                return Some(out.stdout);
-            }
+            return Some(out.stdout);
         }
     }
 
@@ -530,20 +533,25 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
         .args([
             "-vf",
             "scale='if(gt(iw,ih),400,-2)':'if(gt(iw,ih),-2,400)':flags=lanczos",
-            "-vframes", "1",
-            "-map_metadata", "-1",
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-q:v", "5",
+            "-vframes",
+            "1",
+            "-map_metadata",
+            "-1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            "5",
             "pipe:1",
         ])
         .stderr(std::process::Stdio::null())
         .output()
         .await
+        && out.status.success()
+        && out.stdout.starts_with(&[0xFF, 0xD8])
     {
-        if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-            return Some(out.stdout);
-        }
+        return Some(out.stdout);
     }
 
     None
@@ -568,19 +576,28 @@ async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
     let expected = tmp_dir.join(format!("pdft_{}.jpg", stem));
 
     let status = tokio::process::Command::new("pdftoppm")
-        .args(["-jpeg", "-singlefile", "-f", "1", "-l", "1", "-scale-to", "400"])
+        .args([
+            "-jpeg",
+            "-singlefile",
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "-scale-to",
+            "400",
+        ])
         .arg(path)
         .arg(&tmp_prefix)
         .stderr(std::process::Stdio::null())
         .status()
         .await;
 
-    if status.map(|s| s.success()).unwrap_or(false) {
-        if let Ok(data) = tokio::fs::read(&expected).await {
-            let _ = tokio::fs::remove_file(&expected).await;
-            if data.starts_with(&[0xFF, 0xD8]) {
-                return Some(data);
-            }
+    if status.map(|s| s.success()).unwrap_or(false)
+        && let Ok(data) = tokio::fs::read(&expected).await
+    {
+        let _ = tokio::fs::remove_file(&expected).await;
+        if data.starts_with(&[0xFF, 0xD8]) {
+            return Some(data);
         }
     }
     let _ = tokio::fs::remove_file(&expected).await;
@@ -599,9 +616,12 @@ fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
 async fn video_duration(path: &Path) -> Option<f64> {
     let out = tokio::process::Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
         ])
         .arg(path)
         .output()
@@ -649,20 +669,23 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
              [a][b]hstack[top];\
              [c][d]hstack[bot];\
              [top][bot]vstack",
-            "-frames:v", "1",
-            "-f", "image2",
-            "-vcodec", "mjpeg",
-            "-q:v", "5",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            "5",
         ])
         .arg(&cache)
         .stderr(std::process::Stdio::null());
 
-        if let Ok(status) = cmd.status().await {
-            if status.success() {
-                if let Ok(data) = tokio::fs::read(&cache).await {
-                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-                }
-            }
+        if let Ok(status) = cmd.status().await
+            && status.success()
+            && let Ok(data) = tokio::fs::read(&cache).await
+        {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
         // 4-input hstack failed (e.g. video shorter than all seek points).
@@ -675,21 +698,26 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             .args(["-ss", &ss, "-i"])
             .arg(path)
             .args([
-                "-vframes", "1",
-                "-vf", "scale=480:-2",
-                "-f", "image2",
-                "-vcodec", "mjpeg",
-                "-q:v", "5",
+                "-vframes",
+                "1",
+                "-vf",
+                "scale=480:-2",
+                "-f",
+                "image2",
+                "-vcodec",
+                "mjpeg",
+                "-q:v",
+                "5",
             ])
             .arg(&cache)
             .stderr(std::process::Stdio::null())
             .status()
             .await;
 
-        if out.map(|s| s.success()).unwrap_or(false) {
-            if let Ok(data) = tokio::fs::read(&cache).await {
-                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-            }
+        if out.map(|s| s.success()).unwrap_or(false)
+            && let Ok(data) = tokio::fs::read(&cache).await
+        {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
     }
 
@@ -726,7 +754,9 @@ async fn thumb_handler(
                 }
                 let result = tokio::task::spawn_blocking(move || {
                     let pages = zip_image_entries(&abs)?;
-                    let first = pages.into_iter().next()
+                    let first = pages
+                        .into_iter()
+                        .next()
                         .ok_or_else(|| anyhow::anyhow!("no images in ZIP"))?;
                     let (data, _) = zip_read_entry(&abs, &first)?;
                     Ok::<Vec<u8>, anyhow::Error>(data)
@@ -752,8 +782,9 @@ async fn thumb_handler(
         }
 
         // Video: 2×2 contact-sheet
-        "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp"
-        | "f4v" => video_thumb_strip(&abs, &state.root).await,
+        "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp" | "f4v" => {
+            video_thumb_strip(&abs, &state.root).await
+        }
 
         // HEIC/HEIF: full-res conversion is already cached; thumbnail via image_thumb_jpeg
         "heic" | "heif" => {
@@ -775,9 +806,8 @@ async fn thumb_handler(
         }
 
         // RAW / PSD / layered: use raw_extract_jpeg then resize
-        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw"
-        | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos"
-        | "psd" | "psb" | "xcf" | "ai" | "eps" => {
+        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
+        | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             if let Some(cache) = thumb_cache_path(&abs, &state.root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
@@ -851,9 +881,13 @@ fn is_zip_image(name: &str) -> bool {
     // Skip macOS AppleDouble resource fork entries (stored under __MACOSX/ or
     // with a ._-prefixed filename).  These carry a .jpg/.png extension but are
     // not valid images and would break thumbnails and the comic viewer.
-    if name.starts_with("__MACOSX/") { return false; }
+    if name.starts_with("__MACOSX/") {
+        return false;
+    }
     let basename = name.rsplit('/').next().unwrap_or(name);
-    if basename.starts_with("._") { return false; }
+    if basename.starts_with("._") {
+        return false;
+    }
 
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
     ZIP_IMAGE_EXTS.contains(&ext.as_str())
@@ -867,7 +901,11 @@ fn zip_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
         .filter_map(|i| {
             let entry = archive.by_index(i).ok()?;
             let name = entry.name().to_owned();
-            if !entry.is_dir() && is_zip_image(&name) { Some(name) } else { None }
+            if !entry.is_dir() && is_zip_image(&name) {
+                Some(name)
+            } else {
+                None
+            }
         })
         .collect();
     names.sort_by(|a, b| natord(a, b));
@@ -881,13 +919,17 @@ fn natord(a: &str, b: &str) -> std::cmp::Ordering {
     loop {
         match (ai.peek().copied(), bi.peek().copied()) {
             (None, None) => return std::cmp::Ordering::Equal,
-            (None, _)    => return std::cmp::Ordering::Less,
-            (_, None)    => return std::cmp::Ordering::Greater,
+            (None, _) => return std::cmp::Ordering::Less,
+            (_, None) => return std::cmp::Ordering::Greater,
             (Some(ac), Some(bc)) if ac.is_ascii_digit() && bc.is_ascii_digit() => {
                 let na: u64 = std::iter::from_fn(|| ai.next_if(|c| c.is_ascii_digit()))
-                    .collect::<String>().parse().unwrap_or(0);
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
                 let nb: u64 = std::iter::from_fn(|| bi.next_if(|c| c.is_ascii_digit()))
-                    .collect::<String>().parse().unwrap_or(0);
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
                 match na.cmp(&nb) {
                     std::cmp::Ordering::Equal => {}
                     ord => return ord,
@@ -896,8 +938,11 @@ fn natord(a: &str, b: &str) -> std::cmp::Ordering {
             (Some(ac), Some(bc)) => {
                 let al = ac.to_lowercase().next().unwrap();
                 let bl = bc.to_lowercase().next().unwrap();
-                if al != bl { return al.cmp(&bl); }
-                ai.next(); bi.next();
+                if al != bl {
+                    return al.cmp(&bl);
+                }
+                ai.next();
+                bi.next();
             }
         }
     }
@@ -907,7 +952,8 @@ fn natord(a: &str, b: &str) -> std::cmp::Ordering {
 fn zip_read_entry(zip_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
     let file = std::fs::File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
-    let mut entry = archive.by_name(entry_name)
+    let mut entry = archive
+        .by_name(entry_name)
         .map_err(|_| anyhow::anyhow!("entry not found: {}", entry_name))?;
     let ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
     let mime = mime_for_ext(&ext);
@@ -922,10 +968,9 @@ fn zip_read_entry(zip_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>,
 
 /// Image extensions shown in the directory viewer (raster + common camera formats).
 const DIR_IMAGE_EXTS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "tiff", "tif",
-    "heic", "heif",
-    "arw", "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf", "pef", "srw",
-    "raw", "3fr", "x3f", "rwl", "iiq", "mef", "mos",
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "tiff", "tif", "heic", "heif", "arw",
+    "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf", "pef", "srw", "raw", "3fr", "x3f", "rwl",
+    "iiq", "mef", "mos",
 ];
 
 fn is_dir_image(name: &str) -> bool {
@@ -934,10 +979,14 @@ fn is_dir_image(name: &str) -> bool {
 }
 
 #[derive(Deserialize)]
-struct DirImagesParams { path: String }
+struct DirImagesParams {
+    path: String,
+}
 
 #[derive(Serialize)]
-struct DirImagesResponse { images: Vec<String> }
+struct DirImagesResponse {
+    images: Vec<String>,
+}
 
 async fn api_dir_images(
     State(state): State<Arc<AppState>>,
@@ -956,31 +1005,48 @@ async fn api_dir_images(
             .filter_map(|e| {
                 let e = e.ok()?;
                 let ft = e.file_type().ok()?;
-                if !ft.is_file() { return None; }
+                if !ft.is_file() {
+                    return None;
+                }
                 let name = e.file_name().to_string_lossy().into_owned();
-                if !is_dir_image(&name) { return None; }
+                if !is_dir_image(&name) {
+                    return None;
+                }
                 // Return path relative to root
                 let abs = e.path();
-                let rel = abs.strip_prefix(&root).ok()
+                let rel = abs
+                    .strip_prefix(&root)
+                    .ok()
                     .map(|p| p.to_string_lossy().into_owned())?;
                 Some(rel)
             })
             .collect();
-        images.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        images.sort_by_key(|a| a.to_lowercase());
         Ok(images)
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(images)) => (StatusCode::OK, Json(DirImagesResponse { images })).into_response(),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, "Could not list directory").into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not list directory",
+        )
+            .into_response(),
     }
 }
 
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-struct ZipListParams { path: String }
+struct ZipListParams {
+    path: String,
+}
 
 #[derive(Serialize)]
-struct ZipPagesResponse { pages: Vec<String>, count: usize }
+struct ZipPagesResponse {
+    pages: Vec<String>,
+    count: usize,
+}
 
 async fn api_zip_pages(
     State(state): State<Arc<AppState>>,
@@ -1002,7 +1068,10 @@ async fn api_zip_pages(
 // --- API: serve single page from ZIP ---
 
 #[derive(Deserialize)]
-struct ZipPageParams { path: String, page: usize }
+struct ZipPageParams {
+    path: String,
+    page: usize,
+}
 
 async fn api_zip_page(
     State(state): State<Arc<AppState>>,
@@ -1015,7 +1084,9 @@ async fn api_zip_page(
     let page_idx = params.page;
     let result = tokio::task::spawn_blocking(move || {
         let pages = zip_image_entries(&abs)?;
-        let name = pages.into_iter().nth(page_idx)
+        let name = pages
+            .into_iter()
+            .nth(page_idx)
             .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
         zip_read_entry(&abs, &name)
     })
@@ -1023,7 +1094,7 @@ async fn api_zip_page(
     match result {
         Ok(Ok((data, mime))) => ([(header::CONTENT_TYPE, mime)], data).into_response(),
         Ok(Err(e)) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
-        Err(_)     => (StatusCode::INTERNAL_SERVER_ERROR, "task error").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "task error").into_response(),
     }
 }
 
@@ -1033,11 +1104,15 @@ async fn api_zip_page(
 /// Key: `<mtime>_<size>_<stem>_p<page>.thumb.jpg`
 fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<PathBuf> {
     let meta = std::fs::metadata(abs).ok()?;
-    let mtime = meta.modified().ok()?
-        .duration_since(std::time::UNIX_EPOCH).ok()?
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
         .as_secs();
     let size = meta.len();
-    let stem = abs.file_name()
+    let stem = abs
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.jpg");
@@ -1047,7 +1122,10 @@ fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<Pat
 }
 
 #[derive(Deserialize)]
-struct ZipThumbParams { path: String, page: usize }
+struct ZipThumbParams {
+    path: String,
+    page: usize,
+}
 
 async fn api_zip_thumb(
     State(state): State<Arc<AppState>>,
@@ -1068,14 +1146,19 @@ async fn api_zip_thumb(
         // Extract the page, write to temp, resize, cache, serve
         let result = tokio::task::spawn_blocking(move || {
             let pages = zip_image_entries(&abs)?;
-            let name = pages.into_iter().nth(page_idx)
+            let name = pages
+                .into_iter()
+                .nth(page_idx)
                 .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
             zip_read_entry(&abs, &name)
         })
         .await;
 
         if let Ok(Ok((img_bytes, _mime))) = result {
-            let tmp = state.root.join(".filetag").join("tmp")
+            let tmp = state
+                .root
+                .join(".filetag")
+                .join("tmp")
                 .join(format!("zp_{page_idx}.jpg"));
             let _ = tokio::fs::create_dir_all(tmp.parent().unwrap()).await;
             if tokio::fs::write(&tmp, &img_bytes).await.is_ok() {
@@ -1119,17 +1202,17 @@ fn ensure_zip_entry_record(conn: &rusqlite::Connection, db_path: &str) -> anyhow
 
 #[derive(Serialize)]
 struct ZipEntry {
-    name:        String,
-    size:        u64,
-    is_image:    bool,
+    name: String,
+    size: u64,
+    is_image: bool,
     image_index: Option<usize>,
-    tag_count:   i64,
+    tag_count: i64,
 }
 
 #[derive(Serialize)]
 struct ZipEntriesResponse {
     zip_path: String,
-    entries:  Vec<ZipEntry>,
+    entries: Vec<ZipEntry>,
 }
 
 async fn api_zip_entries(
@@ -1138,7 +1221,7 @@ async fn api_zip_entries(
 ) -> Response {
     let abs = match preview_safe_path(&state.root, &params.path) {
         Some(p) => p,
-        None    => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
 
     // Enumerate all entries in a blocking thread
@@ -1147,47 +1230,72 @@ async fn api_zip_entries(
         let mut archive = zip::ZipArchive::new(file)?;
         let mut entries: Vec<(String, u64, bool)> = Vec::new();
         for i in 0..archive.len() {
-            if let Ok(entry) = archive.by_index(i) {
-                if !entry.is_dir() {
-                    let name = entry.name().to_owned();
-                    // Skip macOS AppleDouble resource forks
-                    if name.starts_with("__MACOSX/") { continue; }
-                    let basename = name.rsplit('/').next().unwrap_or(&name);
-                    if basename.starts_with("._") { continue; }
-                    let size  = entry.size();
-                    let is_im = is_zip_image(&name);
-                    entries.push((name, size, is_im));
+            if let Ok(entry) = archive.by_index(i)
+                && !entry.is_dir()
+            {
+                let name = entry.name().to_owned();
+                // Skip macOS AppleDouble resource forks
+                if name.starts_with("__MACOSX/") {
+                    continue;
                 }
+                let basename = name.rsplit('/').next().unwrap_or(&name);
+                if basename.starts_with("._") {
+                    continue;
+                }
+                let size = entry.size();
+                let is_im = is_zip_image(&name);
+                entries.push((name, size, is_im));
             }
         }
         entries.sort_by(|a, b| natord(&a.0, &b.0));
         anyhow::Ok(entries)
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(v)) => v,
-        _         => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read ZIP").into_response(),
+        _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read ZIP").into_response(),
     };
 
     // Query tag counts from DB (sync, on async thread — Connection is Send here)
     let conn = match open_conn(&state) {
-        Ok(c)  => c,
+        Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
 
     let mut image_counter = 0usize;
     let mut entries = Vec::with_capacity(raw.len());
     for (name, size, is_image) in raw {
-        let image_index = is_image.then(|| { let i = image_counter; image_counter += 1; i });
+        let image_index = is_image.then(|| {
+            let i = image_counter;
+            image_counter += 1;
+            i
+        });
         let db_path = format!("{}::{}", params.path, name);
-        let tag_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM file_tags ft \
+        let tag_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_tags ft \
              JOIN files f ON f.id = ft.file_id WHERE f.path = ?1",
-            rusqlite::params![&db_path],
-            |r| r.get(0),
-        ).unwrap_or(0);
-        entries.push(ZipEntry { name, size, is_image, image_index, tag_count });
+                rusqlite::params![&db_path],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        entries.push(ZipEntry {
+            name,
+            size,
+            is_image,
+            image_index,
+            tag_count,
+        });
     }
 
-    (StatusCode::OK, Json(ZipEntriesResponse { zip_path: params.path, entries })).into_response()
+    (
+        StatusCode::OK,
+        Json(ZipEntriesResponse {
+            zip_path: params.path,
+            entries,
+        }),
+    )
+        .into_response()
 }
 
 async fn index_html() -> impl IntoResponse {
@@ -1254,12 +1362,16 @@ struct CacheClearBody {
 fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
     let mut removed = 0u64;
     // Thumb (video contact-sheet OR image thumbnail)
-    if let Some(p) = thumb_cache_path(abs, root) {
-        if std::fs::remove_file(&p).is_ok() { removed += 1; }
+    if let Some(p) = thumb_cache_path(abs, root)
+        && std::fs::remove_file(&p).is_ok()
+    {
+        removed += 1;
     }
     // RAW/PSD preview
-    if let Some(p) = raw_cache_path(abs, root) {
-        if std::fs::remove_file(&p).is_ok() { removed += 1; }
+    if let Some(p) = raw_cache_path(abs, root)
+        && std::fs::remove_file(&p).is_ok()
+    {
+        removed += 1;
     }
     // HEIC loose cache file (named heic_<name>_<mtime>.jpg)
     let cache_dir = root.join(".filetag").join("cache");
@@ -1271,7 +1383,9 @@ fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let heic_path = cache_dir.join(format!("heic_{}_{}.jpg", stem, mtime));
-        if std::fs::remove_file(&heic_path).is_ok() { removed += 1; }
+        if std::fs::remove_file(&heic_path).is_ok() {
+            removed += 1;
+        }
     }
     removed
 }
@@ -1297,32 +1411,34 @@ async fn api_cache_clear(
         let mut n = 0u64;
         for sub in &["raw", "thumbs"] {
             let dir = cache_dir.join(sub);
-            if dir.exists() {
-                if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
-                    while let Ok(Some(entry)) = rd.next_entry().await {
-                        if tokio::fs::remove_file(entry.path()).await.is_ok() {
-                            n += 1;
-                        }
+            if dir.exists()
+                && let Ok(mut rd) = tokio::fs::read_dir(&dir).await
+            {
+                while let Ok(Some(entry)) = rd.next_entry().await {
+                    if tokio::fs::remove_file(entry.path()).await.is_ok() {
+                        n += 1;
                     }
                 }
             }
         }
         // Loose HEIC cache files directly under cache/
-        if cache_dir.exists() {
-            if let Ok(mut rd) = tokio::fs::read_dir(&cache_dir).await {
-                while let Ok(Some(entry)) = rd.next_entry().await {
-                    if entry.path().is_file() {
-                        if tokio::fs::remove_file(entry.path()).await.is_ok() {
-                            n += 1;
-                        }
-                    }
+        if cache_dir.exists()
+            && let Ok(mut rd) = tokio::fs::read_dir(&cache_dir).await
+        {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                if entry.path().is_file() && tokio::fs::remove_file(entry.path()).await.is_ok() {
+                    n += 1;
                 }
             }
         }
         n
     };
 
-    (StatusCode::OK, Json(serde_json::json!({ "removed": removed }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "removed": removed })),
+    )
+        .into_response()
 }
 
 async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiTag>>, AppError> {
@@ -1475,12 +1591,12 @@ async fn api_file_detail(
     } else if params.path.contains("::") {
         // Virtual zip entry not yet in DB — return empty detail
         Ok(Json(ApiFileDetail {
-            path:       params.path,
-            size:       0,
-            file_id:    None,
-            mtime:      0,
+            path: params.path,
+            size: 0,
+            file_id: None,
+            mtime: 0,
             indexed_at: String::new(),
-            tags:       vec![],
+            tags: vec![],
         }))
     } else {
         // File not yet indexed: return filesystem metadata
@@ -1516,7 +1632,9 @@ async fn api_tag(
     } else {
         safe_path(&state.root, &body.path)?;
         // Auto-index the file if not yet in the database
-        db::get_or_index_file(&conn, &body.path, &state.root).map_err(AppError)?.id
+        db::get_or_index_file(&conn, &body.path, &state.root)
+            .map_err(AppError)?
+            .id
     };
 
     let mut added = 0i64;
@@ -1634,11 +1752,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/untag", post(api_untag))
         .route("/api/tag-color", post(api_tag_color))
         .route("/api/delete-tag", post(api_delete_tag))
-        .route("/api/zip/pages",   get(api_zip_pages))
-        .route("/api/zip/page",    get(api_zip_page))
-        .route("/api/zip/thumb",   get(api_zip_thumb))
+        .route("/api/zip/pages", get(api_zip_pages))
+        .route("/api/zip/page", get(api_zip_page))
+        .route("/api/zip/thumb", get(api_zip_thumb))
         .route("/api/zip/entries", get(api_zip_entries))
-        .route("/api/dir/images",  get(api_dir_images))
+        .route("/api/dir/images", get(api_dir_images))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .with_state(state);
