@@ -440,6 +440,53 @@ h3, h4 { font-weight: 600; }
     cursor: pointer;
 }
 
+.split-btn {
+    position: relative;
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: visible;
+}
+.split-btn .view-btn {
+    border: none;
+    border-radius: 0;
+}
+.split-btn .view-btn:first-child {
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+.split-btn-arrow {
+    padding: 4px 5px;
+    border-left: 1px solid var(--border) !important;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+}
+.toolbar-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    z-index: 2000;
+    min-width: 180px;
+    padding: 4px 0;
+}
+.toolbar-dropdown button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 7px 14px;
+    font-size: 13px;
+    color: var(--text);
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.toolbar-dropdown button:hover {
+    background: var(--bg-hover);
+}
+
 /* ------------------------------------------------------------------ */
 /* Main content area                                                  */
 /* ------------------------------------------------------------------ */
