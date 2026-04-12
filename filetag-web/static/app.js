@@ -1217,18 +1217,30 @@ async function toggleShowHidden() {
     }
 }
 
-async function clearCache() {
-    const btn = document.getElementById('cache-clear-btn');
+async function clearCache(all = false) {
+    const btn = document.getElementById(all ? 'cache-clear-btn' : 'cache-clear-page-btn');
     btn.disabled = true;
     try {
-        const res = await fetch('/api/cache/clear', { method: 'POST' });
+        let body = null;
+        if (!all) {
+            // Collect relative paths of files currently visible on the page
+            const items = state.mode === 'search' ? state.searchResults : state.entries;
+            const paths = (items || [])
+                .filter(e => !e.is_dir && e.path)
+                .map(e => e.path);
+            body = JSON.stringify({ paths });
+        }
+        const res = await fetch('/api/cache/clear', {
+            method: 'POST',
+            headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ?? undefined,
+        });
         const data = await res.json();
         const n = data.removed ?? 0;
         btn.title = `Cleared ${n} cached file${n === 1 ? '' : 's'} — reloading…`;
     } catch (_) {
         btn.title = 'Cache clear failed';
     } finally {
-        // Hard reload so all img src requests hit the backend fresh
         window.location.reload(true);
     }
 }

@@ -816,38 +816,86 @@ async fn api_info(State(state): State<Arc<AppState>>) -> Result<Json<ApiInfo>, A
 }
 
 /// Delete all cached thumbnails and preview files from `.filetag/cache/`.
-async fn api_cache_clear(State(state): State<Arc<AppState>>) -> Response {
-    let cache_dir = state.root.join(".filetag").join("cache");
-    let mut removed: u64 = 0;
-    for sub in &["raw", "thumbs"] {
-        let dir = cache_dir.join(sub);
-        if dir.exists() {
-            if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
+/// Body for `POST /api/cache/clear`. If `paths` is `Some`, only those files'
+/// cache entries are removed. If `None` (or missing), the entire cache is cleared.
+#[derive(serde::Deserialize, Default)]
+struct CacheClearBody {
+    paths: Option<Vec<String>>,
+}
+
+/// Delete cache entries for a single file (all variants: thumb, raw preview, HEIC).
+fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
+    let mut removed = 0u64;
+    // Thumb (video contact-sheet OR image thumbnail)
+    if let Some(p) = thumb_cache_path(abs, root) {
+        if std::fs::remove_file(&p).is_ok() { removed += 1; }
+    }
+    // RAW/PSD preview
+    if let Some(p) = raw_cache_path(abs, root) {
+        if std::fs::remove_file(&p).is_ok() { removed += 1; }
+    }
+    // HEIC loose cache file (named heic_<name>_<mtime>.jpg)
+    let cache_dir = root.join(".filetag").join("cache");
+    if let Some(stem) = abs.file_name().map(|n| n.to_string_lossy().into_owned()) {
+        let mtime = std::fs::metadata(abs)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let heic_path = cache_dir.join(format!("heic_{}_{}.jpg", stem, mtime));
+        if std::fs::remove_file(&heic_path).is_ok() { removed += 1; }
+    }
+    removed
+}
+
+async fn api_cache_clear(
+    State(state): State<Arc<AppState>>,
+    body: Option<axum::extract::Json<CacheClearBody>>,
+) -> Response {
+    let paths = body.and_then(|b| b.paths.clone());
+
+    let removed = if let Some(rel_paths) = paths {
+        // Clear only the specified files
+        let mut n = 0u64;
+        for rel in rel_paths {
+            if let Some(abs) = preview_safe_path(&state.root, &rel) {
+                n += remove_cache_for_path(&abs, &state.root);
+            }
+        }
+        n
+    } else {
+        // Clear the entire cache
+        let cache_dir = state.root.join(".filetag").join("cache");
+        let mut n = 0u64;
+        for sub in &["raw", "thumbs"] {
+            let dir = cache_dir.join(sub);
+            if dir.exists() {
+                if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
+                    while let Ok(Some(entry)) = rd.next_entry().await {
+                        if tokio::fs::remove_file(entry.path()).await.is_ok() {
+                            n += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Loose HEIC cache files directly under cache/
+        if cache_dir.exists() {
+            if let Ok(mut rd) = tokio::fs::read_dir(&cache_dir).await {
                 while let Ok(Some(entry)) = rd.next_entry().await {
-                    if tokio::fs::remove_file(entry.path()).await.is_ok() {
-                        removed += 1;
+                    if entry.path().is_file() {
+                        if tokio::fs::remove_file(entry.path()).await.is_ok() {
+                            n += 1;
+                        }
                     }
                 }
             }
         }
-    }
-    // Loose HEIC cache files are stored directly under cache/
-    if cache_dir.exists() {
-        if let Ok(mut rd) = tokio::fs::read_dir(&cache_dir).await {
-            while let Ok(Some(entry)) = rd.next_entry().await {
-                if entry.path().is_file() {
-                    if tokio::fs::remove_file(entry.path()).await.is_ok() {
-                        removed += 1;
-                    }
-                }
-            }
-        }
-    }
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "removed": removed })),
-    )
-        .into_response()
+        n
+    };
+
+    (StatusCode::OK, Json(serde_json::json!({ "removed": removed }))).into_response()
 }
 
 async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiTag>>, AppError> {
