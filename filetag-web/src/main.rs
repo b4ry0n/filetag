@@ -463,9 +463,10 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
         }
     }
 
-    // ImageMagick convert
+    // ImageMagick convert (with -auto-orient to respect EXIF orientation)
     if let Ok(out) = tokio::process::Command::new("convert")
         .arg(path)
+        .args(["-auto-orient"])
         .arg(&tmp)
         .output()
         .await
@@ -491,8 +492,30 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
 /// Generate a small JPEG thumbnail for any image file (JPEG, PNG, GIF, WEBP,
 /// TIFF, …). Returns raw JPEG bytes or `None` if all tools fail.
 /// Target: max 400 px on the longest side, quality 80.
+/// ImageMagick is tried first because its `-auto-orient` flag reliably applies
+/// EXIF orientation. ffmpeg is used as a fallback (it applies rotation in most
+/// modern versions but is not guaranteed for all EXIF Orientation values).
 async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
-    // ffmpeg: scale to fit 400×400, pipe JPEG to stdout
+    // ImageMagick 7 (magick) or 6 (convert):
+    // -auto-orient reads the EXIF Orientation tag and physically rotates the
+    // image before resizing, so the thumbnail always has the correct orientation.
+    let path_layer = format!("{}[0]", path.display());
+    for cmd in &["magick", "convert"] {
+        if let Ok(out) = tokio::process::Command::new(cmd)
+            .arg(&path_layer)
+            .args(["-auto-orient", "-resize", "400x400>", "-quality", "80", "jpg:-"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .await
+        {
+            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+                return Some(out.stdout);
+            }
+        }
+    }
+
+    // ffmpeg fallback: scale to fit 400×400, pipe JPEG to stdout.
+    // Modern ffmpeg (4.x+) applies EXIF rotation automatically for most cases.
     if let Ok(out) = tokio::process::Command::new("ffmpeg")
         .args(["-i"])
         .arg(path)
@@ -511,24 +534,6 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
     {
         if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
             return Some(out.stdout);
-        }
-    }
-
-    // sips (macOS): writes to a temp path inside the cache dir, caller handles caching
-    // — not used here because sips requires a file path output; callers use ffmpeg path.
-
-    // ImageMagick 7 / 6 fallback
-    let path_layer = format!("{}[0]", path.display());
-    for cmd in &["magick", "convert"] {
-        if let Ok(out) = tokio::process::Command::new(cmd)
-            .arg(&path_layer)
-            .args(["-resize", "400x400>", "-quality", "80", "jpg:-"])
-            .output()
-            .await
-        {
-            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
-                return Some(out.stdout);
-            }
         }
     }
 
