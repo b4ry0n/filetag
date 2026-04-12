@@ -1854,7 +1854,7 @@ function cvApplyScrollZoom(newSize, event) {
                 if (stage.scrollWidth > 0) anchor = { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx };
             }
             stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
-            if (anchor) requestAnimationFrame(() => { stage.scrollLeft = anchor.ratio * stage.scrollWidth - anchor.cx; });
+            if (anchor) requestAnimationFrame(() => { stage.scrollTo({ left: anchor.ratio * stage.scrollWidth - anchor.cx, behavior: 'instant' }); });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.display = _cv.scrollHeight === 90 ? 'none' : ''; }
     } else {
@@ -1867,7 +1867,7 @@ function cvApplyScrollZoom(newSize, event) {
                 if (stage.scrollHeight > 0) anchor = { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy };
             }
             stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-            if (anchor) requestAnimationFrame(() => { stage.scrollTop = anchor.ratio * stage.scrollHeight - anchor.cy; });
+            if (anchor) requestAnimationFrame(() => { stage.scrollTo({ top: anchor.ratio * stage.scrollHeight - anchor.cy, behavior: 'instant' }); });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.display = _cv.scrollWidth === 100 ? 'none' : ''; }
     }
