@@ -103,7 +103,7 @@ enum Command {
         /// Show tags for specific files (omit for all tags)
         files: Vec<PathBuf>,
 
-        /// Include tags from child databases
+        /// Include tags from linked databases
         #[arg(short, long)]
         all: bool,
 
@@ -137,7 +137,7 @@ enum Command {
         #[arg(short = '0', long)]
         null: bool,
 
-        /// Search across all child databases
+        /// Search across all linked databases
         #[arg(short, long)]
         all: bool,
 
@@ -200,7 +200,7 @@ enum Command {
     /// Show database statistics
     Info,
 
-    /// Manage child databases
+    /// Manage linked databases
     Db {
         #[command(subcommand)]
         action: DbAction,
@@ -215,28 +215,28 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DbAction {
-    /// List registered child databases
+    /// List registered linked databases
     #[command(visible_alias = "ls")]
     List,
 
-    /// Register a child database
+    /// Link another database to this one
     Add {
-        /// Path to the child database root (must contain .filetag/)
+        /// Path to the database root to link (must contain .filetag/)
         path: PathBuf,
     },
 
-    /// Remove a child database registration
+    /// Remove a linked database registration
     Remove {
-        /// Path to the child database root
+        /// Path to the linked database root
         path: PathBuf,
     },
 
     /// Remove registrations for missing databases
     Prune,
 
-    /// Transfer tag records for files under a child path from parent DB to child DB
+    /// Transfer tag records for files under a linked path from this DB to the linked DB
     Push {
-        /// Path to the child database root
+        /// Path to the linked database root (must be a child, i.e. under the current root)
         path: PathBuf,
 
         /// Only show what would be transferred
@@ -244,9 +244,9 @@ enum DbAction {
         dry_run: bool,
     },
 
-    /// Transfer tag records from a child DB back to the parent DB
+    /// Transfer tag records from a linked DB back to this DB
     Pull {
-        /// Path to the child database root
+        /// Path to the linked database root (must be a child, i.e. under the current root)
         path: PathBuf,
 
         /// Only show what would be transferred
@@ -605,7 +605,7 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<
     let (conn, root) = open_db(cli)?;
 
     if files.is_empty() {
-        // Collect tags (optionally from all child databases)
+        // Collect tags (optionally from all linked databases)
         let mut merged_tags: std::collections::HashMap<String, i64> =
             std::collections::HashMap::new();
 
@@ -1275,47 +1275,40 @@ fn cmd_completions(shell: Shell) -> Result<()> {
     Ok(())
 }
 
-/// Validate that `path` is a registered child database of `root`.
-/// Returns the child's relative path and its `.filetag/db.sqlite3` path.
-fn resolve_registered_child(
+/// Validate that `path` is a registered linked database.
+/// Returns the stored key (relative if under root, absolute if partner) and its `.filetag/db.sqlite3` path.
+fn resolve_registered_linked(
     conn: &rusqlite::Connection,
     root: &std::path::Path,
     path: &PathBuf,
 ) -> Result<(String, PathBuf)> {
     let abs =
         std::fs::canonicalize(path).with_context(|| format!("resolving {}", path.display()))?;
-    let child_db_path = abs.join(".filetag").join("db.sqlite3");
-    if !child_db_path.is_file() {
+    let linked_db_path = abs.join(".filetag").join("db.sqlite3");
+    if !linked_db_path.is_file() {
         anyhow::bail!(
             "no filetag database found at {} (run 'filetag init' there first)",
             abs.display()
         );
     }
-    let child_rel = abs
+    let stored_path = abs
         .strip_prefix(root)
-        .with_context(|| {
-            format!(
-                "{} is not under database root {}",
-                abs.display(),
-                root.display()
-            )
-        })?
-        .to_string_lossy()
-        .into_owned();
-    let children = db::list_children(conn)?;
-    if !children.contains(&child_rel) {
+        .map(|rel| rel.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| abs.to_string_lossy().into_owned());
+    let linked = db::list_linked(conn)?;
+    if !linked.contains(&stored_path) {
         anyhow::bail!(
-            "'{}' is not a registered child (use 'filetag db add' first)",
-            child_rel
+            "'{}' is not a linked database (use 'filetag db add' first)",
+            stored_path
         );
     }
-    Ok((child_rel, child_db_path))
+    Ok((stored_path, linked_db_path))
 }
 
-/// Open a child database connection with the standard PRAGMA settings.
-fn open_child_conn(db_path: &std::path::Path) -> Result<rusqlite::Connection> {
+/// Open a linked database connection with the standard PRAGMA settings.
+fn open_linked_conn(db_path: &std::path::Path) -> Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(db_path)
-        .with_context(|| format!("opening child database {}", db_path.display()))?;
+        .with_context(|| format!("opening linked database {}", db_path.display()))?;
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
@@ -1329,22 +1322,22 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
     match action {
         DbAction::List => {
-            let children = db::list_children(&conn)?;
-            if children.is_empty() {
-                info!(cli, "No child databases registered");
+            let linked = db::list_linked(&conn)?;
+            if linked.is_empty() {
+                info!(cli, "No linked databases registered");
             } else {
-                for child_rel in &children {
-                    let child_root = root.join(child_rel);
-                    let db_path = child_root.join(".filetag").join("db.sqlite3");
+                for linked_path in &linked {
+                    let linked_root = root.join(linked_path);
+                    let db_path = linked_root.join(".filetag").join("db.sqlite3");
                     let status = if db_path.is_file() { "ok" } else { "missing" };
                     if cli.json {
                         println!(
                             "{{\"path\":{},\"status\":{}}}",
-                            serde_json::to_string(child_rel)?,
+                            serde_json::to_string(linked_path)?,
                             serde_json::to_string(status)?
                         );
                     } else {
-                        println!("{}\t{}", child_rel, status);
+                        println!("{}\t{}", linked_path, status);
                     }
                 }
             }
@@ -1352,49 +1345,44 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
         DbAction::Add { path } => {
             let abs = std::fs::canonicalize(path)
                 .with_context(|| format!("resolving {}", path.display()))?;
-            let child_db = abs.join(".filetag").join("db.sqlite3");
-            if !child_db.is_file() {
+            let linked_db = abs.join(".filetag").join("db.sqlite3");
+            if !linked_db.is_file() {
                 anyhow::bail!(
                     "no filetag database found at {} (run 'filetag init' there first)",
                     abs.display()
                 );
             }
-            let rel = abs
+            // Store relative path if the target is under the current root (child),
+            // or absolute path if it is outside (partner/parent).
+            let stored_path = abs
                 .strip_prefix(&root)
-                .with_context(|| {
-                    format!(
-                        "{} is not under database root {}",
-                        abs.display(),
-                        root.display()
-                    )
-                })?
-                .to_string_lossy()
-                .into_owned();
-            db::add_child(&conn, &rel)?;
-            info!(cli, "Registered child database: {}", rel);
+                .map(|rel| rel.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| abs.to_string_lossy().into_owned());
+            db::link_database(&conn, &stored_path)?;
+            info!(cli, "Linked database: {}", stored_path);
         }
         DbAction::Remove { path } => {
             let abs = std::fs::canonicalize(path)
                 .or_else(|_| Ok::<PathBuf, std::io::Error>(path.clone()))?;
-            let rel = abs
+            let stored_path = abs
                 .strip_prefix(&root)
                 .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| path.to_string_lossy().into_owned());
-            if db::remove_child(&conn, &rel)? {
-                info!(cli, "Removed child database: {}", rel);
+                .unwrap_or_else(|_| abs.to_string_lossy().into_owned());
+            if db::unlink_database(&conn, &stored_path)? {
+                info!(cli, "Removed linked database: {}", stored_path);
             } else {
-                anyhow::bail!("child database '{}' not found in registry", rel);
+                anyhow::bail!("linked database '{}' not found in registry", stored_path);
             }
         }
         DbAction::Prune => {
-            let children = db::list_children(&conn)?;
+            let linked = db::list_linked(&conn)?;
             let mut pruned = 0;
-            for child_rel in &children {
-                let child_root = root.join(child_rel);
-                let db_path = child_root.join(".filetag").join("db.sqlite3");
+            for linked_path in &linked {
+                let linked_root = root.join(linked_path);
+                let db_path = linked_root.join(".filetag").join("db.sqlite3");
                 if !db_path.is_file() {
-                    db::remove_child(&conn, child_rel)?;
-                    println!("pruned child: {}", child_rel);
+                    db::unlink_database(&conn, linked_path)?;
+                    println!("pruned: {}", linked_path);
                     pruned += 1;
                 }
             }
@@ -1405,31 +1393,35 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             }
             info!(
                 cli,
-                "Pruned {} child + {} global registration(s)",
+                "Pruned {} linked + {} global registration(s)",
                 pruned,
                 global_pruned.len()
             );
         }
         DbAction::Push { path, dry_run } => {
-            let (child_rel, child_db_path) = resolve_registered_child(&conn, &root, path)?;
+            let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, path)?;
+            // Push only makes sense when the linked DB is under the current root (child relationship)
+            if PathBuf::from(&linked_path).is_absolute() {
+                anyhow::bail!("push/pull is only supported for databases under the current root (child relationship)");
+            }
 
-            let files = db::files_under_prefix(&conn, &child_rel)?;
+            let files = db::files_under_prefix(&conn, &linked_path)?;
             if files.is_empty() {
-                info!(cli, "No files in parent DB under {}/", child_rel);
+                info!(cli, "No files in this DB under {}/", linked_path);
                 return Ok(());
             }
 
             if *dry_run {
                 for f in &files {
-                    let child_path = f
+                    let linked_rel = f
                         .rel_path
-                        .strip_prefix(&child_rel)
+                        .strip_prefix(&linked_path)
                         .unwrap_or(&f.rel_path)
                         .trim_start_matches('/');
                     let tag_count = f.tags.len();
                     println!(
                         "{} ({} tag{})",
-                        child_path,
+                        linked_rel,
                         tag_count,
                         if tag_count == 1 { "" } else { "s" }
                     );
@@ -1438,69 +1430,73 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                 return Ok(());
             }
 
-            let child_conn = open_child_conn(&child_db_path)?;
+            let linked_conn = open_linked_conn(&linked_db_path)?;
 
             let parent_tx = conn.unchecked_transaction()?;
-            let child_tx = child_conn.unchecked_transaction()?;
+            let linked_tx = linked_conn.unchecked_transaction()?;
 
             let mut transferred = 0u64;
             let pb = make_progress(cli, files.len() as u64, "Pushing");
-            let prefix_with_slash = format!("{}/", child_rel.trim_end_matches('/'));
+            let prefix_with_slash = format!("{}/", linked_path.trim_end_matches('/'));
             for f in &files {
-                let child_path = f
+                let dest_path = f
                     .rel_path
                     .strip_prefix(&prefix_with_slash)
                     .unwrap_or(&f.rel_path);
 
-                // Insert file record into child DB
-                child_conn.execute(
+                // Insert file record into linked DB
+                linked_conn.execute(
                     "INSERT OR IGNORE INTO files (path, file_id, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![child_path, f.file_id, f.size, f.mtime_ns],
+                    rusqlite::params![dest_path, f.file_id, f.size, f.mtime_ns],
                 )?;
-                let child_file_id: i64 = child_conn.query_row(
+                let linked_file_id: i64 = linked_conn.query_row(
                     "SELECT id FROM files WHERE path = ?1",
-                    rusqlite::params![child_path],
+                    rusqlite::params![dest_path],
                     |row| row.get(0),
                 )?;
 
                 // Copy tags
                 for (tag_name, value) in &f.tags {
-                    let tag_id = db::get_or_create_tag(&child_conn, tag_name)?;
+                    let tag_id = db::get_or_create_tag(&linked_conn, tag_name)?;
                     db::apply_tag(
-                        &child_conn,
-                        child_file_id,
+                        &linked_conn,
+                        linked_file_id,
                         tag_id,
                         if value.is_empty() { None } else { Some(value) },
                     )?;
                 }
 
-                // Remove from parent
+                // Remove from this DB
                 db::delete_file_by_path(&parent_tx, &f.rel_path)?;
                 transferred += 1;
                 pb.inc(1);
             }
             pb.finish_and_clear();
 
-            child_tx.commit()?;
+            linked_tx.commit()?;
             parent_tx.commit()?;
 
             info!(
                 cli,
-                "Transferred {} record(s) to child database {}", transferred, child_rel
+                "Transferred {} record(s) to linked database {}", transferred, linked_path
             );
         }
         DbAction::Pull { path, dry_run } => {
-            let (child_rel, child_db_path) = resolve_registered_child(&conn, &root, path)?;
-            let child_conn = open_child_conn(&child_db_path)?;
+            let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, path)?;
+            // Pull only makes sense when the linked DB is under the current root (child relationship)
+            if PathBuf::from(&linked_path).is_absolute() {
+                anyhow::bail!("push/pull is only supported for databases under the current root (child relationship)");
+            }
+            let linked_conn = open_linked_conn(&linked_db_path)?;
 
-            let files = db::all_files_with_tags(&child_conn)?;
+            let files = db::all_files_with_tags(&linked_conn)?;
             if files.is_empty() {
-                info!(cli, "No files in child DB {}", child_rel);
+                info!(cli, "No files in linked DB {}", linked_path);
                 return Ok(());
             }
 
             if *dry_run {
-                let prefix_with_slash = format!("{}/", child_rel.trim_end_matches('/'));
+                let prefix_with_slash = format!("{}/", linked_path.trim_end_matches('/'));
                 for f in &files {
                     let parent_path = format!("{}{}", prefix_with_slash, f.rel_path);
                     let tag_count = f.tags.len();
@@ -1516,15 +1512,15 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             }
 
             let parent_tx = conn.unchecked_transaction()?;
-            let child_tx = child_conn.unchecked_transaction()?;
+            let linked_tx = linked_conn.unchecked_transaction()?;
 
             let mut transferred = 0u64;
             let pb = make_progress(cli, files.len() as u64, "Pulling");
-            let prefix_with_slash = format!("{}/", child_rel.trim_end_matches('/'));
+            let prefix_with_slash = format!("{}/", linked_path.trim_end_matches('/'));
             for f in &files {
                 let parent_path = format!("{}{}", prefix_with_slash, f.rel_path);
 
-                // Insert file record into parent DB
+                // Insert file record into this DB
                 parent_tx.execute(
                     "INSERT OR IGNORE INTO files (path, file_id, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![parent_path, f.file_id, f.size, f.mtime_ns],
@@ -1546,19 +1542,19 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                     )?;
                 }
 
-                // Remove from child
-                db::delete_file_by_path(&child_tx, &f.rel_path)?;
+                // Remove from linked DB
+                db::delete_file_by_path(&linked_tx, &f.rel_path)?;
                 transferred += 1;
                 pb.inc(1);
             }
             pb.finish_and_clear();
 
-            child_tx.commit()?;
+            linked_tx.commit()?;
             parent_tx.commit()?;
 
             info!(
                 cli,
-                "Transferred {} record(s) from child database {}", transferred, child_rel
+                "Transferred {} record(s) from linked database {}", transferred, linked_path
             );
         }
         DbAction::Register => {
