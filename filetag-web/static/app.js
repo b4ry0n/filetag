@@ -81,6 +81,7 @@ const state = {
     selectedFilesData: new Map(), // path → file detail (for tag aggregation)
     info: null,
     detailOpen: true,
+    expandedGroups: new Set(), // tag group prefixes that are expanded
 };
 
 let _lastClickedPath = null; // for shift-range selection
@@ -265,12 +266,17 @@ function renderTags() {
         const groupQuery = root ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
         const groupActive = state.mode === 'search' && state.searchQuery === groupQuery ? ' active' : '';
         const groupColor = root ? root.color : null;
+        const expanded = state.expandedGroups.has(prefix);
+        const expandedClass = expanded ? ' expanded' : '';
+        const rootContextMenu = root ? ` oncontextmenu="showTagMenu(event,'${esc(prefix)}')"` : '';
         html += `<div class="tag-group">
-            <div class="tag-group-label${groupActive}">
-                <button class="tag-group-chevron" onclick="toggleTagGroup(this.parentElement)" title="Expand/collapse"><span class="chevron">▸</span></button>
-                <button class="tag-group-name" onclick="doTagGroupSearch('${esc(prefix)}')">${colorDot(groupColor)}${esc(prefix)} <span class="count">${totalCount}</span></button>
+            <div class="tag-group-label${groupActive}${expandedClass}">
+                <button class="tag-group-chevron" onclick="toggleTagGroup('${esc(prefix)}')" title="Expand/collapse">
+                    <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <button class="tag-group-name" onclick="doTagGroupSearch('${esc(prefix)}')"${rootContextMenu}>${colorDot(groupColor)}${esc(prefix)} <span class="count">${totalCount}</span></button>
             </div>
-            <div class="tag-group-items">`;
+            <div class="tag-group-items${expanded ? ' open' : ''}">`;
         for (const item of items) {
             const q = quoteTag(item.fullName);
             const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
@@ -1059,13 +1065,18 @@ function setCardSize(size) {
     document.getElementById('content').style.setProperty('--card-size', size + 'px');
 }
 
-function toggleTagGroup(labelEl) {
-    labelEl.classList.toggle('expanded');
-    const items = labelEl.nextElementSibling;
-    items.classList.toggle('open');
+function toggleTagGroup(prefix) {
+    if (state.expandedGroups.has(prefix)) {
+        state.expandedGroups.delete(prefix);
+    } else {
+        state.expandedGroups.add(prefix);
+    }
+    renderTags();
 }
 
 async function doTagGroupSearch(prefix) {
+    // Expand group on click
+    state.expandedGroups.add(prefix);
     const hasRoot = state.tags.some(t => t.name === prefix);
     const q = hasRoot ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
     document.getElementById('search-input').value = q;
