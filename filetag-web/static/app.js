@@ -2045,9 +2045,12 @@ function _cvInitStageEvents() {
         }
     });
 
-    // Double-click: zoom to 2× at cursor, or reset if already zoomed
+    // Double-click in the middle zone (30%–70%): zoom to 2× at cursor, or reset if already zoomed.
+    // Double-click in the nav zones (left <30%, right >70%) is ignored so rapid page-turning works.
     stage.addEventListener('dblclick', e => {
         if (document.getElementById('comic-viewer').hidden) return;
+        const x = e.clientX / window.innerWidth;
+        if (x < 0.3 || x > 0.7) return;  // nav zone — ignore
         e.preventDefault();
         if (_cv.zoom > 1) {
             cvResetZoom();
@@ -2203,28 +2206,17 @@ function _cvKeyHandler(e) {
     }
 }
 
-let _cvClickNavTimer = null;
-
 function cvClickNav(e) {
     if (_cv.scroll) return;  // no click-nav in scroll mode
     if (_cv.zoom > 1 || _cvDrag.moved) return;
     const x = e.clientX / window.innerWidth;
-    let action = null;
     if (_cv.rtl) {
-        if (x > 0.7) action = 'next';
-        else if (x < 0.3) action = 'prev';
+        if (x > 0.7) cvNext();
+        else if (x < 0.3) cvPrev();
     } else {
-        if (x < 0.3) action = 'prev';
-        else if (x > 0.7) action = 'next';
+        if (x < 0.3) cvPrev();
+        else if (x > 0.7) cvNext();
     }
-    if (!action) return;
-
-    // Delay so a double-click fires dblclick (zoom) rather than two nav steps
-    if (_cvClickNavTimer) { clearTimeout(_cvClickNavTimer); _cvClickNavTimer = null; return; }
-    _cvClickNavTimer = setTimeout(() => {
-        _cvClickNavTimer = null;
-        if (action === 'next') cvNext(); else cvPrev();
-    }, 220);
 }
 
 // ---------------------------------------------------------------------------
