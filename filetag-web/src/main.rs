@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::{StatusCode, header},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
@@ -13,7 +13,6 @@ use clap::Parser;
 use filetag_lib::{db, query};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tower_http::services::ServeDir;
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -175,6 +174,240 @@ struct FileDetailParams {
 struct TagRequest {
     path: String,
     tags: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// File preview handler
+// ---------------------------------------------------------------------------
+
+/// Serve a file for preview, converting RAW / HEIC formats server-side.
+async fn preview_handler(
+    AxumPath(rel_path): AxumPath<String>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let abs = match preview_safe_path(&state.root, &rel_path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    let ext = abs
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw"
+        | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" => {
+            preview_raw(&abs).await
+        }
+        "heic" | "heif" => preview_heic(&abs).await,
+        _ => serve_file_bytes(&abs).await,
+    }
+}
+
+/// Sanitise a URL path component so it cannot escape `root`.
+/// Unlike `safe_path`, this does not require the file to exist first.
+fn preview_safe_path(root: &Path, rel: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut result = root.to_path_buf();
+    for component in std::path::Path::new(rel.trim_start_matches('/')).components() {
+        match component {
+            Component::Normal(name) => result.push(name),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    // Re-canonicalise to catch symlinks that escape root
+    match std::fs::canonicalize(&result) {
+        Ok(canonical) if canonical.starts_with(root) => Some(canonical),
+        Ok(_) => None,
+        // File may not exist yet (e.g. wrong path) – just reject
+        Err(_) => None,
+    }
+}
+
+fn mime_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "tiff" | "tif" => "image/tiff",
+        "avif" => "image/avif",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "mkv" => "video/x-matroska",
+        "wmv" => "video/x-ms-wmv",
+        "flv" => "video/x-flv",
+        "ts" => "video/mp2t",
+        "mp3" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "ogg" => "audio/ogg",
+        "opus" => "audio/opus",
+        "wav" => "audio/wav",
+        "aac" => "audio/aac",
+        "m4a" => "audio/mp4",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "html" | "htm" => "text/html; charset=utf-8",
+        _ => "text/plain; charset=utf-8",
+    }
+}
+
+async fn serve_file_bytes(path: &Path) -> Response {
+    match tokio::fs::read(path).await {
+        Ok(data) => {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let ct = mime_for_ext(&ext);
+            ([(header::CONTENT_TYPE, ct)], data).into_response()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (StatusCode::NOT_FOUND, "File not found").into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Try to extract a JPEG preview from a RAW file using available tools.
+/// Attempt order: dcraw -e -c → exiftool → ffmpeg
+async fn preview_raw(path: &Path) -> Response {
+    // dcraw: extract embedded thumbnail to stdout
+    if let Ok(out) = tokio::process::Command::new("dcraw")
+        .args(["-e", "-c"])
+        .arg(path)
+        .output()
+        .await
+    {
+        if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+        }
+    }
+
+    // exiftool: extract PreviewImage or ThumbnailImage
+    for tag in &["-PreviewImage", "-ThumbnailImage", "-JpgFromRaw"] {
+        if let Ok(out) = tokio::process::Command::new("exiftool")
+            .args(["-b", tag])
+            .arg(path)
+            .output()
+            .await
+        {
+            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+                return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+            }
+        }
+    }
+
+    // ffmpeg: decode first frame to JPEG
+    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-vframes",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ])
+        .output()
+        .await
+    {
+        if out.status.success() && !out.stdout.is_empty() {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+        }
+    }
+
+    // Fallback: send a structured error so the frontend can show a message
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "RAW preview unavailable — install dcraw, exiftool, or ffmpeg",
+    )
+        .into_response()
+}
+
+/// Convert HEIC/HEIF to JPEG for browser display.
+/// Attempt order: sips (macOS) → ffmpeg → ImageMagick convert
+async fn preview_heic(path: &Path) -> Response {
+    let tmp = std::env::temp_dir().join(format!(
+        "filetag_preview_{}.jpg",
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    ));
+
+    // sips (macOS built-in)
+    if let Ok(out) = tokio::process::Command::new("sips")
+        .args(["-s", "format", "jpeg", "-Z", "1600"])
+        .arg(path)
+        .arg("--out")
+        .arg(&tmp)
+        .output()
+        .await
+    {
+        if out.status.success() {
+            if let Ok(data) = tokio::fs::read(&tmp).await {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            }
+        }
+    }
+
+    // ffmpeg
+    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-vframes",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ])
+        .output()
+        .await
+    {
+        if out.status.success() && !out.stdout.is_empty() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+        }
+    }
+
+    // ImageMagick convert
+    if let Ok(out) = tokio::process::Command::new("convert")
+        .arg(path)
+        .arg(&tmp)
+        .output()
+        .await
+    {
+        if out.status.success() {
+            if let Ok(data) = tokio::fs::read(&tmp).await {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            }
+        }
+    }
+
+    let _ = tokio::fs::remove_file(&tmp).await;
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "HEIC preview unavailable — install sips (macOS), ffmpeg, or ImageMagick",
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +724,8 @@ async fn api_delete_tag(
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Static files
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 #[tokio::main]
@@ -526,7 +760,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/untag", post(api_untag))
         .route("/api/tag-color", post(api_tag_color))
         .route("/api/delete-tag", post(api_delete_tag))
-        .nest_service("/preview", ServeDir::new(&root))
+        .route("/preview/*path", get(preview_handler))
         .with_state(state);
 
     let addr = format!("{}:{}", args.bind, args.port);
