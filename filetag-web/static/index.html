@@ -70,6 +70,11 @@
             <div class="detail-empty">Select a file or folder to see details</div>
         </aside>
     </div>
+    <!-- Lightbox modal -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox(event)" hidden>
+        <button class="lightbox-close" onclick="closeLightbox()" title="Close">&times;</button>
+        <div class="lightbox-content" id="lightbox-content"></div>
+    </div>
     <script src="/app.js"></script>
 </body>
 </html>

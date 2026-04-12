@@ -4,11 +4,13 @@
 
 const ICONS = {
     folder: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
-    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
-    image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
-    audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
-    video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
-    gotoDir: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4.5v7A1.5 1.5 0 002.5 13h11A1.5 1.5 0 0015 11.5V6a1.5 1.5 0 00-1.5-1.5H7L5.5 3H2.5A1.5 1.5 0 001 4.5z"/><polyline points="9 8 11 10 9 12"/><line x1="6" y1="10" x2="11" y2="10"/></svg>',
+    file:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    image:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+    audio:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+    video:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+    pdf:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><polyline points="9 9 10 9"/></svg>',
+    text:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>',
+    gotoDir:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4.5v7A1.5 1.5 0 002.5 13h11A1.5 1.5 0 0015 11.5V6a1.5 1.5 0 00-1.5-1.5H7L5.5 3H2.5A1.5 1.5 0 001 4.5z"/><polyline points="9 8 11 10 9 12"/><line x1="6" y1="10" x2="11" y2="10"/></svg>',
 };
 
 // ---------------------------------------------------------------------------
@@ -19,6 +21,11 @@ const EXT_MAP = {
     image: ['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','avif'],
     audio: ['mp3','flac','wav','ogg','opus','aac','m4a','wma','aiff','alac'],
     video: ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts'],
+    pdf:   ['pdf'],
+    text:  ['txt','md','markdown','rst','csv','tsv','log','ini','cfg','conf',
+            'json','yaml','yml','toml','xml','html','htm','css','js','ts',
+            'jsx','tsx','py','rb','rs','go','java','c','cpp','h','hpp',
+            'sh','bash','zsh','fish','sql','diff','patch','gitignore'],
 };
 
 function fileType(name) {
@@ -441,7 +448,7 @@ function renderGrid(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
-            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)">
+            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="openLightbox('${esc(path)}','${fileType(name)}')">
                 ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -484,7 +491,7 @@ function renderList(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
-            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)">
+            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="openLightbox('${esc(path)}','${fileType(name)}')">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -599,14 +606,23 @@ function renderDetail() {
     const f = state.selectedFile;
     const name = f.path.split('/').pop();
     const type_ = fileType(name);
+    const previewUrl = '/preview/' + encodeURI(f.path);
 
     let preview;
     if (type_ === 'image') {
-        preview = `<img src="/preview/${encodeURI(f.path)}" alt="${esc(name)}">`;
+        preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','image')" title="Click to enlarge">` +
+                  `<img src="${previewUrl}" alt="${esc(name)}"></a>`;
     } else if (type_ === 'audio') {
-        preview = `<audio controls preload="metadata" src="/preview/${encodeURI(f.path)}"></audio>`;
+        preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${esc(f.path)}','audio')"></audio>`;
     } else if (type_ === 'video') {
-        preview = `<video controls preload="metadata" src="/preview/${encodeURI(f.path)}"></video>`;
+        preview = `<video controls preload="metadata" src="${previewUrl}"` +
+                  ` onclick="openLightbox('${esc(f.path)}','video')" style="cursor:zoom-in"></video>`;
+    } else if (type_ === 'pdf') {
+        preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}"></iframe>` +
+                  `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${esc(f.path)}','pdf')">Full-size PDF</button></div>`;
+    } else if (type_ === 'text') {
+        preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${esc(f.path)}','text')"` +
+                  ` title="Double-click to enlarge">Loading…</pre>`;
     } else {
         preview = `<div class="no-preview">${fileIcon(name)}</div>`;
     }
@@ -641,6 +657,24 @@ function renderDetail() {
         </div>`;
 
     attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
+
+    // Async-fetch text content after DOM is set
+    if (type_ === 'text') {
+        const el = document.getElementById('preview-text-content');
+        if (el) {
+            const maxBytes = 32 * 1024; // 32 KiB
+            fetch(previewUrl + '?raw=1').then(r => {
+                if (!r.ok) throw new Error(r.statusText);
+                return r.text();
+            }).then(txt => {
+                if (el) {
+                    el.textContent = txt.length > 60000 ? txt.slice(0, 60000) + '\n…' : txt;
+                }
+            }).catch(() => {
+                if (el) el.textContent = '(Could not load preview)';
+            });
+        }
+    }
 }
 
 // Update only the tag chips in the detail panel, leaving the preview (video/audio/image) untouched.
@@ -1097,6 +1131,61 @@ function closeDetail() {
     document.getElementById('detail-toggle').classList.remove('active');
     render();
     restoreScrollAnchor(anchor);
+}
+
+// ---------------------------------------------------------------------------
+// Lightbox
+// ---------------------------------------------------------------------------
+
+function openLightbox(path, type) {
+    const url = '/preview/' + encodeURI(path);
+    const lb = document.getElementById('lightbox');
+    const content = document.getElementById('lightbox-content');
+    let html = '';
+    if (type === 'image') {
+        html = `<img src="${url}" alt="${esc(path.split('/').pop())}">`;
+    } else if (type === 'video') {
+        html = `<video controls autoplay src="${url}"></video>`;
+    } else if (type === 'audio') {
+        html = `<audio controls autoplay src="${url}"></audio>`;
+    } else if (type === 'pdf') {
+        html = `<iframe class="lightbox-pdf" src="${url}" title="${esc(path.split('/').pop())}"></iframe>`;
+    } else if (type === 'text') {
+        html = `<pre class="lightbox-text" id="lightbox-text-pre">Loading…</pre>`;
+    }
+    content.innerHTML = html;
+    lb.hidden = false;
+    document.addEventListener('keydown', _lightboxKeyHandler, { once: true });
+
+    if (type === 'text') {
+        fetch(url).then(r => r.text()).then(txt => {
+            const el = document.getElementById('lightbox-text-pre');
+            if (el) el.textContent = txt;
+        }).catch(() => {
+            const el = document.getElementById('lightbox-text-pre');
+            if (el) el.textContent = '(Could not load file)';
+        });
+    }
+}
+
+function closeLightbox(event) {
+    // Close when: close button clicked, backdrop clicked, or called without event
+    if (event && event.target !== document.getElementById('lightbox') &&
+        !event.target.classList.contains('lightbox-close')) return;
+    const lb = document.getElementById('lightbox');
+    lb.hidden = true;
+    document.getElementById('lightbox-content').innerHTML = '';
+}
+
+function _lightboxKeyHandler(e) {
+    if (e.key === 'Escape') {
+        const lb = document.getElementById('lightbox');
+        lb.hidden = true;
+        document.getElementById('lightbox-content').innerHTML = '';
+    } else {
+        // Re-attach for next keypress if not Escape
+        document.addEventListener('keydown', _lightboxKeyHandler, { once: true });
+    }
 }
 
 // Scroll anchor helpers — keep an element at the same viewport-Y across reflows
