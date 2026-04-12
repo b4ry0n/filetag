@@ -815,6 +815,41 @@ async fn api_info(State(state): State<Arc<AppState>>) -> Result<Json<ApiInfo>, A
     }))
 }
 
+/// Delete all cached thumbnails and preview files from `.filetag/cache/`.
+async fn api_cache_clear(State(state): State<Arc<AppState>>) -> Response {
+    let cache_dir = state.root.join(".filetag").join("cache");
+    let mut removed: u64 = 0;
+    for sub in &["raw", "thumbs"] {
+        let dir = cache_dir.join(sub);
+        if dir.exists() {
+            if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
+                while let Ok(Some(entry)) = rd.next_entry().await {
+                    if tokio::fs::remove_file(entry.path()).await.is_ok() {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+    }
+    // Loose HEIC cache files are stored directly under cache/
+    if cache_dir.exists() {
+        if let Ok(mut rd) = tokio::fs::read_dir(&cache_dir).await {
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                if entry.path().is_file() {
+                    if tokio::fs::remove_file(entry.path()).await.is_ok() {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "removed": removed })),
+    )
+        .into_response()
+}
+
 async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiTag>>, AppError> {
     let conn = open_conn(&state)?;
     let tags = db::all_tags(&conn).map_err(AppError)?;
@@ -1101,6 +1136,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/app.js", get(app_js))
         .route("/favicon.svg", get(favicon))
         .route("/api/info", get(api_info))
+        .route("/api/cache/clear", post(api_cache_clear))
         .route("/api/tags", get(api_tags))
         .route("/api/files", get(api_files))
         .route("/api/search", get(api_search))

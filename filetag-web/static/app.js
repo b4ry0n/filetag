@@ -1217,6 +1217,22 @@ async function toggleShowHidden() {
     }
 }
 
+async function clearCache() {
+    const btn = document.getElementById('cache-clear-btn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/cache/clear', { method: 'POST' });
+        const data = await res.json();
+        const n = data.removed ?? 0;
+        btn.title = `Cleared ${n} cached file${n === 1 ? '' : 's'} — reloading…`;
+    } catch (_) {
+        btn.title = 'Cache clear failed';
+    } finally {
+        // Hard reload so all img src requests hit the backend fresh
+        window.location.reload(true);
+    }
+}
+
 function setViewMode(mode) {
     state.viewMode = mode;
     document.getElementById('view-grid').classList.toggle('active', mode === 'grid');
