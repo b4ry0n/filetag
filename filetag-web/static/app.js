@@ -267,6 +267,7 @@ function selectDir(path, name, fileCount) {
 
 // Timer to distinguish single click (select) from double click (navigate) on directories.
 let _dirClickTimer = null;
+let _zipClickTimer = null;
 
 function handleDirClick(path, name, fileCount) {
     if (_dirClickTimer) {
@@ -277,6 +278,19 @@ function handleDirClick(path, name, fileCount) {
         _dirClickTimer = setTimeout(() => {
             _dirClickTimer = null;
             selectDir(path, name, fileCount); // single click
+        }, 250);
+    }
+}
+
+function handleZipClick(path, event) {
+    if (_zipClickTimer) {
+        clearTimeout(_zipClickTimer);
+        _zipClickTimer = null;
+        openZipDir(path); // double click
+    } else {
+        _zipClickTimer = setTimeout(() => {
+            _zipClickTimer = null;
+            selectFile(path, event); // single click
         }, 250);
     }
 }
@@ -561,7 +575,7 @@ function renderGrid(items) {
                 ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="openZipDir('${esc(path)}')">
+                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${esc(path)}', event)">
                     ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -612,7 +626,7 @@ function renderList(items) {
                 ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             if (fileType(name) === 'zip') {
-                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="openZipDir('${esc(path)}')">
+                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${esc(path)}', event)">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}</span>
                     <span class="size">${size}</span>
