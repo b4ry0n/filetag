@@ -160,7 +160,7 @@ function escMd(s) {
 // ---------------------------------------------------------------------------
 
 const state = {
-    mode: 'browse', // browse | search
+    mode: 'browse', // browse | search | zip
     currentPath: '',
     viewMode: 'grid',
     showHidden: false,
@@ -168,6 +168,8 @@ const state = {
     entries: [],
     searchQuery: '',
     searchResults: [],
+    zipPath: null,         // path to the currently browsed zip archive
+    zipEntries: [],        // [{name, size, is_image, image_index, tag_count}]
     selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
     selectedPaths: new Set(), // multi-select: Set of paths
@@ -221,6 +223,8 @@ async function loadFiles(path) {
     state.entries = data.entries;
     state.mode = 'browse';
     state.searchQuery = '';
+    state.zipPath = null;
+    state.zipEntries = [];
     sessionStorage.setItem('ft_path', state.currentPath);
 }
 
@@ -282,6 +286,7 @@ async function addTagToFile(path, tagStr) {
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
+    if (state.mode === 'zip')    await refreshZipEntries();
 }
 
 async function removeTagFromFile(path, tagStr) {
@@ -289,6 +294,7 @@ async function removeTagFromFile(path, tagStr) {
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
+    if (state.mode === 'zip')    await refreshZipEntries();
 }
 
 // ---------------------------------------------------------------------------
@@ -481,18 +487,24 @@ function renderBreadcrumb() {
         return;
     }
 
-    let html = `<button class="breadcrumb-item${state.currentPath === '' ? ' current' : ''}" onclick="navigateTo('')">/</button>`;
+    const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip';
+    let html = `<button class="breadcrumb-item${rootIsCurrent ? ' current' : ''}" onclick="navigateTo('')">/</button>`;
 
     if (state.currentPath) {
         const parts = state.currentPath.split('/');
         let accumulated = '';
         for (let i = 0; i < parts.length; i++) {
             accumulated += (i === 0 ? '' : '/') + parts[i];
-            const isCurrent = i === parts.length - 1;
+            const isCurrent = i === parts.length - 1 && state.mode !== 'zip';
             const path = accumulated;
             if (i > 0) html += `<span class="breadcrumb-sep">/</span>`;
             html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${esc(path)}')">${esc(parts[i])}</button>`;
         }
+    }
+
+    if (state.mode === 'zip') {
+        const zipName = state.zipPath.split('/').pop();
+        html += `<span class="breadcrumb-sep">/</span><span class="breadcrumb-item current">${esc(zipName)}</span>`;
     }
 
     el.innerHTML = html;
@@ -548,11 +560,18 @@ function renderGrid(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
-            const dblFn = fileType(name) === 'zip' ? `openComicViewer('${esc(path)}')` : `openLightbox('${esc(path)}','${fileType(name)}')`;
-            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">
-                ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
-                <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
-            </div>`;
+            if (type_ === 'zip') {
+                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="openZipDir('${esc(path)}')">
+                    ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
+                    <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
+                </div>`;
+            } else {
+                const dblFn = `openLightbox('${esc(path)}','${fileType(name)}')`;
+                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">
+                    ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
+                    <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
+                </div>`;
+            }
         }
     }
     return html;
@@ -592,14 +611,24 @@ function renderList(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
-            const dblFnL = fileType(name) === 'zip' ? `openComicViewer('${esc(path)}')` : `openLightbox('${esc(path)}','${fileType(name)}')`;
-            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">
-                <span class="icon">${icon}</span>
-                <span class="name">${esc(name)}</span>
-                <span class="size">${size}</span>
-                <span class="date">${date}</span>
-                <span class="tags-count">${tags}${gotoDirBtn}</span>
-            </div>`;
+            if (fileType(name) === 'zip') {
+                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="openZipDir('${esc(path)}')">
+                    <span class="icon">${icon}</span>
+                    <span class="name">${esc(name)}</span>
+                    <span class="size">${size}</span>
+                    <span class="date">${date}</span>
+                    <span class="tags-count">${tags}${gotoDirBtn}</span>
+                </div>`;
+            } else {
+                const dblFnL = `openLightbox('${esc(path)}','${fileType(name)}')`;
+                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">
+                    <span class="icon">${icon}</span>
+                    <span class="name">${esc(name)}</span>
+                    <span class="size">${size}</span>
+                    <span class="date">${date}</span>
+                    <span class="tags-count">${tags}${gotoDirBtn}</span>
+                </div>`;
+            }
         }
     }
     return html;
@@ -611,6 +640,29 @@ function renderList(items) {
 
 function renderContent() {
     const el = document.getElementById('content');
+
+    // --- Zip directory mode ---
+    if (state.mode === 'zip') {
+        const entries = state.zipEntries;
+        if (!entries.length) {
+            el.className = '';
+            el.innerHTML = `<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Empty archive</span></div>`;
+            document.getElementById('entry-count').textContent = '0 files';
+            return;
+        }
+        if (state.viewMode === 'grid') {
+            el.className = 'file-grid';
+            el.innerHTML = renderZipGrid(entries);
+        } else {
+            el.className = 'file-list';
+            el.innerHTML = renderZipList(entries);
+        }
+        const images = entries.filter(e => e.is_image).length;
+        document.getElementById('entry-count').textContent =
+            `${entries.length} file${entries.length === 1 ? '' : 's'} (${images} image${images === 1 ? '' : 's'})`;
+        return;
+    }
+
     const items = state.mode === 'search' ? state.searchResults : state.entries;
 
     if (!items.length) {
@@ -649,6 +701,94 @@ function renderContent() {
     if (dirs > 0) parts.push(`${dirs} folder${dirs === 1 ? '' : 's'}`);
     if (files > 0) parts.push(`${files} file${files === 1 ? '' : 's'}`);
     document.getElementById('entry-count').textContent = parts.join(', ');
+}
+
+// ---------------------------------------------------------------------------
+// Zip directory: open, refresh, helper, grid + list render
+// ---------------------------------------------------------------------------
+
+/** Parse a virtual zip-entry DB path (e.g. "comics/arc.cbz::img.jpg").
+ *  Returns {zipPath, entryName} or null. */
+function parseZipEntryPath(path) {
+    const idx = path ? path.indexOf('::') : -1;
+    if (idx === -1) return null;
+    return { zipPath: path.slice(0, idx), entryName: path.slice(idx + 2) };
+}
+
+async function openZipDir(zipPath) {
+    state.mode = 'zip';
+    state.zipPath = zipPath;
+    state.selectedFile = null;
+    state.selectedDir = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    _lastClickedPath = null;
+    _armedBulkTag = null;
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }));
+    state.zipEntries = data.entries || [];
+    render();
+}
+
+async function refreshZipEntries() {
+    if (!state.zipPath) return;
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }));
+    state.zipEntries = data.entries || [];
+    renderContent();
+}
+
+function renderZipGrid(entries) {
+    let html = '';
+    for (const entry of entries) {
+        // Entry names may include path components (e.g. "chapter1/img001.jpg")
+        const displayName = entry.name.split('/').pop() || entry.name;
+        const dbPath = state.zipPath + '::' + entry.name;
+        const selected = state.selectedFile && state.selectedFile.path === dbPath ? ' selected' : '';
+
+        let preview;
+        if (entry.is_image) {
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index });
+            preview = `<img src="${thumbUrl}" loading="lazy" alt="" data-name="${esc(displayName)}" onerror="_cardThumbError(this)">`;
+        } else {
+            preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
+        }
+
+        const tagBadge = entry.tag_count > 0
+            ? `<span class="card-tag-count">${entry.tag_count}</span>` : '';
+        const dblAttr = entry.is_image
+            ? ` ondblclick="openComicViewer('${esc(state.zipPath)}', ${entry.image_index})"` : '';
+
+        html += `<div class="card${selected}" data-path="${esc(dbPath)}"
+            onclick="selectFile('${esc(dbPath)}', event)"${dblAttr}>
+            ${tagBadge}<div class="card-preview">${preview}</div>
+            <div class="card-body"><div class="card-name">${esc(displayName)}</div>
+            <div class="card-meta">${formatSize(entry.size)}</div></div>
+        </div>`;
+    }
+    return html;
+}
+
+function renderZipList(entries) {
+    let html = `<div class="list-header">
+        <span></span><span>Name</span><span>Size</span><span>Tags</span>
+    </div>`;
+    for (const entry of entries) {
+        const displayName = entry.name.split('/').pop() || entry.name;
+        const dbPath = state.zipPath + '::' + entry.name;
+        const selected = state.selectedFile && state.selectedFile.path === dbPath ? ' selected' : '';
+        const icon = fileIcon(displayName);
+        const size = formatSize(entry.size);
+        const tags = entry.tag_count != null ? `${entry.tag_count} tags` : '';
+        const dblAttr = entry.is_image
+            ? ` ondblclick="openComicViewer('${esc(state.zipPath)}', ${entry.image_index})"` : '';
+        html += `<div class="list-row${selected}" data-path="${esc(dbPath)}"
+            onclick="selectFile('${esc(dbPath)}', event)"${dblAttr}>
+            <span class="icon">${icon}</span>
+            <span class="name">${esc(displayName)}</span>
+            <span class="size">${size}</span>
+            <span class="tags-count">${tags}</span>
+        </div>`;
+    }
+    return html;
 }
 
 // ---------------------------------------------------------------------------
@@ -737,12 +877,23 @@ function renderDetail() {
     }
 
     const f = state.selectedFile;
-    const name = f.path.split('/').pop();
-    const type_ = fileType(name);
+    const zipEntry = parseZipEntryPath(f.path);
+    const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
+    const type_ = zipEntry ? fileType(zipEntry.entryName) : fileType(name);
     const previewUrl = '/preview/' + encodeURI(f.path);
 
     let preview;
-    if (type_ === 'image') {
+    if (zipEntry) {
+        // Entry inside a zip archive
+        const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
+        if (entry && entry.is_image && entry.image_index !== null) {
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index });
+            preview = `<a class="preview-zoomable" onclick="openComicViewer('${esc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
+                      `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
+        } else {
+            preview = `<div class="no-preview">${fileIcon(name)}</div>`;
+        }
+    } else if (type_ === 'image') {
         preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','image')" title="Click to enlarge">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewImgError(this)"></a>`;
@@ -791,9 +942,13 @@ function renderDetail() {
         </div>
         <div class="detail-preview">${preview}</div>
         <div class="detail-meta">
-            <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
-            <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
-            ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}
+            ${zipEntry
+                ? `<div class="detail-meta-row"><span class="detail-meta-label">Archive</span><span class="detail-meta-value">${esc(zipEntry.zipPath.split('/').pop())}</span></div>
+                   <div class="detail-meta-row"><span class="detail-meta-label">Entry</span><span class="detail-meta-value">${esc(zipEntry.entryName)}</span></div>`
+                : `<div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
+                   <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
+                   ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}`
+            }
         </div>
         <div class="detail-tags-section">
             <h4>Tags</h4>
@@ -1032,10 +1187,7 @@ async function selectFile(path, event) {
             // Multi: update state but don't reload preview
             state.selectedDir = null;
         }
-    } else if (isShift && _lastClickedPath) {
-        // Range-select between _lastClickedPath and path
-        const items = state.mode === 'search' ? state.searchResults : state.entries;
-        const paths = items.filter(e => !e.is_dir).map(e => state.mode === 'search' ? e.path : fullPath(e));
+    } else if (isShift && _lastClickedPath) {\n        // Range-select between _lastClickedPath and path\n        const items = state.mode === 'search' ? state.searchResults\n            : state.mode === 'zip' ? state.zipEntries.map(e => ({ path: state.zipPath + '::' + e.name }))\n            : state.entries;\n        const paths = items.filter(e => !e.is_dir).map(e => state.mode === 'search' ? e.path\n            : state.mode === 'zip' ? e.path\n            : fullPath(e));
         const a = paths.indexOf(_lastClickedPath);
         const b = paths.indexOf(path);
         if (a !== -1 && b !== -1) {
@@ -1533,12 +1685,12 @@ const _cv = {
     panY: 0,
 };
 
-async function openComicViewer(path) {
+async function openComicViewer(path, startPage = 0) {
     const overlay = document.getElementById('comic-viewer');
     overlay.hidden = false;
 
     _cv.path = path;
-    _cv.current = 0;
+    _cv.current = startPage;
     _cv.pages = [];
 
     document.getElementById('cv-status').textContent = 'Loading…';
@@ -1559,7 +1711,7 @@ async function openComicViewer(path) {
     if (_cv.scroll) {
         cvBuildScrollView();
     } else {
-        cvShowPage(0);
+        cvShowPage(startPage);
     }
     document.addEventListener('keydown', _cvKeyHandler);
 }

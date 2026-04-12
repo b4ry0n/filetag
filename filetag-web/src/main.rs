@@ -1040,6 +1040,94 @@ async fn api_zip_thumb(
 // Static files (embedded)
 // ---------------------------------------------------------------------------
 
+/// Ensure a virtual zip-entry record exists in the `files` table and return its id.
+/// The DB path for an entry is `zip_rel::entry_name` (the `::` separator is never
+/// valid in real filesystem paths, so it uniquely marks virtual entries).
+fn ensure_zip_entry_record(conn: &rusqlite::Connection, db_path: &str) -> anyhow::Result<i64> {
+    if let Ok(id) = conn.query_row(
+        "SELECT id FROM files WHERE path = ?1",
+        rusqlite::params![db_path],
+        |r| r.get::<_, i64>(0),
+    ) {
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO files (path, file_id, size, mtime_ns, indexed_at) \
+         VALUES (?1, NULL, 0, 0, datetime('now'))",
+        rusqlite::params![db_path],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[derive(Serialize)]
+struct ZipEntry {
+    name:        String,
+    size:        u64,
+    is_image:    bool,
+    image_index: Option<usize>,
+    tag_count:   i64,
+}
+
+#[derive(Serialize)]
+struct ZipEntriesResponse {
+    zip_path: String,
+    entries:  Vec<ZipEntry>,
+}
+
+async fn api_zip_entries(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ZipListParams>,
+) -> Response {
+    let abs = match preview_safe_path(&state.root, &params.path) {
+        Some(p) => p,
+        None    => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    // Enumerate all entries in a blocking thread
+    let raw: Vec<(String, u64, bool)> = match tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&abs)?;
+        let mut archive = zip::ZipArchive::new(file)?;
+        let mut entries: Vec<(String, u64, bool)> = Vec::new();
+        for i in 0..archive.len() {
+            if let Ok(entry) = archive.by_index(i) {
+                if !entry.is_dir() {
+                    let name  = entry.name().to_owned();
+                    let size  = entry.size();
+                    let is_im = is_zip_image(&name);
+                    entries.push((name, size, is_im));
+                }
+            }
+        }
+        entries.sort_by(|a, b| natord(&a.0, &b.0));
+        anyhow::Ok(entries)
+    }).await {
+        Ok(Ok(v)) => v,
+        _         => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read ZIP").into_response(),
+    };
+
+    // Query tag counts from DB (sync, on async thread — Connection is Send here)
+    let conn = match open_conn(&state) {
+        Ok(c)  => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    let mut image_counter = 0usize;
+    let mut entries = Vec::with_capacity(raw.len());
+    for (name, size, is_image) in raw {
+        let image_index = is_image.then(|| { let i = image_counter; image_counter += 1; i });
+        let db_path = format!("{}::{}", params.path, name);
+        let tag_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM file_tags ft \
+             JOIN files f ON f.id = ft.file_id WHERE f.path = ?1",
+            rusqlite::params![&db_path],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        entries.push(ZipEntry { name, size, is_image, image_index, tag_count });
+    }
+
+    (StatusCode::OK, Json(ZipEntriesResponse { zip_path: params.path, entries })).into_response()
+}
+
 async fn index_html() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -1322,6 +1410,16 @@ async fn api_file_detail(
                 .map(|(name, value)| ApiFileTag { name, value })
                 .collect(),
         }))
+    } else if params.path.contains("::") {
+        // Virtual zip entry not yet in DB — return empty detail
+        Ok(Json(ApiFileDetail {
+            path:       params.path,
+            size:       0,
+            file_id:    None,
+            mtime:      0,
+            indexed_at: String::new(),
+            tags:       vec![],
+        }))
     } else {
         // File not yet indexed: return filesystem metadata
         let abs = safe_path(&state.root, &params.path)?;
@@ -1349,16 +1447,21 @@ async fn api_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    safe_path(&state.root, &body.path)?;
     let conn = open_conn(&state)?;
-    // Auto-index the file if not yet in the database
-    let record = db::get_or_index_file(&conn, &body.path, &state.root).map_err(AppError)?;
+    let file_id = if body.path.contains("::") {
+        // Virtual zip entry — no filesystem check
+        ensure_zip_entry_record(&conn, &body.path).map_err(AppError)?
+    } else {
+        safe_path(&state.root, &body.path)?;
+        // Auto-index the file if not yet in the database
+        db::get_or_index_file(&conn, &body.path, &state.root).map_err(AppError)?.id
+    };
 
     let mut added = 0i64;
     for tag_str in &body.tags {
         let (name, value) = parse_tag(tag_str);
         let tag_id = db::get_or_create_tag(&conn, &name).map_err(AppError)?;
-        db::apply_tag(&conn, record.id, tag_id, value.as_deref()).map_err(AppError)?;
+        db::apply_tag(&conn, file_id, tag_id, value.as_deref()).map_err(AppError)?;
         added += 1;
     }
 
@@ -1469,9 +1572,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/untag", post(api_untag))
         .route("/api/tag-color", post(api_tag_color))
         .route("/api/delete-tag", post(api_delete_tag))
-        .route("/api/zip/pages", get(api_zip_pages))
-        .route("/api/zip/page", get(api_zip_page))
-        .route("/api/zip/thumb", get(api_zip_thumb))
+        .route("/api/zip/pages",   get(api_zip_pages))
+        .route("/api/zip/page",    get(api_zip_page))
+        .route("/api/zip/thumb",   get(api_zip_thumb))
+        .route("/api/zip/entries", get(api_zip_entries))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .with_state(state);
