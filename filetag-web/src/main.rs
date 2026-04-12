@@ -918,6 +918,64 @@ fn zip_read_entry(zip_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>,
 
 // --- API: list pages ---
 
+// --- API: list image files in a directory ---
+
+/// Image extensions shown in the directory viewer (raster + common camera formats).
+const DIR_IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "tiff", "tif",
+    "heic", "heif",
+    "arw", "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf", "pef", "srw",
+    "raw", "3fr", "x3f", "rwl", "iiq", "mef", "mos",
+];
+
+fn is_dir_image(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    DIR_IMAGE_EXTS.contains(&ext.as_str())
+}
+
+#[derive(Deserialize)]
+struct DirImagesParams { path: String }
+
+#[derive(Serialize)]
+struct DirImagesResponse { images: Vec<String> }
+
+async fn api_dir_images(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<DirImagesParams>,
+) -> Response {
+    let dir_abs = match preview_safe_path(&state.root, &params.path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+    if !dir_abs.is_dir() {
+        return (StatusCode::BAD_REQUEST, "Not a directory").into_response();
+    }
+    let root = state.root.clone();
+    match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
+        let mut images: Vec<String> = std::fs::read_dir(&dir_abs)?
+            .filter_map(|e| {
+                let e = e.ok()?;
+                let ft = e.file_type().ok()?;
+                if !ft.is_file() { return None; }
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !is_dir_image(&name) { return None; }
+                // Return path relative to root
+                let abs = e.path();
+                let rel = abs.strip_prefix(&root).ok()
+                    .map(|p| p.to_string_lossy().into_owned())?;
+                Some(rel)
+            })
+            .collect();
+        images.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        Ok(images)
+    }).await {
+        Ok(Ok(images)) => (StatusCode::OK, Json(DirImagesResponse { images })).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "Could not list directory").into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 #[derive(Deserialize)]
 struct ZipListParams { path: String }
 
@@ -1580,6 +1638,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/zip/page",    get(api_zip_page))
         .route("/api/zip/thumb",   get(api_zip_thumb))
         .route("/api/zip/entries", get(api_zip_entries))
+        .route("/api/dir/images",  get(api_dir_images))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .with_state(state);
