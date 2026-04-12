@@ -177,6 +177,7 @@ const state = {
     info: null,
     detailOpen: true,
     expandedGroups: new Set(), // tag group prefixes that are expanded
+    activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
 };
 
 let _lastClickedPath = null; // for shift-range selection
@@ -372,6 +373,16 @@ function renderTags() {
 
     let html = '';
 
+    // Active filter chips (shown when one or more tags are selected)
+    if (state.activeTags.size > 0) {
+        html += '<div class="active-filters">';
+        for (const t of state.activeTags) {
+            html += `<button class="filter-chip" onclick="toggleTagFilter('${jesc(t)}')" title="Remove filter">${esc(t)} ×</button>`;
+        }
+        html += `<button class="active-filters-clear" onclick="clearTagFilters()">Clear all</button>`;
+        html += '</div>';
+    }
+
     // Grouped tags
     const groupNames = Object.keys(groups).sort();
     for (const prefix of groupNames) {
@@ -380,13 +391,15 @@ function renderTags() {
         const rootCount = root ? root.count : 0;
         const totalCount = items.reduce((s, i) => s + i.count, 0) + rootCount;
         const groupQuery = root ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
-        const groupActive = state.mode === 'search' && state.searchQuery === groupQuery ? ' active' : '';
+        const groupActiveClass = (state.mode === 'search' && state.searchQuery === groupQuery)
+            || items.some(i => state.activeTags.has(i.fullName))
+            ? ' active' : '';
         const groupColor = root ? root.color : null;
         const expanded = state.expandedGroups.has(prefix);
         const expandedClass = expanded ? ' expanded' : '';
         const rootContextMenu = root ? ` oncontextmenu="showTagMenu(event,'${jesc(prefix)}')"` : '';
         html += `<div class="tag-group">
-            <div class="tag-group-label${groupActive}${expandedClass}">
+            <div class="tag-group-label${groupActiveClass}${expandedClass}">
                 <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(prefix)}')" title="Expand/collapse">
                     <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
@@ -394,9 +407,8 @@ function renderTags() {
             </div>
             <div class="tag-group-items${expanded ? ' open' : ''}">`;
         for (const item of items) {
-            const q = quoteTag(item.fullName);
-            const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-            html += `<button class="tag-item${active}" onclick="doTagSearch('${jesc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${jesc(item.fullName)}')">
+            const active = state.activeTags.has(item.fullName) ? ' active' : '';
+            html += `<button class="tag-item${active}" onclick="toggleTagFilter('${jesc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${jesc(item.fullName)}')">
                 ${colorDot(item.color)}${esc(item.suffix)} <span class="count">${item.count}</span>
             </button>`;
         }
@@ -405,9 +417,8 @@ function renderTags() {
 
     // Standalone tags (those that are not a prefix of any group)
     for (const tag of trulyStandalone.sort((a, b) => a.name.localeCompare(b.name))) {
-        const q = quoteTag(tag.name);
-        const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-        html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event, '${jesc(tag.name)}')">
+        const active = state.activeTags.has(tag.name) ? ' active' : '';
+        html += `<button class="tag-item tag-standalone${active}" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event, '${jesc(tag.name)}')">
             ${colorDot(tag.color)}${esc(tag.name)} <span class="count">${tag.count}</span>
         </button>`;
     }
@@ -1127,6 +1138,7 @@ async function navigateTo(path) {
     state.selectedDir = null;
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
+    state.activeTags.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
     await loadFiles(path);
@@ -1138,12 +1150,14 @@ async function doSearch() {
     const input = document.getElementById('search-input');
     const query = input.value.trim();
     if (!query) return;
+    state.activeTags.clear();
     await searchFiles(query);
     document.getElementById('search-clear').hidden = false;
     render();
 }
 
 function doClearSearch() {
+    state.activeTags.clear();
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
     navigateTo(state.currentPath || '');
@@ -1169,6 +1183,32 @@ async function doTagSearch(tagName) {
     await searchFiles(q);
     document.getElementById('search-clear').hidden = false;
     render();
+}
+
+async function toggleTagFilter(tagName) {
+    if (state.activeTags.has(tagName)) {
+        state.activeTags.delete(tagName);
+    } else {
+        state.activeTags.add(tagName);
+    }
+    if (state.activeTags.size === 0) {
+        document.getElementById('search-input').value = '';
+        document.getElementById('search-clear').hidden = true;
+        await navigateTo(state.currentPath || '');
+        return;
+    }
+    const q = [...state.activeTags].map(quoteTag).join(' and ');
+    document.getElementById('search-input').value = q;
+    await searchFiles(q);
+    document.getElementById('search-clear').hidden = false;
+    render();
+}
+
+async function clearTagFilters() {
+    state.activeTags.clear();
+    document.getElementById('search-input').value = '';
+    document.getElementById('search-clear').hidden = true;
+    await navigateTo(state.currentPath || '');
 }
 
 async function selectFile(path, event) {
@@ -1366,6 +1406,138 @@ function attachTagAutocomplete(inputEl, submitFn) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Search bar autocomplete (query-aware: completes the last token in place)
+// ---------------------------------------------------------------------------
+
+function attachSearchAutocomplete(inputEl, submitFn) {
+    let _dropdown = null;
+    let _activeIdx = -1;
+
+    const OPS = new Set(['and', 'or', 'not']);
+
+    function currentToken() {
+        const cur = inputEl.selectionStart ?? inputEl.value.length;
+        const before = inputEl.value.slice(0, cur);
+        const m = before.match(/(\S+)$/);
+        if (!m) return '';
+        return OPS.has(m[1].toLowerCase()) ? '' : m[1];
+    }
+
+    function replaceCurrentToken(replacement) {
+        const val = inputEl.value;
+        const cur = inputEl.selectionStart ?? val.length;
+        const before = val.slice(0, cur);
+        const after = val.slice(cur);
+        const m = before.match(/^([\s\S]*)(\S+)$/);
+        if (!m) {
+            // Nothing before cursor: prepend replacement
+            inputEl.value = replacement + (after ? ' ' + after.trimStart() : '');
+            inputEl.setSelectionRange(replacement.length, replacement.length);
+            return;
+        }
+        const prefix = m[1];
+        const token = m[2];
+        if (OPS.has(token.toLowerCase())) {
+            // Token is a keyword — insert after it
+            const newBefore = before + ' ' + replacement;
+            inputEl.value = newBefore + (after ? (after.startsWith(' ') ? after : ' ' + after) : '');
+            inputEl.setSelectionRange(newBefore.length, newBefore.length);
+        } else {
+            // Replace the partial tag token
+            const newBefore = prefix + replacement;
+            inputEl.value = newBefore + after;
+            inputEl.setSelectionRange(newBefore.length, newBefore.length);
+        }
+    }
+
+    function getMatches(token) {
+        const q = token.toLowerCase();
+        if (!q) return [...state.tags].sort((a, b) => b.count - a.count).slice(0, 12);
+        return state.tags
+            .filter(t => t.name.toLowerCase().includes(q))
+            .sort((a, b) => {
+                const aP = a.name.toLowerCase().startsWith(q);
+                const bP = b.name.toLowerCase().startsWith(q);
+                if (aP !== bP) return aP ? -1 : 1;
+                return b.count - a.count;
+            })
+            .slice(0, 15);
+    }
+
+    function buildDropdown(tags) {
+        if (!_dropdown) {
+            _dropdown = document.createElement('ul');
+            _dropdown.className = 'tag-autocomplete';
+            inputEl.parentElement.appendChild(_dropdown);
+        }
+        _activeIdx = -1;
+        if (!tags.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
+        _dropdown.innerHTML = tags.map(tag => {
+            const dot = tag.color
+                ? `<span class="tag-color-dot" style="background:${tag.color}"></span>`
+                : '';
+            return `<li data-tagname="${esc(tag.name)}">${dot}<span class="ac-name">${esc(tag.name)}</span><span class="ac-count">${tag.count}</span></li>`;
+        }).join('');
+        _dropdown.hidden = false;
+        _dropdown.querySelectorAll('li').forEach(li => {
+            li.addEventListener('mousedown', e => {
+                e.preventDefault();
+                replaceCurrentToken(li.dataset.tagname);
+                closeDropdown();
+                inputEl.focus();
+            });
+        });
+    }
+
+    function closeDropdown() {
+        if (_dropdown) { _dropdown.hidden = true; }
+        _activeIdx = -1;
+    }
+
+    function setActive(idx) {
+        const items = _dropdown ? _dropdown.querySelectorAll('li') : [];
+        items.forEach(li => li.classList.remove('ac-active'));
+        _activeIdx = idx;
+        if (_activeIdx >= 0 && _activeIdx < items.length) {
+            items[_activeIdx].classList.add('ac-active');
+            items[_activeIdx].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    inputEl.addEventListener('input', () => buildDropdown(getMatches(currentToken())));
+    inputEl.addEventListener('focus', () => buildDropdown(getMatches(currentToken())));
+    inputEl.addEventListener('blur', () => setTimeout(closeDropdown, 150));
+
+    inputEl.addEventListener('keydown', e => {
+        const items = _dropdown ? _dropdown.querySelectorAll('li') : [];
+        const count = items.length;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!_dropdown || _dropdown.hidden) buildDropdown(getMatches(currentToken()));
+            setActive(Math.min(_activeIdx + 1, count - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive(Math.max(_activeIdx - 1, 0));
+        } else if (e.key === 'Escape') {
+            if (_dropdown && !_dropdown.hidden) { e.preventDefault(); closeDropdown(); }
+        } else if (e.key === 'Tab' && _activeIdx >= 0 && _dropdown && !_dropdown.hidden) {
+            e.preventDefault();
+            replaceCurrentToken(items[_activeIdx].dataset.tagname);
+            closeDropdown();
+        } else if (e.key === 'Enter') {
+            if (_activeIdx >= 0 && _dropdown && !_dropdown.hidden) {
+                e.preventDefault();
+                replaceCurrentToken(items[_activeIdx].dataset.tagname);
+                closeDropdown();
+            } else {
+                closeDropdown();
+                submitFn();
+            }
+        }
+    });
+}
+
 function clearSelection() {
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
@@ -1486,7 +1658,8 @@ function toggleTagGroup(prefix) {
 }
 
 async function doTagGroupSearch(prefix) {
-    // Expand group on click
+    // Expand group on click and clear any active tag filters
+    state.activeTags.clear();
     state.expandedGroups.add(prefix);
     const hasRoot = state.tags.some(t => t.name === prefix);
     const q = hasRoot ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
@@ -2351,10 +2524,8 @@ function jesc(s) {
 document.addEventListener('DOMContentLoaded', async () => {
     // Search
     document.getElementById('search-btn').addEventListener('click', doSearch);
-    document.getElementById('search-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') doSearch();
-    });
     document.getElementById('search-clear').addEventListener('click', doClearSearch);
+    attachSearchAutocomplete(document.getElementById('search-input'), doSearch);
 
     // View toggle
     document.getElementById('view-grid').addEventListener('click', () => setViewMode('grid'));
