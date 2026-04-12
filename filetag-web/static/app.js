@@ -1840,16 +1840,35 @@ function cvToggleHScroll() {
     _cvSetScrollButtons();
 }
 
-function cvApplyScrollZoom(newSize) {
+function cvApplyScrollZoom(newSize, event) {
     const stage = document.getElementById('cv-stage');
     const btn   = document.getElementById('cv-zoom-reset-btn');
     if (_cv.scrollDir === 'h') {
         if (newSize !== undefined) _cv.scrollHeight = Math.max(20, Math.min(200, newSize));
-        if (stage) stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
+        if (stage) {
+            // Capture anchor before CSS change so we can restore the cursor position
+            let anchor = null;
+            if (event) {
+                const rect = stage.getBoundingClientRect();
+                const cx = event.clientX - rect.left;
+                if (stage.scrollWidth > 0) anchor = { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx };
+            }
+            stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
+            if (anchor) requestAnimationFrame(() => { stage.scrollLeft = anchor.ratio * stage.scrollWidth - anchor.cx; });
+        }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.display = _cv.scrollHeight === 90 ? 'none' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
-        if (stage) stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
+        if (stage) {
+            let anchor = null;
+            if (event) {
+                const rect = stage.getBoundingClientRect();
+                const cy = event.clientY - rect.top;
+                if (stage.scrollHeight > 0) anchor = { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy };
+            }
+            stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
+            if (anchor) requestAnimationFrame(() => { stage.scrollTop = anchor.ratio * stage.scrollHeight - anchor.cy; });
+        }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.display = _cv.scrollWidth === 100 ? 'none' : ''; }
     }
 }
@@ -1999,10 +2018,9 @@ function _cvInitStageEvents() {
         if (_cv.scroll) {
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
-                // Proportional zoom: scale smoothly with deltaY rather than fixed 1.15 steps
-                const factor = Math.exp(-e.deltaY / 400);
+                const factor = Math.exp(-e.deltaY / 300);
                 const cur = _cv.scrollDir === 'h' ? _cv.scrollHeight : _cv.scrollWidth;
-                cvApplyScrollZoom(cur * factor);
+                cvApplyScrollZoom(cur * factor, e);
             }
             // Otherwise: let the browser scroll natively
             return;
@@ -2013,7 +2031,7 @@ function _cvInitStageEvents() {
             const rect  = stage.getBoundingClientRect();
             const ox = e.clientX - rect.left  - rect.width  / 2;
             const oy = e.clientY - rect.top   - rect.height / 2;
-            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const factor = Math.exp(-e.deltaY / 300);
             cvZoomTo(_cv.zoom * factor, ox, oy);
         } else {
             // Two-finger pan → pan (only meaningful when zoomed)
