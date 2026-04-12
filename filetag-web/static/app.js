@@ -1991,7 +1991,9 @@ function cvZoomOut() {
 function _cvInitStageEvents() {
     const stage = document.getElementById('cv-stage');
 
-    // Wheel: zoom towards cursor (or scroll width in scroll mode with Ctrl held)
+    // Wheel / trackpad in normal (non-scroll) mode:
+    // - Pinch-to-zoom (reported as Ctrl+wheel by browsers) → zoom
+    // - Two-finger pan (deltaX / deltaY without Ctrl) → pan when zoomed, or ignore
     stage.addEventListener('wheel', e => {
         if (document.getElementById('comic-viewer').hidden) return;
         if (_cv.scroll) {
@@ -2005,11 +2007,22 @@ function _cvInitStageEvents() {
             return;
         }
         e.preventDefault();
-        const rect  = stage.getBoundingClientRect();
-        const ox = e.clientX - rect.left  - rect.width  / 2;
-        const oy = e.clientY - rect.top   - rect.height / 2;
-        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-        cvZoomTo(_cv.zoom * factor, ox, oy);
+        if (e.ctrlKey || e.metaKey) {
+            // Pinch-to-zoom or Ctrl+scroll → zoom towards cursor
+            const rect  = stage.getBoundingClientRect();
+            const ox = e.clientX - rect.left  - rect.width  / 2;
+            const oy = e.clientY - rect.top   - rect.height / 2;
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            cvZoomTo(_cv.zoom * factor, ox, oy);
+        } else {
+            // Two-finger pan → pan (only meaningful when zoomed)
+            if (_cv.zoom > 1) {
+                _cv.panX -= e.deltaX;
+                _cv.panY -= e.deltaY;
+                cvClampPan();
+                cvApplyTransform();
+            }
+        }
     }, { passive: false });
 
     // Mousedown: start drag when zoomed (not in scroll mode)
