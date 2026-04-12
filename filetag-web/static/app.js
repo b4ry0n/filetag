@@ -384,19 +384,19 @@ function renderTags() {
         const groupColor = root ? root.color : null;
         const expanded = state.expandedGroups.has(prefix);
         const expandedClass = expanded ? ' expanded' : '';
-        const rootContextMenu = root ? ` oncontextmenu="showTagMenu(event,'${esc(prefix)}')"` : '';
+        const rootContextMenu = root ? ` oncontextmenu="showTagMenu(event,'${jesc(prefix)}')"` : '';
         html += `<div class="tag-group">
             <div class="tag-group-label${groupActive}${expandedClass}">
-                <button class="tag-group-chevron" onclick="toggleTagGroup('${esc(prefix)}')" title="Expand/collapse">
+                <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(prefix)}')" title="Expand/collapse">
                     <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
-                <button class="tag-group-name" onclick="doTagGroupSearch('${esc(prefix)}')"${rootContextMenu}>${colorDot(groupColor)}${esc(prefix)} <span class="count">${totalCount}</span></button>
+                <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(prefix)}')"${rootContextMenu}>${colorDot(groupColor)}${esc(prefix)} <span class="count">${totalCount}</span></button>
             </div>
             <div class="tag-group-items${expanded ? ' open' : ''}">`;
         for (const item of items) {
             const q = quoteTag(item.fullName);
             const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-            html += `<button class="tag-item${active}" onclick="doTagSearch('${esc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${esc(item.fullName)}')">
+            html += `<button class="tag-item${active}" onclick="doTagSearch('${jesc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${jesc(item.fullName)}')">
                 ${colorDot(item.color)}${esc(item.suffix)} <span class="count">${item.count}</span>
             </button>`;
         }
@@ -407,7 +407,7 @@ function renderTags() {
     for (const tag of trulyStandalone.sort((a, b) => a.name.localeCompare(b.name))) {
         const q = quoteTag(tag.name);
         const active = state.mode === 'search' && state.searchQuery === q ? ' active' : '';
-        html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${esc(tag.name)}')" oncontextmenu="showTagMenu(event, '${esc(tag.name)}')">
+        html += `<button class="tag-item tag-standalone${active}" onclick="doTagSearch('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event, '${jesc(tag.name)}')">
             ${colorDot(tag.color)}${esc(tag.name)} <span class="count">${tag.count}</span>
         </button>`;
     }
@@ -429,11 +429,11 @@ function showTagMenu(e, tagName) {
 
     let swatches = TAG_COLORS.map(c => {
         const sel = c === currentColor ? ' selected' : '';
-        return `<button class="tag-menu-swatch${sel}" style="background:${c}" onclick="setTagColor('${esc(tagName)}','${c}')"></button>`;
+        return `<button class="tag-menu-swatch${sel}" style="background:${c}" onclick="setTagColor('${jesc(tagName)}','${c}')"></button>`;
     }).join('');
     // "no color" swatch
     const noSel = !currentColor ? ' selected' : '';
-    swatches = `<button class="tag-menu-swatch tag-menu-swatch-none${noSel}" onclick="setTagColor('${esc(tagName)}', null)" title="No color">✕</button>` + swatches;
+    swatches = `<button class="tag-menu-swatch tag-menu-swatch-none${noSel}" onclick="setTagColor('${jesc(tagName)}', null)" title="No color">✕</button>` + swatches;
 
     const menu = document.createElement('div');
     menu.id = 'tag-context-menu';
@@ -445,7 +445,7 @@ function showTagMenu(e, tagName) {
             <div class="tag-menu-swatches">${swatches}</div>
         </div>
         <div class="tag-menu-divider"></div>
-        <button class="tag-menu-action tag-menu-delete" onclick="deleteTag('${esc(tagName)}')">Delete tag</button>
+        <button class="tag-menu-action tag-menu-delete" onclick="deleteTag('${jesc(tagName)}')">Delete tag</button>
     `;
     document.body.appendChild(menu);
 
@@ -512,7 +512,7 @@ function renderBreadcrumb() {
             const isCurrent = i === parts.length - 1 && state.mode !== 'zip';
             const path = accumulated;
             if (i > 0) html += `<span class="breadcrumb-sep">/</span>`;
-            html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${esc(path)}')">${esc(parts[i])}</button>`;
+            html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${jesc(path)}')">${esc(parts[i])}</button>`;
         }
     }
 
@@ -564,7 +564,7 @@ function renderGrid(items) {
         if (isDir) {
             const dirPath = fullPath(entry);
             const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
+            html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
                 <div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -572,16 +572,16 @@ function renderGrid(items) {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const checkmark = state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
             const gotoDirBtn = state.mode === 'search'
-                ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
+                ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${esc(path)}', event)">
+                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
                     ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
-                const dblFn = `cvOpenFile('${esc(path)}','${fileType(name)}')`;
-                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">
+                const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
+                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
                     ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -613,7 +613,7 @@ function renderList(items) {
         if (isDir) {
             const dirPath = fullPath(entry);
             const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${esc(dirPath)}','${esc(name)}',${entry.file_count})">
+            html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -623,10 +623,10 @@ function renderList(items) {
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const gotoDirBtn = state.mode === 'search'
-                ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
+                ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             if (fileType(name) === 'zip') {
-                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${esc(path)}', event)">
+                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}</span>
                     <span class="size">${size}</span>
@@ -634,8 +634,8 @@ function renderList(items) {
                     <span class="tags-count">${tags}${gotoDirBtn}</span>
                 </div>`;
             } else {
-                const dblFnL = `cvOpenFile('${esc(path)}','${fileType(name)}')`;
-                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">
+                const dblFnL = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
+                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}</span>
                     <span class="size">${size}</span>
@@ -769,10 +769,10 @@ function renderZipGrid(entries) {
         const tagBadge = entry.tag_count > 0
             ? `<span class="card-tag-count">${entry.tag_count}</span>` : '';
         const dblAttr = entry.is_image
-            ? ` ondblclick="openComicViewer('${esc(state.zipPath)}', ${entry.image_index})"` : '';
+            ? ` ondblclick="openComicViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
 
         html += `<div class="card${selected}" data-path="${esc(dbPath)}"
-            onclick="selectFile('${esc(dbPath)}', event)"${dblAttr}>
+            onclick="selectFile('${jesc(dbPath)}', event)"${dblAttr}>
             ${tagBadge}<div class="card-preview">${preview}</div>
             <div class="card-body"><div class="card-name">${esc(displayName)}</div>
             <div class="card-meta">${formatSize(entry.size)}</div></div>
@@ -793,9 +793,9 @@ function renderZipList(entries) {
         const size = formatSize(entry.size);
         const tags = entry.tag_count != null ? `${entry.tag_count} tags` : '';
         const dblAttr = entry.is_image
-            ? ` ondblclick="openComicViewer('${esc(state.zipPath)}', ${entry.image_index})"` : '';
+            ? ` ondblclick="openComicViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
         html += `<div class="list-row${selected}" data-path="${esc(dbPath)}"
-            onclick="selectFile('${esc(dbPath)}', event)"${dblAttr}>
+            onclick="selectFile('${jesc(dbPath)}', event)"${dblAttr}>
             <span class="icon">${icon}</span>
             <span class="name">${esc(displayName)}</span>
             <span class="size">${size}</span>
@@ -902,39 +902,39 @@ function renderDetail() {
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
             const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index });
-            preview = `<a class="preview-zoomable" onclick="openComicViewer('${esc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
+            preview = `<a class="preview-zoomable" onclick="openComicViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
-        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${esc(f.path)}')" title="Click to open in viewer">` +
+        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewImgError(this)"></a>`;
     } else if (type_ === 'raw') {
-        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${esc(f.path)}')" title="Click to open in viewer">` +
+        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewRawError(this)"></a>`;
     } else if (type_ === 'audio') {
-        preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${esc(f.path)}','audio')"></audio>`;
+        preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')"></audio>`;
     } else if (type_ === 'video') {
         preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}"` +
-                  ` onclick="openLightbox('${esc(f.path)}','video')" style="cursor:zoom-in"` +
+                  ` onclick="openLightbox('${jesc(f.path)}','video')" style="cursor:zoom-in"` +
                   ` onerror="_previewVideoError(this)"></video>`;
     } else if (type_ === 'pdf') {
         preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}"></iframe>` +
-                  `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${esc(f.path)}','pdf')">Full-size PDF</button></div>`;
+                  `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${jesc(f.path)}','pdf')">Full-size PDF</button></div>`;
     } else if (type_ === 'markdown') {
-        preview = `<div class="preview-markdown" id="preview-md-content" ondblclick="openLightbox('${esc(f.path)}','markdown')"` +
+        preview = `<div class="preview-markdown" id="preview-md-content" ondblclick="openLightbox('${jesc(f.path)}','markdown')"` +
                   ` title="Double-click to enlarge">Loading…</div>`;
     } else if (type_ === 'text') {
-        preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${esc(f.path)}','text')"` +
+        preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${jesc(f.path)}','text')"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
         preview = `<div class="zip-cover-wrap">
             <img src="/thumb/${encodeURI(f.path)}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
-            <button class="tag-action-btn" onclick="openComicViewer('${esc(f.path)}')">Open comic viewer</button>
+            <button class="tag-action-btn" onclick="openComicViewer('${jjesc(f.path)}')">Open comic viewer</button>
         </div>`;
     } else {
         preview = `<div class="no-preview">${fileIcon(name)}</div>`;
@@ -946,7 +946,7 @@ function renderDetail() {
             const tagStr = formatTag(t);
             const stateTag = state.tags.find(st => st.name === t.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${esc(f.path)}','${esc(tagStr)}')">&times;</button></span>`;
+            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
 
     panel.innerHTML = `
@@ -1015,7 +1015,7 @@ function renderDetailTagsOnly() {
             const tagStr = formatTag(t);
             const stateTag = state.tags.find(st => st.name === t.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${esc(f.path)}','${esc(tagStr)}')">&times;</button></span>`;
+            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
     tagsEl.innerHTML = tagChips;
 }
@@ -1050,13 +1050,13 @@ function renderBulkTagChips(bulkTags, total) {
         if (isArmed) {
             return `<span class="bulk-chip armed"${chipBorder}>
                 <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
-                <button class="bulk-chip-cancel" onclick="armBulkTag('${esc(tagStr)}')" title="Cancel">&#8617;</button>
-                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${esc(tagStr)}')">Remove</button>
+                <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}')" title="Cancel">&#8617;</button>
+                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}')">Remove</button>
             </span>`;
         }
         return `<span class="bulk-chip"${chipBorder}>
             <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
-            <button class="bulk-chip-arm" onclick="armBulkTag('${esc(tagStr)}')" title="Remove from selection">
+            <button class="bulk-chip-arm" onclick="armBulkTag('${jesc(tagStr)}')" title="Remove from selection">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             </button>
         </span>`;
@@ -2327,6 +2327,21 @@ function esc(s) {
     if (!s) return '';
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Escape a value for use as a JS string argument inside a single-quoted string
+// literal that is itself inside an HTML attribute (e.g. onclick="fn('...')").
+// Browsers HTML-decode attribute values before running JS, so &#39; → ' would
+// break the JS string. Instead we use JS backslash-escaping for ' and \, and
+// HTML-encode " to avoid ending the outer double-quoted attribute.
+function jesc(s) {
+    if (!s) return '';
+    return s.replace(/\\/g, '\\\\')   // backslash first
+             .replace(/'/g, "\\'")     // JS-escape single quote
+             .replace(/&/g, '&amp;')
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;')
+             .replace(/"/g, '&quot;'); // HTML-encode " to avoid breaking attribute
 }
 
 // ---------------------------------------------------------------------------
