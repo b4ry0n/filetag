@@ -30,7 +30,8 @@ const EXT_MAP = {
                'jsx','tsx','py','rb','rs','go','java','c','cpp','h','hpp',
                'sh','bash','zsh','fish','sql','diff','patch','gitignore','env'],
     raw:      ['arw','cr2','cr3','nef','orf','rw2','dng','raf','pef','srw',
-               'raw','3fr','x3f','rwl','iiq','mef','mos','heic','heif'],
+               'raw','3fr','x3f','rwl','iiq','mef','mos','heic','heif',
+               'psd','psb','xcf','ai','eps'],
 };
 
 function fileType(name) {
@@ -633,6 +634,30 @@ function renderContent() {
 }
 
 // ---------------------------------------------------------------------------
+// Preview error helpers (named functions, avoid SVG-in-HTML-attribute bugs)
+// ---------------------------------------------------------------------------
+
+function _previewImgError(img) {
+    const p = img.closest('.detail-preview');
+    if (!p) return;
+    p.innerHTML = `<div class="no-preview">${fileIcon(img.dataset.name || '')}</div>`;
+}
+
+function _previewRawError(img) {
+    const p = img.closest('.detail-preview');
+    if (!p) return;
+    p.innerHTML = `<div class="no-preview">${fileIcon(img.dataset.name || '')}<div class="preview-unavail-msg">Preview unavailable — install dcraw, exiftool, ffmpeg, or ImageMagick</div></div>`;
+}
+
+function _previewVideoError(video) {
+    const n = video.dataset.name || '';
+    const d = document.createElement('div');
+    d.className = 'no-preview';
+    d.innerHTML = `${fileIcon(n)}<div class="preview-unavail-msg">Browser cannot play this format</div>`;
+    video.replaceWith(d);
+}
+
+// ---------------------------------------------------------------------------
 // Render: Detail panel
 // ---------------------------------------------------------------------------
 
@@ -694,19 +719,18 @@ function renderDetail() {
     let preview;
     if (type_ === 'image') {
         preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','image')" title="Click to enlarge">` +
-                  `<img src="${previewUrl}" alt="${esc(name)}"` +
-                  ` onerror="this.closest('.detail-preview').innerHTML='<div class=\\'no-preview\\'>${fileIcon(name)}</div>'"></a>`;
+                  `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
+                  ` onerror="_previewImgError(this)"></a>`;
     } else if (type_ === 'raw') {
         preview = `<a class="preview-zoomable" onclick="openLightbox('${esc(f.path)}','raw')" title="Click to enlarge">` +
-                  `<img src="${previewUrl}" alt="${esc(name)}"` +
-                  ` onerror="this.closest('.detail-preview').innerHTML='<div class=\\'no-preview raw-unavail\\'>` +
-                  `${fileIcon(name)}<div class=\\'preview-unavail-msg\\'>RAW preview: install dcraw or exiftool</div></div>'"></a>`;
+                  `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
+                  ` onerror="_previewRawError(this)"></a>`;
     } else if (type_ === 'audio') {
         preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${esc(f.path)}','audio')"></audio>`;
     } else if (type_ === 'video') {
-        preview = `<video controls preload="metadata" src="${previewUrl}"` +
+        preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}"` +
                   ` onclick="openLightbox('${esc(f.path)}','video')" style="cursor:zoom-in"` +
-                  ` onerror="this.replaceWith((() => { const d=document.createElement('div'); d.className='no-preview'; d.innerHTML='${fileIcon(name)}<div class=\\'preview-unavail-msg\\'>Browser cannot play this format</div>'; return d; })())"></video>`;
+                  ` onerror="_previewVideoError(this)"></video>`;
     } else if (type_ === 'pdf') {
         preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}"></iframe>` +
                   `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${esc(f.path)}','pdf')">Full-size PDF</button></div>`;
