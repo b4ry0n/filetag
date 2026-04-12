@@ -41,7 +41,7 @@ struct Args {
 /// Limit concurrent heavy thumbnail/extraction operations to prevent spawning
 /// too many ffmpeg/ffprobe/unrar processes at once when browsing directories
 /// with many large media files.
-static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 struct DbRoot {
     name: String,
@@ -433,7 +433,8 @@ async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
     }
 
     // ffmpeg: decode first frame to JPEG
-    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+    if let Ok(out) = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg"])
         .arg("-i")
         .arg(path)
         .args([
@@ -511,7 +512,8 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
     }
 
     // ffmpeg
-    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+    if let Ok(out) = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg"])
         .arg("-i")
         .arg(path)
         .args([
@@ -596,7 +598,8 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
     // -map_metadata -1 strips all metadata (including the EXIF Orientation tag)
     // from the output JPEG, so the already-rotated pixels are not rotated again
     // by the browser.
-    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+    if let Ok(out) = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg"])
         .args(["-i"])
         .arg(path)
         .args([
@@ -683,7 +686,8 @@ fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
 
 /// Get video duration in seconds via ffprobe.
 async fn video_duration(path: &Path) -> Option<f64> {
-    let out = tokio::process::Command::new("ffprobe")
+    let out = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffprobe"])
         .args([
             "-v",
             "error",
@@ -728,7 +732,8 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             _ => [2.0, 10.0, 30.0, 60.0],
         };
 
-        let mut cmd = tokio::process::Command::new("ffmpeg");
+        let mut cmd = tokio::process::Command::new("nice");
+        cmd.args(["-n", "10", "ffmpeg"]);
         for t in &positions {
             cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(path);
         }
@@ -767,7 +772,8 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             Some(d) if d > 1.0 => format!("{:.2}", d * 0.1),
             _ => "5".to_string(),
         };
-        let out = tokio::process::Command::new("ffmpeg")
+        let out = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg"])
             .args(["-ss", &ss, "-i"])
             .arg(path)
             .args([
