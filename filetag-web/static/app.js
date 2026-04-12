@@ -26,7 +26,7 @@ const EXT_MAP = {
     video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v'],
     pdf:      ['pdf'],
     markdown: ['md','markdown'],
-    zip:      ['zip','cbz'],
+    zip:      ['zip','cbz','rar','cbr','7z','cb7'],
     text:     ['txt','rst','csv','tsv','log','ini','cfg','conf',
                'json','yaml','yml','toml','xml','html','htm','css','js','ts',
                'jsx','tsx','py','rb','rs','go','java','c','cpp','h','hpp',
