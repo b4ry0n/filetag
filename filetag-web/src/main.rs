@@ -485,6 +485,57 @@ async fn preview_heic(path: &Path, root: &Path) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// Image thumbnail (resize to max 400 px wide/tall via ffmpeg or sips/magick)
+// ---------------------------------------------------------------------------
+
+/// Generate a small JPEG thumbnail for any image file (JPEG, PNG, GIF, WEBP,
+/// TIFF, …). Returns raw JPEG bytes or `None` if all tools fail.
+/// Target: max 400 px on the longest side, quality 80.
+async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
+    // ffmpeg: scale to fit 400×400, pipe JPEG to stdout
+    if let Ok(out) = tokio::process::Command::new("ffmpeg")
+        .args(["-i"])
+        .arg(path)
+        .args([
+            "-vf",
+            "scale='if(gt(iw,ih),400,-2)':'if(gt(iw,ih),-2,400)':flags=lanczos",
+            "-vframes", "1",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-q:v", "5",
+            "pipe:1",
+        ])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await
+    {
+        if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+            return Some(out.stdout);
+        }
+    }
+
+    // sips (macOS): writes to a temp path inside the cache dir, caller handles caching
+    // — not used here because sips requires a file path output; callers use ffmpeg path.
+
+    // ImageMagick 7 / 6 fallback
+    let path_layer = format!("{}[0]", path.display());
+    for cmd in &["magick", "convert"] {
+        if let Ok(out) = tokio::process::Command::new(cmd)
+            .arg(&path_layer)
+            .args(["-resize", "400x400>", "-quality", "80", "jpg:-"])
+            .output()
+            .await
+        {
+            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+                return Some(out.stdout);
+            }
+        }
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Video thumbnail strip (2×2 contact sheet via ffmpeg)
 // ---------------------------------------------------------------------------
 
@@ -632,9 +683,73 @@ async fn thumb_handler(
         .to_lowercase();
 
     match ext.as_str() {
+        // Video: 2×2 contact-sheet
         "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp"
         | "f4v" => video_thumb_strip(&abs, &state.root).await,
-        // For all other types, fall through to the regular preview handler
+
+        // HEIC/HEIF: full-res conversion is already cached; thumbnail via image_thumb_jpeg
+        "heic" | "heif" => {
+            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+                // Convert to JPEG first, then resize
+                let full = preview_heic(&abs, &state.root).await;
+                // preview_heic returns a Response; we can't easily re-use its bytes here,
+                // so we call image_thumb_jpeg on the original path after HEIC cache is warm.
+                if let Some(data) = image_thumb_jpeg(&abs).await {
+                    let _ = tokio::fs::write(&cache, &data).await;
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+                drop(full);
+            }
+            (StatusCode::UNPROCESSABLE_ENTITY, "Thumbnail unavailable").into_response()
+        }
+
+        // RAW / PSD / layered: use raw_extract_jpeg then resize
+        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw"
+        | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos"
+        | "psd" | "psb" | "xcf" | "ai" | "eps" => {
+            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+                // Get the full preview JPEG, then downscale it
+                if let Some(full_jpeg) = raw_extract_jpeg(&abs).await {
+                    // Write full preview to a temp path, resize it
+                    let tmp = cache.with_extension("tmp.jpg");
+                    if tokio::fs::write(&tmp, &full_jpeg).await.is_ok() {
+                        if let Some(small) = image_thumb_jpeg(&tmp).await {
+                            let _ = tokio::fs::remove_file(&tmp).await;
+                            let _ = tokio::fs::write(&cache, &small).await;
+                            return ([(header::CONTENT_TYPE, "image/jpeg")], small).into_response();
+                        }
+                        let _ = tokio::fs::remove_file(&tmp).await;
+                    }
+                    // Fallback: serve the full preview if resizing failed
+                    let _ = tokio::fs::write(&cache, &full_jpeg).await;
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], full_jpeg).into_response();
+                }
+            }
+            (StatusCode::UNPROCESSABLE_ENTITY, "Thumbnail unavailable").into_response()
+        }
+
+        // Regular images (JPEG, PNG, WEBP, …): resize to thumbnail
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" => {
+            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+                if let Some(data) = image_thumb_jpeg(&abs).await {
+                    let _ = tokio::fs::write(&cache, &data).await;
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+            }
+            // Cache unavailable or tool missing: serve the original
+            serve_file_bytes(&abs).await
+        }
+
+        // Everything else: fall through to preview handler
         _ => preview_handler(AxumPath(rel_path), State(state)).await,
     }
 }

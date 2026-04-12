@@ -512,7 +512,7 @@ function renderGrid(items) {
         if (isDir) {
             preview = `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<img src="/preview/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">`;
         } else if (type_ === 'video') {
             preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
