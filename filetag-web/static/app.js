@@ -1523,6 +1523,7 @@ const _cv = {
     current: 0,
     spread: false,   // two-page spread mode
     thumbs: false,   // thumbnail strip visible
+    rtl: false,      // right-to-left reading (manga)
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -1562,6 +1563,24 @@ function closeComicViewer() {
     _cv.path = null; _cv.pages = []; _cv.current = 0;
     document.getElementById('cv-pages').innerHTML = '';
     document.getElementById('cv-thumbs').innerHTML = '';
+}
+
+function cvToggleRtl() {
+    _cv.rtl = !_cv.rtl;
+    document.getElementById('cv-rtl-btn').classList.toggle('active', _cv.rtl);
+    // Mirror the thumbnail strip: RTL puts it on the right
+    const thumbs = document.getElementById('cv-thumbs');
+    const body   = document.getElementById('cv-body');
+    if (_cv.rtl) {
+        body.style.flexDirection = 'row-reverse';
+        thumbs.style.borderRight = '';
+        thumbs.style.borderLeft  = '1px solid rgba(255,255,255,0.08)';
+    } else {
+        body.style.flexDirection = '';
+        thumbs.style.borderRight = '1px solid rgba(255,255,255,0.08)';
+        thumbs.style.borderLeft  = '';
+    }
+    cvShowPage(_cv.current);
 }
 
 function cvToggleThumbs() {
@@ -1773,13 +1792,21 @@ function cvShowPage(idx) {
 
     const container = document.getElementById('cv-pages');
     const url1 = `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx })}`;
+    // In spread mode, RTL shows the next page to the LEFT of the current one
     const url2 = _cv.spread && idx + 1 < _cv.pages.length
         ? `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx + 1 })}`
         : null;
 
     cvResetZoom();
-    let html = `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
-    if (url2) html += `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">`;
+    // RTL spread: right page (current) first, then left page (next) to its left
+    let html;
+    if (_cv.rtl && url2) {
+        html = `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">` +
+               `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
+    } else {
+        html = `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
+        if (url2) html += `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">`;
+    }
     container.innerHTML = html;
 
     const total = _cv.spread
@@ -1790,12 +1817,21 @@ function cvShowPage(idx) {
 }
 
 function cvNext() {
+    // In RTL, the visual "next" page (reading direction forward) is the previous index
     const step = _cv.spread ? 2 : 1;
-    if (_cv.current + step <= _cv.pages.length - 1) cvShowPage(_cv.current + step);
+    if (_cv.rtl) {
+        cvShowPage(_cv.current - step);
+    } else {
+        if (_cv.current + step <= _cv.pages.length - 1) cvShowPage(_cv.current + step);
+    }
 }
 function cvPrev() {
     const step = _cv.spread ? 2 : 1;
-    cvShowPage(_cv.current - step);
+    if (_cv.rtl) {
+        if (_cv.current + step <= _cv.pages.length - 1) cvShowPage(_cv.current + step);
+    } else {
+        cvShowPage(_cv.current - step);
+    }
 }
 
 function cvToggleSpread() {
@@ -1806,10 +1842,12 @@ function cvToggleSpread() {
 
 function _cvKeyHandler(e) {
     if (document.getElementById('comic-viewer').hidden) return;
-    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); cvNext(); }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); cvPrev(); }
+    // ArrowRight = forward in reading direction (RTL: lower index; LTR: higher index)
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); _cv.rtl ? cvPrev() : cvNext(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); _cv.rtl ? cvNext() : cvPrev(); }
     else if (e.key === 'f' || e.key === 'F') cvToggleFullscreen();
     else if (e.key === 't' || e.key === 'T') cvToggleThumbs();
+    else if (e.key === 'r' || e.key === 'R') cvToggleRtl();
     else if (e.key === '+' || e.key === '=') cvZoomIn();
     else if (e.key === '-') cvZoomOut();
     else if (e.key === '0') cvResetZoom();
@@ -1820,10 +1858,15 @@ function _cvKeyHandler(e) {
 
 function cvClickNav(e) {
     if (_cv.zoom > 1 || _cvDrag.moved) return;
-    // Click left third → prev, right third → next, middle → ignore
     const x = e.clientX / window.innerWidth;
-    if (x < 0.3) cvPrev();
-    else if (x > 0.7) cvNext();
+    if (_cv.rtl) {
+        // RTL: clicking the right third goes forward (lower index)
+        if (x > 0.7) cvNext();
+        else if (x < 0.3) cvPrev();
+    } else {
+        if (x < 0.3) cvPrev();
+        else if (x > 0.7) cvNext();
+    }
 }
 
 // ---------------------------------------------------------------------------
