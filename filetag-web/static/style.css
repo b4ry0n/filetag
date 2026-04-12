@@ -211,20 +211,22 @@ h3, h4 { font-weight: 600; }
 
 .tag-group-chevron {
     flex-shrink: 0;
-    padding: 6px 4px 6px 16px;
+    padding: 6px 4px 6px 12px;
     color: var(--text-tertiary);
     line-height: 1;
+    display: flex;
+    align-items: center;
 }
 
-.tag-group-chevron .chevron {
-    font-size: 10px;
-    display: inline-block;
-    transition: transform 0.15s;
-    width: 12px;
-    text-align: center;
+.chevron-icon {
+    width: 14px;
+    height: 14px;
+    display: block;
+    transition: transform 0.18s;
+    transform: rotate(-90deg);
 }
 
-.tag-group-label.expanded .chevron { transform: rotate(90deg); }
+.tag-group-label.expanded .chevron-icon { transform: rotate(0deg); }
 
 .tag-group-name {
     flex: 1;
