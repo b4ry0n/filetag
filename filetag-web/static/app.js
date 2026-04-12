@@ -1539,11 +1539,6 @@ async function openComicViewer(path) {
     }
     cvShowPage(0);
     document.addEventListener('keydown', _cvKeyHandler);
-
-    // Enter native full screen automatically
-    if (!document.fullscreenElement) {
-        overlay.requestFullscreen().catch(() => {});
-    }
 }
 
 function closeComicViewer() {
