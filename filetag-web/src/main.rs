@@ -203,7 +203,7 @@ async fn preview_handler(
         | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             preview_raw(&abs).await
         }
-        "heic" | "heif" => preview_heic(&abs).await,
+        "heic" | "heif" => preview_heic(&abs, &state.root).await,
         _ => serve_file_bytes(&abs).await,
     }
 }
@@ -356,13 +356,28 @@ async fn preview_raw(path: &Path) -> Response {
 
 /// Convert HEIC/HEIF to JPEG for browser display.
 /// Attempt order: sips (macOS) → ffmpeg → ImageMagick convert
-async fn preview_heic(path: &Path) -> Response {
-    let tmp = std::env::temp_dir().join(format!(
-        "filetag_preview_{}.jpg",
+async fn preview_heic(path: &Path, root: &Path) -> Response {
+    let cache_dir = root.join(".filetag").join("cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let tmp = cache_dir.join(format!(
+        "heic_{}_{}.jpg",
         path.file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
     ));
+
+    // Serve from cache if fresh
+    if tmp.exists() {
+        if let Ok(data) = tokio::fs::read(&tmp).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+    }
 
     // sips (macOS built-in)
     if let Ok(out) = tokio::process::Command::new("sips")
@@ -375,7 +390,6 @@ async fn preview_heic(path: &Path) -> Response {
     {
         if out.status.success() {
             if let Ok(data) = tokio::fs::read(&tmp).await {
-                let _ = tokio::fs::remove_file(&tmp).await;
                 return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
             }
         }
@@ -398,7 +412,7 @@ async fn preview_heic(path: &Path) -> Response {
         .await
     {
         if out.status.success() && !out.stdout.is_empty() {
-            let _ = tokio::fs::remove_file(&tmp).await;
+            let _ = tokio::fs::write(&tmp, &out.stdout).await;
             return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
         }
     }
@@ -412,13 +426,11 @@ async fn preview_heic(path: &Path) -> Response {
     {
         if out.status.success() {
             if let Ok(data) = tokio::fs::read(&tmp).await {
-                let _ = tokio::fs::remove_file(&tmp).await;
                 return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
             }
         }
     }
 
-    let _ = tokio::fs::remove_file(&tmp).await;
     (
         StatusCode::UNPROCESSABLE_ENTITY,
         "HEIC preview unavailable — install sips (macOS), ffmpeg, or ImageMagick",
@@ -431,7 +443,8 @@ async fn preview_heic(path: &Path) -> Response {
 // ---------------------------------------------------------------------------
 
 /// Return a cache path for this file's thumbnail, keyed by mtime + size.
-fn thumb_cache_path(abs: &Path) -> Option<PathBuf> {
+/// All cache files are stored under <root>/.filetag/cache/thumbs/.
+fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
     let meta = std::fs::metadata(abs).ok()?;
     let mtime = meta
         .modified()
@@ -445,7 +458,7 @@ fn thumb_cache_path(abs: &Path) -> Option<PathBuf> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let key = format!("{mtime}_{size}_{stem}.thumb.jpg");
-    let dir = std::env::temp_dir().join("filetag_thumbs");
+    let dir = root.join(".filetag").join("cache").join("thumbs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(key))
 }
@@ -475,9 +488,9 @@ async fn video_duration(path: &Path) -> Option<f64> {
 
 /// Generate a 2×2 JPEG contact-sheet thumbnail for a video file.
 /// Uses ffmpeg fast-seek (-ss before -i) for each of 4 frames.
-async fn video_thumb_strip(path: &Path) -> Response {
+async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
     // Serve from cache if available
-    if let Some(cache) = thumb_cache_path(path) {
+    if let Some(cache) = thumb_cache_path(path, root) {
         if let Ok(data) = tokio::fs::read(&cache).await {
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
@@ -574,7 +587,7 @@ async fn thumb_handler(
 
     match ext.as_str() {
         "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp"
-        | "f4v" => video_thumb_strip(&abs).await,
+        | "f4v" => video_thumb_strip(&abs, &state.root).await,
         // For all other types, fall through to the regular preview handler
         _ => preview_handler(AxumPath(rel_path), State(state)).await,
     }
