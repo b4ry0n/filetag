@@ -553,6 +553,42 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
 // Video thumbnail strip (2×2 contact sheet via ffmpeg)
 // ---------------------------------------------------------------------------
 
+/// Generate a JPEG thumbnail for a PDF by rasterising the first page.
+/// Tries pdftoppm first (poppler-utils), then ImageMagick+Ghostscript.
+/// Temp files are written under `<root>/.filetag/tmp/` per data-isolation rules.
+async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
+    let tmp_dir = root.join(".filetag").join("tmp");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // pdftoppm appends `.jpg` to the prefix when using -singlefile -jpeg
+    let tmp_prefix = tmp_dir.join(format!("pdft_{}", stem));
+    let expected = tmp_dir.join(format!("pdft_{}.jpg", stem));
+
+    let status = tokio::process::Command::new("pdftoppm")
+        .args(["-jpeg", "-singlefile", "-f", "1", "-l", "1", "-scale-to", "400"])
+        .arg(path)
+        .arg(&tmp_prefix)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+
+    if status.map(|s| s.success()).unwrap_or(false) {
+        if let Ok(data) = tokio::fs::read(&expected).await {
+            let _ = tokio::fs::remove_file(&expected).await;
+            if data.starts_with(&[0xFF, 0xD8]) {
+                return Some(data);
+            }
+        }
+    }
+    let _ = tokio::fs::remove_file(&expected).await;
+
+    // Fallback: ImageMagick (requires Ghostscript for PDF rasterisation)
+    image_thumb_jpeg(path).await
+}
+
 /// Return the cache path for a file thumbnail, keyed by mtime + size.
 /// Stored in `<root>/.filetag/cache/thumbs/`.
 fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
@@ -764,6 +800,22 @@ async fn thumb_handler(
                 }
             }
             (StatusCode::UNPROCESSABLE_ENTITY, "Thumbnail unavailable").into_response()
+        }
+
+        // PDF: rasterise first page via pdftoppm or ImageMagick+Ghostscript
+        "pdf" => {
+            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+                if let Some(data) = pdf_thumb_jpeg(&abs, &state.root).await {
+                    let _ = tokio::fs::write(&cache, &data).await;
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+            }
+            (StatusCode::UNPROCESSABLE_ENTITY,
+             "PDF thumbnail unavailable — install pdftoppm (poppler-utils) or ImageMagick+Ghostscript")
+                .into_response()
         }
 
         // Regular images (JPEG, PNG, WEBP, …): resize to thumbnail
