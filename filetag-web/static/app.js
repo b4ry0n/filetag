@@ -991,16 +991,24 @@ const _thumbQueue = [];
 let _thumbBusy = false;
 
 const _thumbObserver = new IntersectionObserver((entries) => {
+    // Collect all newly-visible elements from this batch.
+    const newly = [];
     for (const e of entries) {
         if (!e.isIntersecting) continue;
         const el = e.target;
         _thumbObserver.unobserve(el);
-        // Promote to front so visible cards are processed first.
+        // Remove from wherever it sits in the queue (if present).
         const i = _thumbQueue.indexOf(el);
-        if (i > 0) { _thumbQueue.splice(i, 1); _thumbQueue.unshift(el); }
-        else if (i < 0) _thumbQueue.unshift(el);
-        _thumbRun();
+        if (i > 0) _thumbQueue.splice(i, 1);
+        if (i !== 0) newly.push(el);
     }
+    if (newly.length > 0) {
+        // Sort by vertical position so top-most cards are processed first
+        // (standard document-order lazy loading, same as native loading="lazy").
+        newly.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+        _thumbQueue.unshift(...newly);
+    }
+    _thumbRun();
 }, { rootMargin: '150px' });
 
 function _thumbInit() {
