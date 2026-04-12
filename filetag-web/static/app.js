@@ -1999,7 +1999,8 @@ function _cvInitStageEvents() {
         if (_cv.scroll) {
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
-                const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                // Proportional zoom: scale smoothly with deltaY rather than fixed 1.15 steps
+                const factor = Math.exp(-e.deltaY / 400);
                 const cur = _cv.scrollDir === 'h' ? _cv.scrollHeight : _cv.scrollWidth;
                 cvApplyScrollZoom(cur * factor);
             }
