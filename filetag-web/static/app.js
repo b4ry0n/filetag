@@ -636,7 +636,13 @@ function renderGrid(items) {
         if (isDir) {
             // Virtual root entry (shown at the top level when multiple roots exist)
             if (entry.root_id != null) {
-                html += `<div class="card folder" data-root-id="${entry.root_id}" ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
+                html += `<div class="card folder root-card" data-root-id="${entry.root_id}"
+                    draggable="true"
+                    ondragstart="_rootDragStart(event,${entry.root_id})"
+                    ondragover="_rootDragOver(event)"
+                    ondragleave="_rootDragLeave(event)"
+                    ondrop="_rootDrop(event,${entry.root_id})"
+                    ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
                     <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
@@ -736,6 +742,50 @@ function renderList(items) {
         }
     }
     return html;
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Root drag-and-drop reordering
+// ---------------------------------------------------------------------------
+
+let _rootDragId = null;
+
+function _rootDragStart(ev, id) {
+    _rootDragId = id;
+    ev.dataTransfer.effectAllowed = 'move';
+}
+
+function _rootDragOver(ev) {
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    ev.currentTarget.classList.add('drag-over');
+}
+
+function _rootDragLeave(ev) {
+    ev.currentTarget.classList.remove('drag-over');
+}
+
+async function _rootDrop(ev, targetId) {
+    ev.preventDefault();
+    ev.currentTarget.classList.remove('drag-over');
+    if (_rootDragId === null || _rootDragId === targetId) return;
+
+    // Build new order: swap dragged root to just before target
+    const current = state.roots.map(r => r.id);
+    const from = current.indexOf(_rootDragId);
+    const to = current.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    current.splice(from, 1);
+    current.splice(to, 0, _rootDragId);
+    _rootDragId = null;
+
+    await api('/api/roots/reorder', { method: 'POST', body: JSON.stringify({ order: current }),
+        headers: { 'Content-Type': 'application/json' } });
+    // Reload roots and re-render virtual root page
+    state.roots = await api('/api/roots');
+    await loadFiles('');
+    render();
 }
 
 // ---------------------------------------------------------------------------

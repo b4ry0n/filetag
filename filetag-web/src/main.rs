@@ -230,12 +230,19 @@ struct ApiRoot {
     id: usize,
     name: String,
     path: String,
+    sort_order: i64,
 }
 
 #[derive(Deserialize)]
 struct RenameDbRequest {
     root_id: usize,
     name: String,
+}
+
+#[derive(Deserialize)]
+struct ReorderRootsRequest {
+    /// Root IDs in the desired new order (first element = sort position 0).
+    order: Vec<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1757,18 +1764,40 @@ async fn favicon() -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 async fn api_roots(State(state): State<Arc<AppState>>) -> Json<Vec<ApiRoot>> {
-    Json(
-        state
-            .roots
-            .iter()
-            .enumerate()
-            .map(|(id, r)| ApiRoot {
+    // Read sort_order from each root's settings. Fall back to Vec index so
+    // roots without an explicit order keep their original position.
+    let mut entries: Vec<ApiRoot> = state
+        .roots
+        .iter()
+        .enumerate()
+        .map(|(id, r)| {
+            let sort_order = Connection::open(&r.db_path)
+                .ok()
+                .and_then(|c| db::get_setting(&c, "sort_order").ok().flatten())
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(id as i64);
+            ApiRoot {
                 id,
                 name: r.name.clone(),
                 path: r.root.display().to_string(),
-            })
-            .collect(),
-    )
+                sort_order,
+            }
+        })
+        .collect();
+    entries.sort_by_key(|r| r.sort_order);
+    Json(entries)
+}
+
+async fn api_reorder_roots(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ReorderRootsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    for (position, &root_id) in body.order.iter().enumerate() {
+        let db_root = root_at(&state, Some(root_id))?;
+        let conn = open_conn(db_root)?;
+        db::set_setting(&conn, "sort_order", &position.to_string())?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn api_rename_db(
@@ -2268,6 +2297,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/app.js", get(app_js))
         .route("/favicon.svg", get(favicon))
         .route("/api/roots", get(api_roots))
+        .route("/api/roots/reorder", post(api_reorder_roots))
         .route("/api/db/rename", post(api_rename_db))
         .route("/api/info", get(api_info))
         .route("/api/cache/clear", post(api_cache_clear))
