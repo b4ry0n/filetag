@@ -200,21 +200,11 @@ These files are safe to delete at any time; they will be regenerated on demand.
 
 ### Browser-side caching
 
-The server does not send `Cache-Control` headers, so the browser may cache previewed files in its HTTP cache. On most systems that cache lives on disk in a browser-managed directory (e.g. `~/Library/Caches/Google/Chrome/` on macOS, `~/.cache/chromium/` on Linux), separate from your own files but still part of your filesystem.
+The server sends no `Cache-Control` headers, so the browser may keep previewed files in its HTTP cache between sessions. That cache lives in a browser-managed directory on your filesystem (e.g. `~/Library/Caches/Google/Chrome/` on macOS). For a private, single-user `localhost` setup this is normal behaviour and not a concern.
 
-| What | Leaves the server? | Where the browser may cache it |
-| :--- | :--- | :--- |
-| JPEG / PNG / WebP / GIF originals | Yes, full file | Browser HTTP cache (memory + disk) |
-| RAW files | No. Only the extracted JPEG is sent | Browser HTTP cache |
-| HEIC / HEIF files | No. Only the converted JPEG is sent | Browser HTTP cache |
-| Video files | Yes, streamed in full | Browser may buffer; not written to disk by default |
-| PDF files | Yes, full file | Browser HTTP cache; may also be cached by the browser's built-in PDF viewer |
-| Audio | Yes, full file | Browser HTTP cache |
-| ZIP / CBZ pages | Individual pages only, as JPEG (via `/api/zip/page`) | Browser HTTP cache |
+Note that RAW, HEIC, and ZIP/CBZ files are never sent to the browser in their original form: the server converts them first and sends only a JPEG. PDF files are sent as-is and rendered by the browser's built-in viewer (Firefox: PDF.js; Chrome/Safari: native renderer); no external application is invoked and no file is written to your downloads folder unless you explicitly save or print.
 
-For most use cases (private, single-user, `localhost`) this is not a concern. If you are running `filetag-web` on a shared or public-facing server and want to prevent browser caching of the actual file content, add a reverse proxy (e.g. nginx or Caddy) in front that injects `Cache-Control: no-store` for `/preview/*`, `/thumb/*`, and `/api/zip/page`.
-
-PDF files specifically are rendered entirely within the browser using its built-in PDF viewer (Firefox: PDF.js; Chrome/Safari: native renderer). The PDF bytes are fetched once and displayed in-page; no separate PDF viewer application is invoked and no file is written to your downloads folder, unless you explicitly save or print the document.
+If you run `filetag-web` on a shared or public-facing server, add a reverse proxy (e.g. nginx or Caddy) that injects `Cache-Control: no-store` for the `/preview/*`, `/thumb/*`, and `/api/zip/page` routes.
 
 ## How it works
 
