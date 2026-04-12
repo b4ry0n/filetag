@@ -5,7 +5,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 /// Open (or create) the database inside the given root directory.
 /// Creates `.filetag/db.sqlite3` under `root`.
@@ -120,7 +120,14 @@ fn migrate(conn: &Connection) -> Result<()> {
              ALTER TABLE linked_databases RENAME COLUMN rel_path TO path;",
         )?;
     }
-
+    if version < 6 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                 key   TEXT PRIMARY KEY,
+                 value TEXT NOT NULL DEFAULT ''
+             );",
+        )?;
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -636,4 +643,30 @@ pub fn list_directory(conn: &Connection, prefix: &str) -> Result<Vec<DirEntry>> 
     entries.extend(files);
 
     Ok(entries)
+}
+
+// ---------------------------------------------------------------------------
+// Settings (per-database key/value store)
+// ---------------------------------------------------------------------------
+
+/// Read a setting value, returning `None` if the key does not exist.
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// Insert or update a setting value.
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
 }
