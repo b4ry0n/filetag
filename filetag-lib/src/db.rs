@@ -398,6 +398,16 @@ pub struct FileWithTags {
     pub tags: Vec<(String, String)>,
 }
 
+/// Collect tag (name, value) pairs for a file by its `files.id`.
+fn collect_file_tags(tag_stmt: &mut rusqlite::Statement<'_>, file_id: i64) -> Vec<(String, String)> {
+    tag_stmt
+        .query_map(params![file_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
 /// Find all files whose path starts with `prefix/` and return them with their tags.
 pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWithTags>> {
     let pattern = format!("{}/%", prefix.trim_end_matches('/'));
@@ -412,7 +422,6 @@ pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWit
          JOIN tags t ON t.id = ft.tag_id
          WHERE ft.file_id = ?1",
     )?;
-    let mut results = Vec::new();
     let rows = stmt.query_map(params![pattern], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -422,20 +431,15 @@ pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWit
             row.get::<_, i64>(4)?,
         ))
     })?;
+    let mut results = Vec::new();
     for row in rows {
         let (id, path, file_id, size, mtime_ns) = row?;
-        let tags: Vec<(String, String)> = tag_stmt
-            .query_map(params![id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
         results.push(FileWithTags {
             rel_path: path,
             file_id,
             size,
             mtime_ns,
-            tags,
+            tags: collect_file_tags(&mut tag_stmt, id),
         });
     }
     Ok(results)
@@ -457,7 +461,6 @@ pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
          JOIN tags t ON t.id = ft.tag_id
          WHERE ft.file_id = ?1",
     )?;
-    let mut results = Vec::new();
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -467,20 +470,15 @@ pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
             row.get::<_, i64>(4)?,
         ))
     })?;
+    let mut results = Vec::new();
     for row in rows {
         let (id, path, file_id, size, mtime_ns) = row?;
-        let tags: Vec<(String, String)> = tag_stmt
-            .query_map(params![id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
         results.push(FileWithTags {
             rel_path: path,
             file_id,
             size,
             mtime_ns,
-            tags,
+            tags: collect_file_tags(&mut tag_stmt, id),
         });
     }
     Ok(results)

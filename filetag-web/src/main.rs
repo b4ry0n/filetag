@@ -76,11 +76,8 @@ fn open_conn(state: &AppState) -> anyhow::Result<Connection> {
 
 /// Resolve a relative path under `root`, rejecting directory traversal.
 fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
-    let joined = root.join(rel);
-    let canonical = std::fs::canonicalize(&joined)
-        .with_context(|| format!("resolving {}", joined.display()))?;
-    anyhow::ensure!(canonical.starts_with(root), "path escapes database root");
-    Ok(canonical)
+    preview_safe_path(root, rel)
+        .ok_or_else(|| anyhow::anyhow!("invalid path '{}': escapes root or does not exist", rel))
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +174,6 @@ struct TagRequest {
     tags: Vec<String>,
 }
 
-// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // File preview handler
 // ---------------------------------------------------------------------------
@@ -282,9 +278,9 @@ async fn serve_file_bytes(path: &Path) -> Response {
     }
 }
 
-/// Return the cache path for a RAW preview JPEG, keyed by mtime + size.
-/// Stored in <root>/.filetag/cache/raw/.
-fn raw_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
+/// Return a cache path for a derived preview file, keyed by mtime + size.
+/// Files are stored under `<root>/.filetag/cache/<subdir>/`.
+fn file_cache_path(abs: &Path, root: &Path, subdir: &str, suffix: &str) -> Option<PathBuf> {
     let meta = std::fs::metadata(abs).ok()?;
     let mtime = meta
         .modified()
@@ -297,10 +293,16 @@ fn raw_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let key = format!("{mtime}_{size}_{stem}.prev.jpg");
-    let dir = root.join(".filetag").join("cache").join("raw");
+    let key = format!("{mtime}_{size}_{stem}.{suffix}");
+    let dir = root.join(".filetag").join("cache").join(subdir);
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(key))
+}
+
+/// Return the cache path for a RAW preview JPEG, keyed by mtime + size.
+/// Stored in `<root>/.filetag/cache/raw/`.
+fn raw_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
+    file_cache_path(abs, root, "raw", "prev.jpg")
 }
 
 /// Try to extract a JPEG preview from a RAW file using available tools.
@@ -551,25 +553,10 @@ async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
 // Video thumbnail strip (2×2 contact sheet via ffmpeg)
 // ---------------------------------------------------------------------------
 
-/// Return a cache path for this file's thumbnail, keyed by mtime + size.
-/// All cache files are stored under <root>/.filetag/cache/thumbs/.
+/// Return the cache path for a file thumbnail, keyed by mtime + size.
+/// Stored in `<root>/.filetag/cache/thumbs/`.
 fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
-    let meta = std::fs::metadata(abs).ok()?;
-    let mtime = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let size = meta.len();
-    let stem = abs
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let key = format!("{mtime}_{size}_{stem}.thumb.jpg");
-    let dir = root.join(".filetag").join("cache").join("thumbs");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join(key))
+    file_cache_path(abs, root, "thumbs", "thumb.jpg")
 }
 
 /// Get video duration in seconds via ffprobe.
@@ -1327,8 +1314,7 @@ async fn api_delete_tag(
 }
 
 // ---------------------------------------------------------------------------
-// Static files
-// ---------------------------------------------------------------------------
+// Entry point
 // ---------------------------------------------------------------------------
 
 #[tokio::main]
