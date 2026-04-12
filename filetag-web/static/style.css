@@ -1350,6 +1350,65 @@ h3, h4 { font-weight: 600; }
     position: relative;
 }
 
+/* Body row that holds the optional thumbnail strip + the stage */
+.cv-body {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* Thumbnail strip (left sidebar) */
+.cv-thumbs {
+    width: 116px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #111;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    padding: 6px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+.cv-thumbs[hidden] { display: none; }
+
+.cv-thumb {
+    position: relative;
+    cursor: pointer;
+    border-radius: 3px;
+    overflow: hidden;
+    border: 2px solid transparent;
+    transition: border-color 0.12s;
+    flex-shrink: 0;
+}
+.cv-thumb:hover { border-color: rgba(255,255,255,0.35); }
+.cv-thumb.active { border-color: #5b9cf6; }
+
+.cv-thumb img {
+    width: 100%;
+    display: block;
+    object-fit: contain;
+    background: #1a1a1a;
+    min-height: 60px;
+}
+
+.cv-thumb-num {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 10px;
+    color: rgba(255,255,255,0.65);
+    background: rgba(0,0,0,0.55);
+    padding: 1px 0;
+    line-height: 14px;
+}
+
 .cv-pages {
     display: flex;
     gap: 4px;
@@ -1373,6 +1432,8 @@ h3, h4 { font-weight: 600; }
 #comic-viewer:-webkit-full-screen { background: #000; }
 #comic-viewer:fullscreen .cv-page { max-height: calc(100vh - 54px); }
 #comic-viewer:-webkit-full-screen .cv-page { max-height: calc(100vh - 54px); }
+#comic-viewer:fullscreen .cv-thumbs { max-height: calc(100vh - 54px); }
+#comic-viewer:-webkit-full-screen .cv-thumbs { max-height: calc(100vh - 54px); }
 
 /* Zip cover in detail panel */
 .zip-cover-wrap {
