@@ -38,9 +38,43 @@ struct Args {
 // State and error handling
 // ---------------------------------------------------------------------------
 
-struct AppState {
+struct DbRoot {
+    name: String,
     db_path: PathBuf,
     root: PathBuf,
+}
+
+struct AppState {
+    roots: Vec<DbRoot>,
+}
+
+fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&DbRoot> {
+    let idx = id.unwrap_or(0);
+    state
+        .roots
+        .get(idx)
+        .ok_or_else(|| anyhow::anyhow!("root {} not found", idx))
+}
+
+fn resolve_names(names: Vec<String>) -> Vec<String> {
+    use std::collections::HashMap;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for name in &names {
+        *counts.entry(name.clone()).or_insert(0) += 1;
+    }
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    names
+        .into_iter()
+        .map(|name| {
+            if counts[&name] == 1 {
+                name
+            } else {
+                let n = seen.entry(name.clone()).or_insert(0);
+                *n += 1;
+                format!("{} {}", name, *n)
+            }
+        })
+        .collect()
 }
 
 struct AppError(anyhow::Error);
@@ -64,8 +98,8 @@ impl From<rusqlite::Error> for AppError {
     }
 }
 
-fn open_conn(state: &AppState) -> anyhow::Result<Connection> {
-    let conn = Connection::open(&state.db_path).context("opening database")?;
+fn open_conn(db_root: &DbRoot) -> anyhow::Result<Connection> {
+    let conn = Connection::open(&db_root.db_path).context("opening database")?;
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA foreign_keys = ON;
@@ -119,6 +153,9 @@ struct ApiDirEntry {
     file_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tag_count: Option<i64>,
+    /// Set for virtual-root entries; identifies which database root to enter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    root_id: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -152,6 +189,7 @@ struct ApiSearchEntry {
 
 #[derive(Deserialize)]
 struct FileListParams {
+    root: Option<usize>,
     #[serde(default)]
     path: String,
     #[serde(default)]
@@ -161,17 +199,38 @@ struct FileListParams {
 #[derive(Deserialize)]
 struct SearchParams {
     q: String,
+    root: Option<usize>,
 }
 
 #[derive(Deserialize)]
 struct FileDetailParams {
     path: String,
+    root: Option<usize>,
 }
 
 #[derive(Deserialize)]
 struct TagRequest {
     path: String,
     tags: Vec<String>,
+    root_id: Option<usize>,
+}
+
+#[derive(Deserialize, Default)]
+struct RootParam {
+    root: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct ApiRoot {
+    id: usize,
+    name: String,
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct RenameDbRequest {
+    root_id: usize,
+    name: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,9 +240,14 @@ struct TagRequest {
 /// Serve a file for preview, converting RAW / HEIC formats server-side.
 async fn preview_handler(
     AxumPath(rel_path): AxumPath<String>,
+    Query(rp): Query<RootParam>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let abs = match preview_safe_path(&state.root, &rel_path) {
+    let db_root = match root_at(&state, rp.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let abs = match preview_safe_path(&db_root.root, &rel_path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
@@ -197,9 +261,9 @@ async fn preview_handler(
     match ext.as_str() {
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
-            preview_raw(&abs, &state.root).await
+            preview_raw(&abs, &db_root.root).await
         }
-        "heic" | "heif" => preview_heic(&abs, &state.root).await,
+        "heic" | "heif" => preview_heic(&abs, &db_root.root).await,
         _ => serve_file_bytes(&abs).await,
     }
 }
@@ -732,9 +796,15 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 /// For video: returns a 2×2 contact-sheet. For others: delegates to preview_handler.
 async fn thumb_handler(
     AxumPath(rel_path): AxumPath<String>,
+    Query(rp): Query<RootParam>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let abs = match preview_safe_path(&state.root, &rel_path) {
+    let db_root = match root_at(&state, rp.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let root = db_root.root.clone();
+    let abs = match preview_safe_path(&root, &rel_path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
@@ -748,7 +818,7 @@ async fn thumb_handler(
     match ext.as_str() {
         // ZIP/CBZ/RAR/CBR/7z/CB7: thumbnail = first image page, resized
         "zip" | "cbz" | "rar" | "cbr" | "7z" | "cb7" => {
-            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+            if let Some(cache) = thumb_cache_path(&abs, &root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
@@ -783,17 +853,17 @@ async fn thumb_handler(
 
         // Video: 2×2 contact-sheet
         "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp" | "f4v" => {
-            video_thumb_strip(&abs, &state.root).await
+            video_thumb_strip(&abs, &root).await
         }
 
         // HEIC/HEIF: full-res conversion is already cached; thumbnail via image_thumb_jpeg
         "heic" | "heif" => {
-            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+            if let Some(cache) = thumb_cache_path(&abs, &root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
                 // Convert to JPEG first, then resize
-                let full = preview_heic(&abs, &state.root).await;
+                let full = preview_heic(&abs, &root).await;
                 // preview_heic returns a Response; we can't easily re-use its bytes here,
                 // so we call image_thumb_jpeg on the original path after HEIC cache is warm.
                 if let Some(data) = image_thumb_jpeg(&abs).await {
@@ -808,7 +878,7 @@ async fn thumb_handler(
         // RAW / PSD / layered: use raw_extract_jpeg then resize
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
-            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+            if let Some(cache) = thumb_cache_path(&abs, &root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
@@ -834,11 +904,11 @@ async fn thumb_handler(
 
         // PDF: rasterise first page via pdftoppm or ImageMagick+Ghostscript
         "pdf" => {
-            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+            if let Some(cache) = thumb_cache_path(&abs, &root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                if let Some(data) = pdf_thumb_jpeg(&abs, &state.root).await {
+                if let Some(data) = pdf_thumb_jpeg(&abs, &root).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
@@ -850,7 +920,7 @@ async fn thumb_handler(
 
         // Regular images (JPEG, PNG, WEBP, …): resize to thumbnail
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" => {
-            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+            if let Some(cache) = thumb_cache_path(&abs, &root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
@@ -864,7 +934,7 @@ async fn thumb_handler(
         }
 
         // Everything else: fall through to preview handler
-        _ => preview_handler(AxumPath(rel_path), State(state)).await,
+        _ => preview_handler(AxumPath(rel_path), Query(rp), State(state)).await,
     }
 }
 
@@ -1159,6 +1229,7 @@ fn is_dir_image(name: &str) -> bool {
 #[derive(Deserialize)]
 struct DirImagesParams {
     path: String,
+    root: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -1170,14 +1241,18 @@ async fn api_dir_images(
     State(state): State<Arc<AppState>>,
     Query(params): Query<DirImagesParams>,
 ) -> Response {
-    let dir_abs = match preview_safe_path(&state.root, &params.path) {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let dir_abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
     if !dir_abs.is_dir() {
         return (StatusCode::BAD_REQUEST, "Not a directory").into_response();
     }
-    let root = state.root.clone();
+    let root = db_root.root.clone();
     match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
         let mut images: Vec<String> = std::fs::read_dir(&dir_abs)?
             .filter_map(|e| {
@@ -1218,6 +1293,7 @@ async fn api_dir_images(
 #[derive(Deserialize)]
 struct ZipListParams {
     path: String,
+    root: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -1230,7 +1306,11 @@ async fn api_zip_pages(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipListParams>,
 ) -> Response {
-    let abs = match preview_safe_path(&state.root, &params.path) {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
@@ -1249,13 +1329,18 @@ async fn api_zip_pages(
 struct ZipPageParams {
     path: String,
     page: usize,
+    root: Option<usize>,
 }
 
 async fn api_zip_page(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipPageParams>,
 ) -> Response {
-    let abs = match preview_safe_path(&state.root, &params.path) {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
@@ -1303,20 +1388,26 @@ fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<Pat
 struct ZipThumbParams {
     path: String,
     page: usize,
+    root: Option<usize>,
 }
 
 async fn api_zip_thumb(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipThumbParams>,
 ) -> Response {
-    let abs = match preview_safe_path(&state.root, &params.path) {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let root = db_root.root.clone();
+    let abs = match preview_safe_path(&root, &params.path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
     let page_idx = params.page;
 
     // Serve from cache if available
-    if let Some(cache) = zip_page_thumb_cache_path(&abs, &state.root, page_idx) {
+    if let Some(cache) = zip_page_thumb_cache_path(&abs, &root, page_idx) {
         if let Ok(data) = tokio::fs::read(&cache).await {
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
@@ -1333,8 +1424,7 @@ async fn api_zip_thumb(
         .await;
 
         if let Ok(Ok((img_bytes, _mime))) = result {
-            let tmp = state
-                .root
+            let tmp = root
                 .join(".filetag")
                 .join("tmp")
                 .join(format!("zp_{page_idx}.jpg"));
@@ -1397,7 +1487,11 @@ async fn api_zip_entries(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipListParams>,
 ) -> Response {
-    let abs = match preview_safe_path(&state.root, &params.path) {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
@@ -1410,7 +1504,7 @@ async fn api_zip_entries(
         };
 
     // Query tag counts from DB (sync, on async thread — Connection is Send here)
-    let conn = match open_conn(&state) {
+    let conn = match open_conn(db_root) {
         Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
@@ -1486,8 +1580,37 @@ async fn favicon() -> impl IntoResponse {
 // API handlers
 // ---------------------------------------------------------------------------
 
-async fn api_info(State(state): State<Arc<AppState>>) -> Result<Json<ApiInfo>, AppError> {
-    let conn = open_conn(&state)?;
+async fn api_roots(State(state): State<Arc<AppState>>) -> Json<Vec<ApiRoot>> {
+    Json(
+        state
+            .roots
+            .iter()
+            .enumerate()
+            .map(|(id, r)| ApiRoot {
+                id,
+                name: r.name.clone(),
+                path: r.root.display().to_string(),
+            })
+            .collect(),
+    )
+}
+
+async fn api_rename_db(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RenameDbRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, Some(body.root_id))?;
+    let conn = open_conn(db_root)?;
+    db::set_setting(&conn, "name", &body.name)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn api_info(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<RootParam>,
+) -> Result<Json<ApiInfo>, AppError> {
+    let db_root = root_at(&state, rp.root)?;
+    let conn = open_conn(db_root)?;
     let files: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
     let tags: i64 = conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))?;
     let assignments: i64 = conn.query_row("SELECT COUNT(*) FROM file_tags", [], |r| r.get(0))?;
@@ -1495,7 +1618,7 @@ async fn api_info(State(state): State<Arc<AppState>>) -> Result<Json<ApiInfo>, A
         conn.query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |r| r.get(0))?;
 
     Ok(Json(ApiInfo {
-        root: state.root.display().to_string(),
+        root: db_root.root.display().to_string(),
         files,
         tags,
         assignments,
@@ -1545,22 +1668,28 @@ fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
 
 async fn api_cache_clear(
     State(state): State<Arc<AppState>>,
+    Query(rp): Query<RootParam>,
     body: Option<axum::extract::Json<CacheClearBody>>,
 ) -> Response {
+    let db_root = match root_at(&state, rp.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let root = db_root.root.clone();
     let paths = body.and_then(|b| b.paths.clone());
 
     let removed = if let Some(rel_paths) = paths {
         // Clear only the specified files
         let mut n = 0u64;
         for rel in rel_paths {
-            if let Some(abs) = preview_safe_path(&state.root, &rel) {
-                n += remove_cache_for_path(&abs, &state.root);
+            if let Some(abs) = preview_safe_path(&root, &rel) {
+                n += remove_cache_for_path(&abs, &root);
             }
         }
         n
     } else {
-        // Clear the entire cache
-        let cache_dir = state.root.join(".filetag").join("cache");
+        // Clear the entire cache for this root
+        let cache_dir = root.join(".filetag").join("cache");
         let mut n = 0u64;
         for sub in &["raw", "thumbs"] {
             let dir = cache_dir.join(sub);
@@ -1594,8 +1723,12 @@ async fn api_cache_clear(
         .into_response()
 }
 
-async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiTag>>, AppError> {
-    let conn = open_conn(&state)?;
+async fn api_tags(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<RootParam>,
+) -> Result<Json<Vec<ApiTag>>, AppError> {
+    let db_root = root_at(&state, rp.root)?;
+    let conn = open_conn(db_root)?;
     let tags = db::all_tags(&conn).map_err(AppError)?;
     Ok(Json(
         tags.into_iter()
@@ -1608,10 +1741,33 @@ async fn api_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileListParams>,
 ) -> Result<Json<ApiDirListing>, AppError> {
+    // Virtual root: no root_id specified and no path — list all roots as directories
+    if params.root.is_none() && params.path.is_empty() && state.roots.len() > 1 {
+        let entries = state
+            .roots
+            .iter()
+            .enumerate()
+            .map(|(id, r)| ApiDirEntry {
+                name: r.name.clone(),
+                is_dir: true,
+                size: None,
+                mtime: None,
+                file_count: None,
+                tag_count: None,
+                root_id: Some(id),
+            })
+            .collect();
+        return Ok(Json(ApiDirListing {
+            path: String::new(),
+            entries,
+        }));
+    }
+
+    let db_root = root_at(&state, params.root)?;
     let dir = if params.path.is_empty() {
-        state.root.clone()
+        db_root.root.clone()
     } else {
-        safe_path(&state.root, &params.path)?
+        safe_path(&db_root.root, &params.path)?
     };
 
     let prefix = if params.path.is_empty() {
@@ -1620,7 +1776,7 @@ async fn api_files(
         format!("{}/", params.path.trim_end_matches('/'))
     };
 
-    let conn = open_conn(&state)?;
+    let conn = open_conn(db_root)?;
     let mut tag_stmt = conn.prepare_cached(
         "SELECT COUNT(*) FROM file_tags ft \
          JOIN files f ON f.id = ft.file_id WHERE f.path = ?1",
@@ -1657,6 +1813,7 @@ async fn api_files(
                 mtime: None,
                 file_count: Some(child_count),
                 tag_count: None,
+                root_id: None,
             });
         } else if meta.is_file() {
             let rel_path = format!("{}{}", prefix, name);
@@ -1679,6 +1836,7 @@ async fn api_files(
                 mtime: Some(mtime),
                 file_count: None,
                 tag_count: Some(tag_count),
+                root_id: None,
             });
         }
     }
@@ -1697,7 +1855,8 @@ async fn api_search(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<ApiSearchResult>, AppError> {
-    let conn = open_conn(&state)?;
+    let db_root = root_at(&state, params.root)?;
+    let conn = open_conn(db_root)?;
     let expr = query::parse(&params.q).map_err(AppError)?;
     let results = query::execute_with_tags(&conn, &expr).map_err(AppError)?;
 
@@ -1720,7 +1879,8 @@ async fn api_file_detail(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileDetailParams>,
 ) -> Result<Json<ApiFileDetail>, AppError> {
-    let conn = open_conn(&state)?;
+    let db_root = root_at(&state, params.root)?;
+    let conn = open_conn(db_root)?;
 
     if let Some(record) = db::file_by_path(&conn, &params.path).map_err(AppError)? {
         let tags = db::tags_for_file(&conn, record.id).map_err(AppError)?;
@@ -1753,7 +1913,7 @@ async fn api_file_detail(
         }))
     } else {
         // File not yet indexed: return filesystem metadata
-        let abs = safe_path(&state.root, &params.path)?;
+        let abs = safe_path(&db_root.root, &params.path)?;
         let meta = std::fs::metadata(&abs).with_context(|| format!("reading {}", abs.display()))?;
         let size = meta.len() as i64;
         let mtime = meta
@@ -1778,14 +1938,15 @@ async fn api_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let conn = open_conn(&state)?;
+    let db_root = root_at(&state, body.root_id)?;
+    let conn = open_conn(db_root)?;
     let file_id = if body.path.contains("::") {
         // Virtual zip entry — no filesystem check
         ensure_zip_entry_record(&conn, &body.path).map_err(AppError)?
     } else {
-        safe_path(&state.root, &body.path)?;
+        safe_path(&db_root.root, &body.path)?;
         // Auto-index the file if not yet in the database
-        db::get_or_index_file(&conn, &body.path, &state.root)
+        db::get_or_index_file(&conn, &body.path, &db_root.root)
             .map_err(AppError)?
             .id
     };
@@ -1805,7 +1966,8 @@ async fn api_untag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let conn = open_conn(&state)?;
+    let db_root = root_at(&state, body.root_id)?;
+    let conn = open_conn(db_root)?;
     let record = db::file_by_path(&conn, &body.path)
         .map_err(AppError)?
         .ok_or_else(|| AppError(anyhow::anyhow!("file not found: {}", body.path)))?;
@@ -1847,7 +2009,9 @@ async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let conn = open_conn(&state)?;
+    // Tag colors are per-database; default to root 0
+    let db_root = root_at(&state, None)?;
+    let conn = open_conn(db_root)?;
     let ok = db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": ok })))
 }
@@ -1863,7 +2027,8 @@ async fn api_delete_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let conn = open_conn(&state)?;
+    let db_root = root_at(&state, None)?;
+    let conn = open_conn(db_root)?;
     let deleted = db::delete_tag(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
@@ -1880,21 +2045,54 @@ async fn main() -> anyhow::Result<()> {
     let root =
         std::fs::canonicalize(&root).with_context(|| format!("resolving {}", root.display()))?;
 
-    // Verify database exists
+    // Open primary database and collect all linked databases.
     let (conn, root) = db::find_and_open(&root)?;
-    drop(conn);
+    let all_dbs = db::collect_all_databases(conn, root.clone())?;
 
-    let db_path = root.join(".filetag").join("db.sqlite3");
-    let state = Arc::new(AppState {
-        db_path,
-        root: root.clone(),
-    });
+    // Build named roots (name comes from the `settings` table key "name", or
+    // falls back to the last path component of the root directory).
+    let raw_names: Vec<String> = all_dbs
+        .iter()
+        .map(|db| {
+            let conn_tmp = Connection::open(db.root.join(".filetag").join("db.sqlite3")).ok();
+            conn_tmp
+                .as_ref()
+                .and_then(|c| db::get_setting(c, "name").ok().flatten())
+                .unwrap_or_else(|| {
+                    db.root
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| db.root.display().to_string())
+                })
+        })
+        .collect();
+    let names = resolve_names(raw_names);
+
+    let roots: Vec<DbRoot> = all_dbs
+        .into_iter()
+        .zip(names)
+        .map(|(open_db, name)| DbRoot {
+            name,
+            db_path: open_db.root.join(".filetag").join("db.sqlite3"),
+            root: open_db.root,
+        })
+        .collect();
+
+    if roots.is_empty() {
+        anyhow::bail!("no databases found");
+    }
+
+    let primary_root = roots[0].root.display().to_string();
+    let n_roots = roots.len();
+    let state = Arc::new(AppState { roots });
 
     let app = Router::new()
         .route("/", get(index_html))
         .route("/style.css", get(style_css))
         .route("/app.js", get(app_js))
         .route("/favicon.svg", get(favicon))
+        .route("/api/roots", get(api_roots))
+        .route("/api/db/rename", post(api_rename_db))
         .route("/api/info", get(api_info))
         .route("/api/cache/clear", post(api_cache_clear))
         .route("/api/tags", get(api_tags))
@@ -1919,7 +2117,14 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding to {}", addr))?;
 
-    println!("filetag-web serving {} at http://{}", root.display(), addr);
+    if n_roots > 1 {
+        println!(
+            "filetag-web serving {} databases (primary: {}) at http://{}",
+            n_roots, primary_root, addr
+        );
+    } else {
+        println!("filetag-web serving {} at http://{}", primary_root, addr);
+    }
     axum::serve(listener, app).await?;
 
     Ok(())

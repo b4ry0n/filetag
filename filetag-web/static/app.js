@@ -162,6 +162,8 @@ function escMd(s) {
 const state = {
     mode: 'browse', // browse | search | zip
     currentPath: '',
+    currentRootId: null, // null = virtual root (multi-root), number = index into state.roots
+    roots: [],           // [{id, name, path}] loaded from /api/roots
     viewMode: 'grid',
     showHidden: false,
     tags: [],
@@ -209,16 +211,31 @@ async function apiPost(url, body) {
     return res.json();
 }
 
+// Helper: append root query param when a root is selected.
+function rootParam(sep) {
+    return state.currentRootId != null ? `${sep}root=${state.currentRootId}` : '';
+}
+
+async function loadRoots() {
+    state.roots = await api('/api/roots');
+    // Single database: enter it automatically so the UI is transparent.
+    if (state.roots.length === 1) {
+        state.currentRootId = 0;
+    }
+}
+
 async function loadInfo() {
-    state.info = await api('/api/info');
+    state.info = await api('/api/info' + rootParam('?'));
 }
 
 async function loadTags() {
-    state.tags = await api('/api/tags');
+    state.tags = await api('/api/tags' + rootParam('?'));
 }
 
 async function loadFiles(path) {
-    const url = '/api/files?path=' + encodeURIComponent(path) + (state.showHidden ? '&show_hidden=true' : '');
+    const url = '/api/files?path=' + encodeURIComponent(path) +
+        (state.showHidden ? '&show_hidden=true' : '') +
+        rootParam('&');
     const data = await api(url);
     state.currentPath = data.path;
     state.entries = data.entries;
@@ -227,11 +244,12 @@ async function loadFiles(path) {
     state.zipPath = null;
     state.zipEntries = [];
     sessionStorage.setItem('ft_path', state.currentPath);
+    sessionStorage.setItem('ft_root', state.currentRootId != null ? String(state.currentRootId) : '');
 }
 
 async function searchFiles(query) {
     try {
-        const data = await api('/api/search?q=' + encodeURIComponent(query));
+        const data = await api('/api/search?q=' + encodeURIComponent(query) + rootParam('&'));
         state.searchQuery = query;
         state.searchResults = data.results;
         state.mode = 'search';
@@ -249,7 +267,7 @@ async function searchFiles(query) {
 }
 
 async function loadFileDetail(path) {
-    state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path));
+    state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + rootParam('&'));
     state.selectedDir = null;
 }
 
@@ -297,7 +315,7 @@ function handleZipClick(path, event) {
 }
 
 async function addTagToFile(path, tagStr) {
-    await apiPost('/api/tag', { path, tags: [tagStr] });
+    await apiPost('/api/tag', { path, tags: [tagStr], root_id: state.currentRootId });
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
@@ -305,7 +323,7 @@ async function addTagToFile(path, tagStr) {
 }
 
 async function removeTagFromFile(path, tagStr) {
-    await apiPost('/api/untag', { path, tags: [tagStr] });
+    await apiPost('/api/untag', { path, tags: [tagStr], root_id: state.currentRootId });
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
@@ -512,8 +530,26 @@ function renderBreadcrumb() {
         return;
     }
 
-    const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip';
-    let html = `<button class="breadcrumb-item${rootIsCurrent ? ' current' : ''}" onclick="navigateTo('')">/</button>`;
+    const isMultiRoot = state.roots.length > 1;
+    const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip' && state.currentRootId != null;
+
+    // "/" button: goes to virtual root in multi-root mode, or to '' in single-root mode.
+    let html;
+    if (isMultiRoot) {
+        html = `<button class="breadcrumb-item${state.currentRootId == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
+        if (state.currentRootId != null) {
+            const root = state.roots[state.currentRootId];
+            const rootName = root ? root.name : String(state.currentRootId);
+            html += `<span class="breadcrumb-sep">/</span>`;
+            if (rootIsCurrent) {
+                html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename(${state.currentRootId}, this)">${esc(rootName)}</span>`;
+            } else {
+                html += `<button class="breadcrumb-item" onclick="navigateTo('')">${esc(rootName)}</button>`;
+            }
+        }
+    } else {
+        html = `<button class="breadcrumb-item${rootIsCurrent ? ' current' : ''}" onclick="navigateTo('')">/</button>`;
+    }
 
     if (state.currentPath) {
         const parts = state.currentPath.split('/');
@@ -522,7 +558,7 @@ function renderBreadcrumb() {
             accumulated += (i === 0 ? '' : '/') + parts[i];
             const isCurrent = i === parts.length - 1 && state.mode !== 'zip';
             const path = accumulated;
-            if (i > 0) html += `<span class="breadcrumb-sep">/</span>`;
+            html += `<span class="breadcrumb-sep">/</span>`;
             html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${jesc(path)}')">${esc(parts[i])}</button>`;
         }
     }
@@ -533,6 +569,36 @@ function renderBreadcrumb() {
     }
 
     el.innerHTML = html;
+}
+
+// Inline rename of a root database name.
+function startRootRename(rootId, el) {
+    const root = state.roots[rootId];
+    if (!root) return;
+    const currentName = root.name;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentName;
+    input.className = 'breadcrumb-rename-input';
+    input.style.cssText = 'background:transparent;border:1px solid var(--accent);border-radius:3px;color:inherit;font:inherit;padding:0 4px;width:10em;';
+    el.replaceWith(input);
+    input.focus();
+    input.select();
+
+    async function commit() {
+        const newName = input.value.trim();
+        if (newName && newName !== currentName) {
+            await apiPost('/api/db/rename', { root_id: rootId, name: newName });
+            // Update local state
+            state.roots[rootId] = { ...root, name: newName };
+        }
+        renderBreadcrumb();
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { commit(); }
+        if (e.key === 'Escape') { renderBreadcrumb(); }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -552,18 +618,18 @@ function renderGrid(items) {
         if (isDir) {
             preview = `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">`;
         } else if (type_ === 'video') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
                 class="card-thumb-strip" data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else if (type_ === 'zip') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else if (type_ === 'pdf') {
-            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" loading="lazy" alt=""
                 data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
                 `<div class="card-filmstrip-badge">${ICONS.pdf}</div>`;
         } else {
@@ -573,12 +639,20 @@ function renderGrid(items) {
         const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : formatSize(entry.size);
 
         if (isDir) {
-            const dirPath = fullPath(entry);
-            const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
-                <div class="card-preview">${preview}</div>
-                <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
-            </div>`;
+            // Virtual root entry (shown at the top level when multiple roots exist)
+            if (entry.root_id != null) {
+                html += `<div class="card folder" data-root-id="${entry.root_id}" ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
+                    <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
+                    <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
+                </div>`;
+            } else {
+                const dirPath = fullPath(entry);
+                const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
+                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
+                    <div class="card-preview">${preview}</div>
+                    <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
+                </div>`;
+            }
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const checkmark = state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
@@ -622,15 +696,25 @@ function renderList(items) {
         const tags = isDir ? `${entry.file_count} files` : (entry.tag_count != null ? `${entry.tag_count} tags` : '');
 
         if (isDir) {
-            const dirPath = fullPath(entry);
-            const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
-            html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
-                <span class="icon">${icon}</span>
-                <span class="name">${esc(name)}</span>
-                <span class="size">${size}</span>
-                <span class="date">${date}</span>
-                <span class="tags-count">${tags}</span>
-            </div>`;
+            if (entry.root_id != null) {
+                html += `<div class="list-row folder" data-root-id="${entry.root_id}" ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
+                    <span class="icon">${icon}</span>
+                    <span class="name">${esc(name)}</span>
+                    <span class="size"></span>
+                    <span class="date"></span>
+                    <span class="tags-count">root</span>
+                </div>`;
+            } else {
+                const dirPath = fullPath(entry);
+                const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
+                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
+                    <span class="icon">${icon}</span>
+                    <span class="name">${esc(name)}</span>
+                    <span class="size">${size}</span>
+                    <span class="date">${date}</span>
+                    <span class="tags-count">${tags}</span>
+                </div>`;
+            }
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const gotoDirBtn = state.mode === 'search'
@@ -749,14 +833,14 @@ async function openZipDir(zipPath) {
     state.selectedFilesData.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }));
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }) + rootParam('&'));
     state.zipEntries = data.entries || [];
     render();
 }
 
 async function refreshZipEntries() {
     if (!state.zipPath) return;
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }));
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }) + rootParam('&'));
     state.zipEntries = data.entries || [];
     renderContent();
 }
@@ -771,7 +855,7 @@ function renderZipGrid(entries) {
 
         let preview;
         if (entry.is_image) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index });
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + rootParam('&');
             preview = `<img src="${thumbUrl}" loading="lazy" alt="" data-name="${esc(displayName)}" onerror="_cardThumbError(this)">`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
@@ -905,14 +989,14 @@ function renderDetail() {
     const zipEntry = parseZipEntryPath(f.path);
     const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
     const type_ = zipEntry ? fileType(zipEntry.entryName) : fileType(name);
-    const previewUrl = '/preview/' + encodeURI(f.path);
+    const previewUrl = '/preview/' + encodeURI(f.path) + rootParam('?');
 
     let preview;
     if (zipEntry) {
         // Entry inside a zip archive
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index });
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index }) + rootParam('&');
             preview = `<a class="preview-zoomable" onclick="openComicViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
@@ -943,7 +1027,7 @@ function renderDetail() {
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
         preview = `<div class="zip-cover-wrap">
-            <img src="/thumb/${encodeURI(f.path)}" alt="${esc(name)}" class="zip-cover"
+            <img src="/thumb/${encodeURI(f.path)}${rootParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
             <button class="tag-action-btn" onclick="openComicViewer('${jjesc(f.path)}')">Open comic viewer</button>
         </div>`;
@@ -1090,7 +1174,7 @@ async function doBulkRemoveTagChip(tagStr) {
         const data = state.selectedFilesData.get(p);
         return data && data.tags.some(t => formatTag(t) === tagStr);
     });
-    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr] })));
+    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], root_id: state.currentRootId })));
     // Update cache locally
     for (const p of paths) {
         const d = state.selectedFilesData.get(p);
@@ -1142,6 +1226,37 @@ async function navigateTo(path) {
     _lastClickedPath = null;
     _armedBulkTag = null;
     await loadFiles(path);
+    render();
+}
+
+// Enter a specific root database (from the virtual root listing).
+async function enterRoot(id) {
+    state.currentRootId = id;
+    state.selectedFile = null;
+    state.selectedDir = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    state.activeTags.clear();
+    _lastClickedPath = null;
+    _armedBulkTag = null;
+    await Promise.all([loadInfo(), loadTags(), loadFiles('')]);
+    render();
+}
+
+// Navigate back to the virtual root (show all roots).
+async function goVirtualRoot() {
+    state.currentRootId = null;
+    state.currentPath = '';
+    state.selectedFile = null;
+    state.selectedDir = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    state.activeTags.clear();
+    state.tags = [];
+    state.info = null;
+    _lastClickedPath = null;
+    _armedBulkTag = null;
+    await loadFiles('');
     render();
 }
 
@@ -1225,7 +1340,7 @@ async function selectFile(path, event) {
         } else {
             state.selectedPaths.add(path);
             if (!state.selectedFilesData.has(path)) {
-                const data = await api('/api/file?path=' + encodeURIComponent(path));
+                const data = await api('/api/file?path=' + encodeURIComponent(path) + rootParam('&'));
                 state.selectedFilesData.set(path, data);
             }
         }
@@ -1260,7 +1375,7 @@ async function selectFile(path, event) {
         // Batch-fetch file data for newly added paths
         await Promise.all([...state.selectedPaths].map(async p => {
             if (!state.selectedFilesData.has(p)) {
-                const data = await api('/api/file?path=' + encodeURIComponent(p));
+                const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam('&'));
                 state.selectedFilesData.set(p, data);
             }
         }));
@@ -1555,10 +1670,10 @@ async function doBulkAddTag() {
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
-    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr] })));
+    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], root_id: state.currentRootId })));
     // Refresh cached data for all selected files
     await Promise.all(paths.map(async p => {
-        const data = await api('/api/file?path=' + encodeURIComponent(p));
+        const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam('&'));
         state.selectedFilesData.set(p, data);
     }));
     await loadTags();
@@ -1757,7 +1872,7 @@ function cvOpenFile(path, type) {
 }
 
 function openLightbox(path, type) {
-    const url = '/preview/' + encodeURI(path);
+    const url = '/preview/' + encodeURI(path) + rootParam('?');
     const lb = document.getElementById('lightbox');
     const content = document.getElementById('lightbox-content');
     _lb.scale = 1; _lb.dx = 0; _lb.dy = 0; _lb.dragging = false;
@@ -1889,14 +2004,14 @@ const _cv = {
 
 // Return the URL for a single page image.
 function cvPageUrl(i) {
-    if (_cv.mode === 'dir') return '/preview/' + encodeURI(_cv.filePaths[i]);
-    return `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}`;
+    if (_cv.mode === 'dir') return '/preview/' + encodeURI(_cv.filePaths[i]) + rootParam('?');
+    return `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}` + rootParam('&');
 }
 
 // Return the URL for a thumbnail of a single page.
 function cvThumbUrl(i) {
-    if (_cv.mode === 'dir') return '/thumb/' + encodeURI(_cv.filePaths[i]);
-    return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}`;
+    if (_cv.mode === 'dir') return '/thumb/' + encodeURI(_cv.filePaths[i]) + rootParam('?');
+    return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}` + rootParam('&');
 }
 
 async function openComicViewer(path, startPage = 0) {
@@ -1910,7 +2025,7 @@ async function openComicViewer(path, startPage = 0) {
     document.getElementById('cv-status').textContent = 'Loading…';
     document.getElementById('cv-pages').innerHTML = '';
 
-    const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }));
+    const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }) + rootParam('&'));
     if (!res.ok) {
         document.getElementById('cv-status').textContent = 'Cannot read ZIP';
         return;
@@ -1965,7 +2080,7 @@ async function openFileInDirViewer(filePath) {
     let images = [filePath];
     let startIdx = 0;
     try {
-        const res = await fetch('/api/dir/images?' + new URLSearchParams({ path: dirPath || '.' }));
+        const res = await fetch('/api/dir/images?' + new URLSearchParams({ path: dirPath || '.' }) + rootParam('&'));
         if (res.ok) {
             const data = await res.json();
             if (data.images && data.images.length > 0) {
@@ -2552,6 +2667,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Initial load: restore directory from sessionStorage if present (survives Cmd-R).
     const initialPath = sessionStorage.getItem('ft_path') || '';
+    const savedRoot = sessionStorage.getItem('ft_root');
+    await loadRoots();
+    // Restore root selection; for single-root loadRoots() already set currentRootId = 0.
+    if (state.roots.length > 1 && savedRoot !== '' && savedRoot != null) {
+        const id = parseInt(savedRoot, 10);
+        if (!isNaN(id) && id < state.roots.length) {
+            state.currentRootId = id;
+        }
+    }
     await Promise.all([loadInfo(), loadTags(), loadFiles(initialPath)]);
     render();
 
