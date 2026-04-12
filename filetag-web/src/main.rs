@@ -199,7 +199,8 @@ async fn preview_handler(
 
     match ext.as_str() {
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw"
-        | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" => {
+        | "raw" | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos"
+        | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             preview_raw(&abs).await
         }
         "heic" | "heif" => preview_heic(&abs).await,
@@ -330,10 +331,25 @@ async fn preview_raw(path: &Path) -> Response {
         }
     }
 
+    // ImageMagick 7 (magick) or 6 (convert): composite/layered formats
+    let path_layer = format!("{}[0]", path.display());
+    for cmd in &["magick", "convert"] {
+        if let Ok(out) = tokio::process::Command::new(cmd)
+            .arg(&path_layer)
+            .args(["-flatten", "-quality", "85", "jpg:-"])
+            .output()
+            .await
+        {
+            if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+                return ([(header::CONTENT_TYPE, "image/jpeg")], out.stdout).into_response();
+            }
+        }
+    }
+
     // Fallback: send a structured error so the frontend can show a message
     (
         StatusCode::UNPROCESSABLE_ENTITY,
-        "RAW preview unavailable — install dcraw, exiftool, or ffmpeg",
+        "RAW preview unavailable — install dcraw, exiftool, ffmpeg, or ImageMagick",
     )
         .into_response()
 }
