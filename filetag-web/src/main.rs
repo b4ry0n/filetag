@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -694,6 +695,39 @@ async fn thumb_handler(
         .to_lowercase();
 
     match ext.as_str() {
+        // ZIP/CBZ: thumbnail = first image page, resized
+        "zip" | "cbz" => {
+            if let Some(cache) = thumb_cache_path(&abs, &state.root) {
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                }
+                let result = tokio::task::spawn_blocking(move || {
+                    let pages = zip_image_entries(&abs)?;
+                    let first = pages.into_iter().next()
+                        .ok_or_else(|| anyhow::anyhow!("no images in ZIP"))?;
+                    let (data, _) = zip_read_entry(&abs, &first)?;
+                    Ok::<Vec<u8>, anyhow::Error>(data)
+                })
+                .await;
+                if let Ok(Ok(img_bytes)) = result {
+                    // Write to a temp file so image_thumb_jpeg can read it
+                    let tmp = cache.with_extension("zip_src.jpg");
+                    if tokio::fs::write(&tmp, &img_bytes).await.is_ok() {
+                        if let Some(small) = image_thumb_jpeg(&tmp).await {
+                            let _ = tokio::fs::remove_file(&tmp).await;
+                            let _ = tokio::fs::write(&cache, &small).await;
+                            return ([(header::CONTENT_TYPE, "image/jpeg")], small).into_response();
+                        }
+                        let _ = tokio::fs::remove_file(&tmp).await;
+                        // fallback: serve the raw first page unresized
+                        let _ = tokio::fs::write(&cache, &img_bytes).await;
+                        return ([(header::CONTENT_TYPE, "image/jpeg")], img_bytes).into_response();
+                    }
+                }
+            }
+            (StatusCode::UNPROCESSABLE_ENTITY, "No images in ZIP").into_response()
+        }
+
         // Video: 2×2 contact-sheet
         "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp"
         | "f4v" => video_thumb_strip(&abs, &state.root).await,
@@ -762,6 +796,130 @@ async fn thumb_handler(
 
         // Everything else: fall through to preview handler
         _ => preview_handler(AxumPath(rel_path), State(state)).await,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ZIP / CBZ comic viewer
+// ---------------------------------------------------------------------------
+
+/// Image extensions that count as comic pages inside a ZIP.
+const ZIP_IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "avif",
+];
+
+fn is_zip_image(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    ZIP_IMAGE_EXTS.contains(&ext.as_str())
+}
+
+/// Collect and sort image entry names from a ZIP file.
+fn zip_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
+    let file = std::fs::File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut names: Vec<String> = (0..archive.len())
+        .filter_map(|i| {
+            let entry = archive.by_index(i).ok()?;
+            let name = entry.name().to_owned();
+            if !entry.is_dir() && is_zip_image(&name) { Some(name) } else { None }
+        })
+        .collect();
+    names.sort_by(|a, b| natord(a, b));
+    Ok(names)
+}
+
+/// Minimal natural-order string comparison for consistent page sorting.
+fn natord(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+    loop {
+        match (ai.peek().copied(), bi.peek().copied()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, _)    => return std::cmp::Ordering::Less,
+            (_, None)    => return std::cmp::Ordering::Greater,
+            (Some(ac), Some(bc)) if ac.is_ascii_digit() && bc.is_ascii_digit() => {
+                let na: u64 = std::iter::from_fn(|| ai.next_if(|c| c.is_ascii_digit()))
+                    .collect::<String>().parse().unwrap_or(0);
+                let nb: u64 = std::iter::from_fn(|| bi.next_if(|c| c.is_ascii_digit()))
+                    .collect::<String>().parse().unwrap_or(0);
+                match na.cmp(&nb) {
+                    std::cmp::Ordering::Equal => {}
+                    ord => return ord,
+                }
+            }
+            (Some(ac), Some(bc)) => {
+                let al = ac.to_lowercase().next().unwrap();
+                let bl = bc.to_lowercase().next().unwrap();
+                if al != bl { return al.cmp(&bl); }
+                ai.next(); bi.next();
+            }
+        }
+    }
+}
+
+/// Extract raw bytes of a single image entry from a ZIP.
+fn zip_read_entry(zip_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
+    let file = std::fs::File::open(zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut entry = archive.by_name(entry_name)
+        .map_err(|_| anyhow::anyhow!("entry not found: {}", entry_name))?;
+    let ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+    let mime = mime_for_ext(&ext);
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf)?;
+    Ok((buf, mime))
+}
+
+// --- API: list pages ---
+
+#[derive(Deserialize)]
+struct ZipListParams { path: String }
+
+#[derive(Serialize)]
+struct ZipPagesResponse { pages: Vec<String>, count: usize }
+
+async fn api_zip_pages(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ZipListParams>,
+) -> Response {
+    let abs = match preview_safe_path(&state.root, &params.path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+    match tokio::task::spawn_blocking(move || zip_image_entries(&abs)).await {
+        Ok(Ok(pages)) => {
+            let count = pages.len();
+            (StatusCode::OK, Json(ZipPagesResponse { pages, count })).into_response()
+        }
+        _ => (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read ZIP").into_response(),
+    }
+}
+
+// --- API: serve single page from ZIP ---
+
+#[derive(Deserialize)]
+struct ZipPageParams { path: String, page: usize }
+
+async fn api_zip_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ZipPageParams>,
+) -> Response {
+    let abs = match preview_safe_path(&state.root, &params.path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+    let page_idx = params.page;
+    let result = tokio::task::spawn_blocking(move || {
+        let pages = zip_image_entries(&abs)?;
+        let name = pages.into_iter().nth(page_idx)
+            .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
+        zip_read_entry(&abs, &name)
+    })
+    .await;
+    match result {
+        Ok(Ok((data, mime))) => ([(header::CONTENT_TYPE, mime)], data).into_response(),
+        Ok(Err(e)) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
+        Err(_)     => (StatusCode::INTERNAL_SERVER_ERROR, "task error").into_response(),
     }
 }
 
@@ -1199,6 +1357,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/untag", post(api_untag))
         .route("/api/tag-color", post(api_tag_color))
         .route("/api/delete-tag", post(api_delete_tag))
+        .route("/api/zip/pages", get(api_zip_pages))
+        .route("/api/zip/page", get(api_zip_page))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .with_state(state);

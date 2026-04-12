@@ -12,6 +12,7 @@ const ICONS = {
     text:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>',
     markdown:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 15V9l3 3 3-3v6"/><line x1="16" y1="9" x2="16" y2="15"/><polyline points="13.5 15 16 15"/></svg>',
     raw:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="18" y1="0" x2="18" y2="6"/></svg>',
+    zip:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="10" y1="11" x2="14" y2="11"/></svg>',
     gotoDir:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4.5v7A1.5 1.5 0 002.5 13h11A1.5 1.5 0 0015 11.5V6a1.5 1.5 0 00-1.5-1.5H7L5.5 3H2.5A1.5 1.5 0 001 4.5z"/><polyline points="9 8 11 10 9 12"/><line x1="6" y1="10" x2="11" y2="10"/></svg>',
 };
 
@@ -25,6 +26,7 @@ const EXT_MAP = {
     video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v'],
     pdf:      ['pdf'],
     markdown: ['md','markdown'],
+    zip:      ['zip','cbz'],
     text:     ['txt','rst','csv','tsv','log','ini','cfg','conf',
                'json','yaml','yml','toml','xml','html','htm','css','js','ts',
                'jsx','tsx','py','rb','rs','go','java','c','cpp','h','hpp',
@@ -518,9 +520,11 @@ function renderGrid(items) {
             preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
                 class="card-thumb-strip" data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
+        } else if (type_ === 'zip') {
+            preview = `<img src="/thumb/${encodeURI(fullPath(entry))}" loading="lazy" alt=""
+                data-name="${esc(name)}" onerror="_cardThumbError(this)">` +
+                `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else {
-            preview = `<div class="card-icon">${fileIcon(name)}</div>`;
-        }
 
         const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : formatSize(entry.size);
 
@@ -537,7 +541,8 @@ function renderGrid(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
-            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="openLightbox('${esc(path)}','${fileType(name)}')">
+            const dblFn = fileType(name) === 'zip' ? `openComicViewer('${esc(path)}')` : `openLightbox('${esc(path)}','${fileType(name)}')`;
+            html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFn}">`;
                 ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
                 <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
             </div>`;
@@ -580,7 +585,8 @@ function renderList(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${esc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
-            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="openLightbox('${esc(path)}','${fileType(name)}')">
+            const dblFnL = fileType(name) === 'zip' ? `openComicViewer('${esc(path)}')` : `openLightbox('${esc(path)}','${fileType(name)}')`;
+            html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${esc(path)}', event)" ondblclick="${dblFnL}">`;
                 <span class="icon">${icon}</span>
                 <span class="name">${esc(name)}</span>
                 <span class="size">${size}</span>
@@ -752,6 +758,12 @@ function renderDetail() {
     } else if (type_ === 'text') {
         preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${esc(f.path)}','text')"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
+    } else if (type_ === 'zip') {
+        preview = `<div class="zip-cover-wrap">
+            <img src="/thumb/${encodeURI(f.path)}" alt="${esc(name)}" class="zip-cover"
+                 onerror="this.style.display='none'">
+            <button class="tag-action-btn" onclick="openComicViewer('${esc(f.path)}')">Open comic viewer</button>
+        </div>`;
     } else {
         preview = `<div class="no-preview">${fileIcon(name)}</div>`;
     }
@@ -1486,6 +1498,102 @@ function restoreScrollAnchor(anchor) {
         }
         content.scrollTop = anchor.ratio * content.scrollHeight;
     });
+}
+
+// ---------------------------------------------------------------------------
+// Comic viewer
+// ---------------------------------------------------------------------------
+
+const _cv = {
+    path: null,
+    pages: [],
+    current: 0,
+    spread: false,   // two-page spread mode
+    img1: null,
+    img2: null,
+};
+
+async function openComicViewer(path) {
+    const overlay = document.getElementById('comic-viewer');
+    overlay.hidden = false;
+
+    _cv.path = path;
+    _cv.current = 0;
+    _cv.pages = [];
+
+    document.getElementById('cv-status').textContent = 'Loading…';
+    document.getElementById('cv-pages').innerHTML = '';
+
+    const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }));
+    if (!res.ok) {
+        document.getElementById('cv-status').textContent = 'Cannot read ZIP';
+        return;
+    }
+    const data = await res.json();
+    _cv.pages = data.pages || [];
+    if (_cv.pages.length === 0) {
+        document.getElementById('cv-status').textContent = 'No images in ZIP';
+        return;
+    }
+    cvShowPage(0);
+    document.addEventListener('keydown', _cvKeyHandler);
+}
+
+function closeComicViewer() {
+    document.getElementById('comic-viewer').hidden = true;
+    document.removeEventListener('keydown', _cvKeyHandler);
+    _cv.path = null; _cv.pages = []; _cv.current = 0;
+    document.getElementById('cv-pages').innerHTML = '';
+}
+
+function cvShowPage(idx) {
+    if (!_cv.pages.length) return;
+    idx = Math.max(0, Math.min(idx, _cv.pages.length - 1));
+    _cv.current = idx;
+
+    const container = document.getElementById('cv-pages');
+    const url1 = `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx })}`;
+    const url2 = _cv.spread && idx + 1 < _cv.pages.length
+        ? `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx + 1 })}`
+        : null;
+
+    let html = `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
+    if (url2) html += `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">`;
+    container.innerHTML = html;
+
+    const total = _cv.spread
+        ? `${idx + 1}${url2 ? '–' + (idx + 2) : ''} / ${_cv.pages.length}`
+        : `${idx + 1} / ${_cv.pages.length}`;
+    document.getElementById('cv-status').textContent = total;
+}
+
+function cvNext() {
+    const step = _cv.spread ? 2 : 1;
+    if (_cv.current + step <= _cv.pages.length - 1) cvShowPage(_cv.current + step);
+}
+function cvPrev() {
+    const step = _cv.spread ? 2 : 1;
+    cvShowPage(_cv.current - step);
+}
+
+function cvToggleSpread() {
+    _cv.spread = !_cv.spread;
+    document.getElementById('cv-spread-btn').classList.toggle('active', _cv.spread);
+    cvShowPage(_cv.current);
+}
+
+function _cvKeyHandler(e) {
+    if (document.getElementById('comic-viewer').hidden) return;
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); cvNext(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); cvPrev(); }
+    else if (e.key === 'Escape') closeComicViewer();
+}
+
+function cvClickNav(e) {
+    // Click left third → prev, right third → next, middle → ignore
+    const x = e.clientX / window.innerWidth;
+    if (x < 0.3) cvPrev();
+    else if (x > 0.7) cvNext();
 }
 
 // ---------------------------------------------------------------------------
