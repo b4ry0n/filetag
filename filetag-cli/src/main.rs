@@ -1275,6 +1275,55 @@ fn cmd_completions(shell: Shell) -> Result<()> {
     Ok(())
 }
 
+/// Validate that `path` is a registered child database of `root`.
+/// Returns the child's relative path and its `.filetag/db.sqlite3` path.
+fn resolve_registered_child(
+    conn: &rusqlite::Connection,
+    root: &std::path::Path,
+    path: &PathBuf,
+) -> Result<(String, PathBuf)> {
+    let abs = std::fs::canonicalize(path)
+        .with_context(|| format!("resolving {}", path.display()))?;
+    let child_db_path = abs.join(".filetag").join("db.sqlite3");
+    if !child_db_path.is_file() {
+        anyhow::bail!(
+            "no filetag database found at {} (run 'filetag init' there first)",
+            abs.display()
+        );
+    }
+    let child_rel = abs
+        .strip_prefix(root)
+        .with_context(|| {
+            format!(
+                "{} is not under database root {}",
+                abs.display(),
+                root.display()
+            )
+        })?
+        .to_string_lossy()
+        .into_owned();
+    let children = db::list_children(conn)?;
+    if !children.contains(&child_rel) {
+        anyhow::bail!(
+            "'{}' is not a registered child (use 'filetag db add' first)",
+            child_rel
+        );
+    }
+    Ok((child_rel, child_db_path))
+}
+
+/// Open a child database connection with the standard PRAGMA settings.
+fn open_child_conn(db_path: &std::path::Path) -> Result<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(db_path)
+        .with_context(|| format!("opening child database {}", db_path.display()))?;
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA foreign_keys = ON;",
+    )?;
+    Ok(conn)
+}
+
 fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
     let (conn, root) = open_db(cli)?;
 
@@ -1362,35 +1411,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             );
         }
         DbAction::Push { path, dry_run } => {
-            let abs = std::fs::canonicalize(path)
-                .with_context(|| format!("resolving {}", path.display()))?;
-            let child_db_path = abs.join(".filetag").join("db.sqlite3");
-            if !child_db_path.is_file() {
-                anyhow::bail!(
-                    "no filetag database found at {} (run 'filetag init' there first)",
-                    abs.display()
-                );
-            }
-            let child_rel = abs
-                .strip_prefix(&root)
-                .with_context(|| {
-                    format!(
-                        "{} is not under database root {}",
-                        abs.display(),
-                        root.display()
-                    )
-                })?
-                .to_string_lossy()
-                .into_owned();
-
-            // Verify it's a registered child
-            let children = db::list_children(&conn)?;
-            if !children.contains(&child_rel) {
-                anyhow::bail!(
-                    "'{}' is not a registered child (use 'filetag db add' first)",
-                    child_rel
-                );
-            }
+            let (child_rel, child_db_path) = resolve_registered_child(&conn, &root, path)?;
 
             let files = db::files_under_prefix(&conn, &child_rel)?;
             if files.is_empty() {
@@ -1417,14 +1438,7 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                 return Ok(());
             }
 
-            // Open the child DB and transfer within transactions
-            let child_conn = rusqlite::Connection::open(&child_db_path)
-                .with_context(|| format!("opening child database {}", child_db_path.display()))?;
-            child_conn.execute_batch(
-                "PRAGMA journal_mode = WAL;
-                 PRAGMA synchronous = NORMAL;
-                 PRAGMA foreign_keys = ON;",
-            )?;
+            let child_conn = open_child_conn(&child_db_path)?;
 
             let parent_tx = conn.unchecked_transaction()?;
             let child_tx = child_conn.unchecked_transaction()?;
@@ -1476,42 +1490,8 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             );
         }
         DbAction::Pull { path, dry_run } => {
-            let abs = std::fs::canonicalize(path)
-                .with_context(|| format!("resolving {}", path.display()))?;
-            let child_db_path = abs.join(".filetag").join("db.sqlite3");
-            if !child_db_path.is_file() {
-                anyhow::bail!(
-                    "no filetag database found at {} (run 'filetag init' there first)",
-                    abs.display()
-                );
-            }
-            let child_rel = abs
-                .strip_prefix(&root)
-                .with_context(|| {
-                    format!(
-                        "{} is not under database root {}",
-                        abs.display(),
-                        root.display()
-                    )
-                })?
-                .to_string_lossy()
-                .into_owned();
-
-            let children = db::list_children(&conn)?;
-            if !children.contains(&child_rel) {
-                anyhow::bail!(
-                    "'{}' is not a registered child (use 'filetag db add' first)",
-                    child_rel
-                );
-            }
-
-            let child_conn = rusqlite::Connection::open(&child_db_path)
-                .with_context(|| format!("opening child database {}", child_db_path.display()))?;
-            child_conn.execute_batch(
-                "PRAGMA journal_mode = WAL;
-                 PRAGMA synchronous = NORMAL;
-                 PRAGMA foreign_keys = ON;",
-            )?;
+            let (child_rel, child_db_path) = resolve_registered_child(&conn, &root, path)?;
+            let child_conn = open_child_conn(&child_db_path)?;
 
             let files = db::all_files_with_tags(&child_conn)?;
             if files.is_empty() {
