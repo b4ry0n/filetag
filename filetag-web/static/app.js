@@ -1523,8 +1523,9 @@ const _cv = {
     current: 0,
     spread: false,   // two-page spread mode
     thumbs: false,   // thumbnail strip visible
-    img1: null,
-    img2: null,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
 };
 
 async function openComicViewer(path) {
@@ -1601,6 +1602,150 @@ function cvScrollThumbIntoView(idx) {
     if (cell) cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
+// ---------------------------------------------------------------------------
+// Comic viewer – zoom / pan
+// ---------------------------------------------------------------------------
+
+const _cvDrag = { active: false, moved: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 };
+let _cvPinchStart = null;  // { dist, zoom, midX, midY }
+
+function cvApplyTransform() {
+    const container = document.getElementById('cv-pages');
+    if (container) {
+        container.style.transform =
+            `translate(${_cv.panX}px, ${_cv.panY}px) scale(${_cv.zoom})`;
+    }
+    const stage = document.getElementById('cv-stage');
+    if (stage) stage.style.cursor = _cv.zoom > 1 ? 'grab' : '';
+    const btn = document.getElementById('cv-zoom-reset-btn');
+    if (btn) {
+        const pct = Math.round(_cv.zoom * 100);
+        btn.textContent = pct + '%';
+        btn.style.display = _cv.zoom === 1 ? 'none' : '';
+    }
+}
+
+function cvResetZoom() {
+    _cv.zoom = 1; _cv.panX = 0; _cv.panY = 0;
+    cvApplyTransform();
+}
+
+function cvClampPan() {
+    const stage = document.getElementById('cv-stage');
+    if (!stage) return;
+    // Allow panning up to ~80% of the scaled content half-size
+    const maxX = stage.clientWidth  * _cv.zoom * 0.6;
+    const maxY = stage.clientHeight * _cv.zoom * 0.6;
+    _cv.panX = Math.max(-maxX, Math.min(maxX, _cv.panX));
+    _cv.panY = Math.max(-maxY, Math.min(maxY, _cv.panY));
+}
+
+function cvZoomTo(newZoom, originX, originY) {
+    const clamped = Math.max(0.5, Math.min(10, newZoom));
+    const dz = clamped / _cv.zoom;
+    // zoom toward (originX, originY) relative to stage centre
+    _cv.panX = originX * (1 - dz) + _cv.panX * dz;
+    _cv.panY = originY * (1 - dz) + _cv.panY * dz;
+    _cv.zoom = clamped;
+    cvClampPan();
+    cvApplyTransform();
+}
+
+function cvZoomIn()  { cvZoomTo(_cv.zoom * 1.25, 0, 0); }
+function cvZoomOut() { cvZoomTo(_cv.zoom / 1.25, 0, 0); }
+
+function _cvInitStageEvents() {
+    const stage = document.getElementById('cv-stage');
+
+    // Wheel: zoom towards cursor
+    stage.addEventListener('wheel', e => {
+        if (document.getElementById('comic-viewer').hidden) return;
+        e.preventDefault();
+        const rect  = stage.getBoundingClientRect();
+        const ox = e.clientX - rect.left  - rect.width  / 2;
+        const oy = e.clientY - rect.top   - rect.height / 2;
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        cvZoomTo(_cv.zoom * factor, ox, oy);
+    }, { passive: false });
+
+    // Mousedown: start drag when zoomed
+    stage.addEventListener('mousedown', e => {
+        if (document.getElementById('comic-viewer').hidden) return;
+        _cvDrag.moved   = false;
+        _cvDrag.startX  = e.clientX;  _cvDrag.startY  = e.clientY;
+        _cvDrag.startPanX = _cv.panX; _cvDrag.startPanY = _cv.panY;
+        if (_cv.zoom > 1) {
+            _cvDrag.active = true;
+            stage.style.cursor = 'grabbing';
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener('mousemove', e => {
+        if (!_cvDrag.active) return;
+        const dx = e.clientX - _cvDrag.startX;
+        const dy = e.clientY - _cvDrag.startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) _cvDrag.moved = true;
+        _cv.panX = _cvDrag.startPanX + dx;
+        _cv.panY = _cvDrag.startPanY + dy;
+        cvClampPan();
+        cvApplyTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (_cvDrag.active) {
+            _cvDrag.active = false;
+            const stage2 = document.getElementById('cv-stage');
+            if (stage2) stage2.style.cursor = _cv.zoom > 1 ? 'grab' : '';
+        }
+    });
+
+    // Double-click: zoom to 2× at cursor, or reset if already zoomed
+    stage.addEventListener('dblclick', e => {
+        if (document.getElementById('comic-viewer').hidden) return;
+        e.preventDefault();
+        if (_cv.zoom > 1) {
+            cvResetZoom();
+        } else {
+            const rect = stage.getBoundingClientRect();
+            const ox = e.clientX - rect.left  - rect.width  / 2;
+            const oy = e.clientY - rect.top   - rect.height / 2;
+            cvZoomTo(2, ox, oy);
+        }
+    });
+
+    // Touch: pinch-to-zoom
+    stage.addEventListener('touchstart', e => {
+        if (e.touches.length === 2) {
+            const dx = e.touches[1].clientX - e.touches[0].clientX;
+            const dy = e.touches[1].clientY - e.touches[0].clientY;
+            const rect = stage.getBoundingClientRect();
+            _cvPinchStart = {
+                dist:  Math.hypot(dx, dy),
+                zoom:  _cv.zoom,
+                midX: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left  - rect.width  / 2,
+                midY: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top   - rect.height / 2,
+            };
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    stage.addEventListener('touchmove', e => {
+        if (_cvPinchStart && e.touches.length === 2) {
+            const dx   = e.touches[1].clientX - e.touches[0].clientX;
+            const dy   = e.touches[1].clientY - e.touches[0].clientY;
+            const dist = Math.hypot(dx, dy);
+            cvZoomTo(_cvPinchStart.zoom * (dist / _cvPinchStart.dist),
+                     _cvPinchStart.midX, _cvPinchStart.midY);
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    stage.addEventListener('touchend', e => {
+        if (e.touches.length < 2) _cvPinchStart = null;
+    });
+}
+
 const _cvExpandIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 const _cvCompressIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>';
 
@@ -1632,6 +1777,7 @@ function cvShowPage(idx) {
         ? `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: idx + 1 })}`
         : null;
 
+    cvResetZoom();
     let html = `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
     if (url2) html += `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">`;
     container.innerHTML = html;
@@ -1664,10 +1810,16 @@ function _cvKeyHandler(e) {
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); cvPrev(); }
     else if (e.key === 'f' || e.key === 'F') cvToggleFullscreen();
     else if (e.key === 't' || e.key === 'T') cvToggleThumbs();
-    else if (e.key === 'Escape') closeComicViewer();
+    else if (e.key === '+' || e.key === '=') cvZoomIn();
+    else if (e.key === '-') cvZoomOut();
+    else if (e.key === '0') cvResetZoom();
+    else if (e.key === 'Escape') {
+        if (_cv.zoom > 1) { cvResetZoom(); } else { closeComicViewer(); }
+    }
 }
 
 function cvClickNav(e) {
+    if (_cv.zoom > 1 || _cvDrag.moved) return;
     // Click left third → prev, right third → next, middle → ignore
     const x = e.clientX / window.innerWidth;
     if (x < 0.3) cvPrev();
@@ -1723,4 +1875,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const initialPath = sessionStorage.getItem('ft_path') || '';
     await Promise.all([loadInfo(), loadTags(), loadFiles(initialPath)]);
     render();
+
+    // Comic viewer stage events (wheel, drag, pinch)
+    _cvInitStageEvents();
 });
