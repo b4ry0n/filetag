@@ -38,6 +38,11 @@ struct Args {
 // State and error handling
 // ---------------------------------------------------------------------------
 
+/// Limit concurrent heavy thumbnail/extraction operations to prevent spawning
+/// too many ffmpeg/ffprobe/unrar processes at once when browsing directories
+/// with many large media files.
+static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
 struct DbRoot {
     name: String,
     db_path: PathBuf,
@@ -711,6 +716,10 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
+        // Acquire a concurrency permit so we don't spawn dozens of ffmpeg processes
+        // in parallel when browsing directories with many large video files.
+        let _permit = THUMB_LIMITER.acquire().await.ok();
+
         // Determine seek positions
         let dur = video_duration(path).await;
         let positions: [f64; 4] = match dur {
@@ -822,16 +831,8 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
-                let result = tokio::task::spawn_blocking(move || {
-                    let pages = archive_image_entries(&abs)?;
-                    let first = pages
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| anyhow::anyhow!("no images in archive"))?;
-                    let (data, _) = archive_read_entry(&abs, &first)?;
-                    Ok::<Vec<u8>, anyhow::Error>(data)
-                })
-                .await;
+                let _permit = THUMB_LIMITER.acquire().await.ok();
+                let result = tokio::task::spawn_blocking(move || archive_cover_image(&abs)).await;
                 if let Ok(Ok(img_bytes)) = result {
                     // Write to a temp file so image_thumb_jpeg can read it
                     let tmp = cache.with_extension("archive_src.jpg");
@@ -862,6 +863,7 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
+                let _permit = THUMB_LIMITER.acquire().await.ok();
                 // Convert to JPEG first, then resize
                 let full = preview_heic(&abs, &root).await;
                 // preview_heic returns a Response; we can't easily re-use its bytes here,
@@ -882,6 +884,7 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
+                let _permit = THUMB_LIMITER.acquire().await.ok();
                 // Get the full preview JPEG, then downscale it
                 if let Some(full_jpeg) = raw_extract_jpeg(&abs).await {
                     // Write full preview to a temp path, resize it
@@ -908,6 +911,7 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
+                let _permit = THUMB_LIMITER.acquire().await.ok();
                 if let Some(data) = pdf_thumb_jpeg(&abs, &root).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
@@ -924,6 +928,7 @@ async fn thumb_handler(
                 if let Ok(data) = tokio::fs::read(&cache).await {
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
+                let _permit = THUMB_LIMITER.acquire().await.ok();
                 if let Some(data) = image_thumb_jpeg(&abs).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
@@ -1168,8 +1173,103 @@ fn sevenz_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool
 // Archive format dispatcher (ZIP + RAR + 7z)
 // ---------------------------------------------------------------------------
 
-fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
+// ---------------------------------------------------------------------------
+// Cover image extraction (optimised for thumbnail use)
+// ---------------------------------------------------------------------------
+
+/// Extract the cover image bytes from an archive, optimised for speed.
+///
+/// - ZIP/CBZ: finds the natural-sort minimum image in one metadata-only pass,
+///   then decompresses only that entry.
+/// - RAR/CBR: processes entries sequentially and stops at the first image found
+///   (avoids a full listing pass before extraction).
+/// - 7z/CB7: reads metadata-only header to find natural-sort minimum, then
+///   decompresses only that entry.
+fn archive_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
     let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "zip" | "cbz" => zip_cover_image(path),
+        "rar" | "cbr" => rar_cover_image(path),
+        "7z" | "cb7" => sevenz_cover_image(path),
+        e => anyhow::bail!("unsupported archive format: {e}"),
+    }
+}
+
+fn zip_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    // One pass over central directory (header only, no decompression) to find
+    // the natural-sort minimum image name.
+    let mut best: Option<String> = None;
+    for i in 0..archive.len() {
+        let entry = archive.by_index_raw(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_owned();
+        if !is_zip_image(&name) {
+            continue;
+        }
+        if best
+            .as_ref()
+            .map(|b| natord(&name, b) == std::cmp::Ordering::Less)
+            .unwrap_or(true)
+        {
+            best = Some(name);
+        }
+    }
+    let first = best.ok_or_else(|| anyhow::anyhow!("no images in archive"))?;
+    let (data, _mime) = zip_read_entry(path, &first)?;
+    Ok(data)
+}
+
+fn rar_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
+    // Sequential processing: stop and extract the first image found.
+    // This avoids a separate listing pass followed by another extraction pass.
+    let mut archive = unrar::Archive::new(path).open_for_processing()?;
+    while let Some(header) = archive.read_header()? {
+        let name = header.entry().filename.to_string_lossy().replace('\\', "/");
+        let basename = name.rsplit('/').next().unwrap_or(&name);
+        if !basename.starts_with("._") && is_zip_image(&name) {
+            let (data, _rest) = header.read()?;
+            return Ok(data);
+        }
+        archive = header.skip()?;
+    }
+    anyhow::bail!("no images in archive")
+}
+
+fn sevenz_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
+    // The 7z header (metadata only, at end of file) lists all entries without
+    // decompressing data. Find the natural-sort minimum image, then extract it.
+    let sz = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())?;
+    let mut best: Option<String> = None;
+    for e in sz.archive().files.iter() {
+        if e.is_directory() || !e.has_stream() {
+            continue;
+        }
+        let name = e.name().replace('\\', "/");
+        if !is_zip_image(&name) {
+            continue;
+        }
+        if best
+            .as_ref()
+            .map(|b| natord(&name, b) == std::cmp::Ordering::Less)
+            .unwrap_or(true)
+        {
+            best = Some(name);
+        }
+    }
+    let first = best.ok_or_else(|| anyhow::anyhow!("no images in archive"))?;
+    let (data, _mime) = sevenz_read_entry(path, &first)?;
+    Ok(data)
+}
+
+fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {    let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
@@ -1412,6 +1512,8 @@ async fn api_zip_thumb(
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
+        let _permit = THUMB_LIMITER.acquire().await.ok();
+
         // Extract the page, write to temp, resize, cache, serve
         let result = tokio::task::spawn_blocking(move || {
             let pages = archive_image_entries(&abs)?;
@@ -1503,10 +1605,32 @@ async fn api_zip_entries(
             _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Cannot read archive").into_response(),
         };
 
-    // Query tag counts from DB (sync, on async thread — Connection is Send here)
+    // Query tag counts for all entries of this archive in a single SQL query
+    // rather than one query per entry.
     let conn = match open_conn(db_root) {
         Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let prefix_like = format!(
+        "{}::{}",
+        params.path.replace('%', "\\%").replace('_', "\\_"),
+        '%'
+    );
+    let tag_map: std::collections::HashMap<String, i64> = {
+        let mut stmt = match conn.prepare(
+            "SELECT f.path, COUNT(*) FROM file_tags ft \
+             JOIN files f ON f.id = ft.file_id \
+             WHERE f.path LIKE ?1 ESCAPE '\\' \
+             GROUP BY f.path",
+        ) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+        };
+        stmt.query_map(rusqlite::params![prefix_like], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
     };
 
     let mut image_counter = 0usize;
@@ -1518,14 +1642,7 @@ async fn api_zip_entries(
             i
         });
         let db_path = format!("{}::{}", params.path, name);
-        let tag_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM file_tags ft \
-             JOIN files f ON f.id = ft.file_id WHERE f.path = ?1",
-                rusqlite::params![&db_path],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
+        let tag_count = tag_map.get(&db_path).copied().unwrap_or(0);
         entries.push(ZipEntry {
             name,
             size,

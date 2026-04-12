@@ -540,7 +540,6 @@ function renderBreadcrumb() {
         if (state.currentRootId != null) {
             const root = state.roots[state.currentRootId];
             const rootName = root ? root.name : String(state.currentRootId);
-            html += `<span class="breadcrumb-sep">/</span>`;
             if (rootIsCurrent) {
                 html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename(${state.currentRootId}, this)">${esc(rootName)}</span>`;
             } else {
@@ -827,12 +826,20 @@ function parseZipEntryPath(path) {
 async function openZipDir(zipPath) {
     state.mode = 'zip';
     state.zipPath = zipPath;
+    state.zipEntries = [];
     state.selectedFile = null;
     state.selectedDir = null;
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
+    // Show a loading indicator immediately so the UI does not appear frozen
+    // while large archives are being scanned on the server.
+    renderBreadcrumb();
+    const el = document.getElementById('content');
+    el.className = '';
+    el.innerHTML = `<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Loading archive…</span></div>`;
+    document.getElementById('entry-count').textContent = '…';
     const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }) + rootParam('&'));
     state.zipEntries = data.entries || [];
     render();
