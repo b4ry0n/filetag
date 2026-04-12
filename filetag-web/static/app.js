@@ -789,6 +789,59 @@ async function _rootDrop(ev, targetId) {
 }
 
 // ---------------------------------------------------------------------------
+// Surgical DOM updates (avoid full re-render to preserve thumbnails)
+// ---------------------------------------------------------------------------
+
+// Toggle .selected class and checkmark on cards to match state.selectedPaths.
+function _updateCardSelection() {
+    const content = document.getElementById('content');
+    content.querySelectorAll('.card[data-path]').forEach(card => {
+        const p = card.dataset.path;
+        const want = state.selectedPaths.has(p);
+        const has = card.classList.contains('selected');
+        if (want === has) return;
+        card.classList.toggle('selected', want);
+        const existing = card.querySelector('.card-check');
+        if (want && !existing) {
+            const chk = document.createElement('span');
+            chk.className = 'card-check';
+            chk.innerHTML = '&#10003;';
+            card.prepend(chk);
+        } else if (!want && existing) {
+            existing.remove();
+        }
+    });
+    // Also handle folders:
+    content.querySelectorAll('.card.folder[data-path]').forEach(card => {
+        const p = card.dataset.path;
+        card.classList.toggle('selected', state.selectedDir && state.selectedDir.path === p);
+    });
+    // List rows
+    content.querySelectorAll('.list-row[data-path]').forEach(row => {
+        const p = row.dataset.path;
+        row.classList.toggle('selected', state.selectedPaths.has(p) ||
+            (state.selectedFile && state.selectedFile.path === p));
+    });
+}
+
+// Update tag-count badges on cards after tag add/remove (for list view).
+function _updateCardTagBadges() {
+    if (!state.selectedFile) return;
+    const path = state.selectedFile.path;
+    const count = state.selectedFile.tags.length;
+    // Update the entry in state.entries so we stay in sync.
+    const entry = (state.mode === 'search' ? state.searchResults : state.entries)
+        .find(e => (e.path || fullPath(e)) === path);
+    if (entry) entry.tag_count = count;
+    // Update list-view cell if visible.
+    const row = document.querySelector(`.list-row[data-path="${CSS.escape(path)}"]`);
+    if (row) {
+        const tagCell = row.querySelector('.tags-count');
+        if (tagCell) tagCell.textContent = `${count} tag${count === 1 ? '' : 's'}`;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Render: Content area
 // ---------------------------------------------------------------------------
 
@@ -870,6 +923,7 @@ function parseZipEntryPath(path) {
 }
 
 async function openZipDir(zipPath) {
+    _thumbClearCache();
     state.mode = 'zip';
     state.zipPath = zipPath;
     state.zipEntries = [];
@@ -896,6 +950,7 @@ async function refreshZipEntries() {
     const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }) + rootParam('&'));
     state.zipEntries = data.entries || [];
     renderContent();
+    _thumbInit();
 }
 
 function renderZipGrid(entries) {
@@ -981,14 +1036,15 @@ function _previewVideoError(video) {
 // Thumbnail queue: serial loader, visible-first via IntersectionObserver
 // ---------------------------------------------------------------------------
 // Cards render with <div class="card-thumb-pending" data-thumb-src="...">
-// instead of <img src="...">. _thumbInit() enqueues them after each render.
-// The IntersectionObserver promotes visible items to the front of the queue.
-// A single async worker processes one thumbnail at a time (matching the
-// server-side semaphore of 1). If the server returns 503, the item is
-// re-queued at the back after a short pause.
+// (or use a cached blob URL directly if available).
+// _thumbInit() enqueues pending placeholders after each render.
+// The IntersectionObserver promotes visible items to the front in
+// top-to-bottom order. A single async worker processes one thumbnail at a
+// time (matching the server-side semaphore of 1).
 
 const _thumbQueue = [];
 let _thumbBusy = false;
+const _thumbCache = new Map(); // thumb URL → blob URL
 
 const _thumbObserver = new IntersectionObserver((entries) => {
     // Collect all newly-visible elements from this batch.
@@ -1011,14 +1067,36 @@ const _thumbObserver = new IntersectionObserver((entries) => {
     _thumbRun();
 }, { rootMargin: '150px' });
 
+function _thumbFlush() {
+    // Remove orphaned (disconnected) entries and stop observing them.
+    for (let i = _thumbQueue.length - 1; i >= 0; i--) {
+        if (!_thumbQueue[i].isConnected) _thumbQueue.splice(i, 1);
+    }
+}
+
 function _thumbInit() {
-    // Enqueue all new pending placeholders found in the document.
+    _thumbFlush();
     document.querySelectorAll('.card-thumb-pending[data-thumb-src]').forEach(el => {
+        const src = el.dataset.thumbSrc;
+        // If we already have this thumbnail cached, replace immediately.
+        if (_thumbCache.has(src)) {
+            _thumbReplace(el, _thumbCache.get(src));
+            return;
+        }
         if (_thumbQueue.includes(el)) return;
         _thumbQueue.push(el);
         _thumbObserver.observe(el);
     });
     _thumbRun();
+}
+
+function _thumbReplace(el, blobUrl) {
+    const img = document.createElement('img');
+    img.src = blobUrl;
+    if (el.dataset.cls) img.className = el.dataset.cls;
+    img.alt = '';
+    img.dataset.name = el.dataset.name || '';
+    el.replaceWith(img);
 }
 
 async function _thumbRun() {
@@ -1029,35 +1107,35 @@ async function _thumbRun() {
         if (!el.isConnected) continue;
         const src = el.dataset.thumbSrc;
         if (!src) continue;
+        // Check cache (may have been filled by another element with the same URL).
+        if (_thumbCache.has(src)) {
+            _thumbReplace(el, _thumbCache.get(src));
+            continue;
+        }
         try {
             const resp = await fetch(src);
             if (!el.isConnected) continue;
             if (resp.ok) {
                 const blob = await resp.blob();
-                if (!el.isConnected) continue;
                 const url = URL.createObjectURL(blob);
-                const img = document.createElement('img');
-                img.src = url;
-                if (el.dataset.cls) img.className = el.dataset.cls;
-                img.alt = '';
-                img.dataset.name = el.dataset.name || '';
-                img.onload = () => URL.revokeObjectURL(url);
-                img.onerror = () => URL.revokeObjectURL(url);
-                if (el.isConnected) el.replaceWith(img);
+                _thumbCache.set(src, url);
+                if (el.isConnected) _thumbReplace(el, url);
             } else if (resp.status === 503) {
-                // Server busy: wait and re-queue at back.
-                await new Promise(r => setTimeout(r, 2000));
+                // Server busy: re-queue at back.
                 if (el.isConnected) {
                     _thumbQueue.push(el);
                     _thumbObserver.observe(el);
                 }
             }
-            // Other errors: leave as grey placeholder.
-        } catch (_) {
-            // Network error or abort: leave as grey placeholder.
-        }
+        } catch (_) { /* network error: leave placeholder */ }
     }
     _thumbBusy = false;
+}
+
+function _thumbClearCache() {
+    for (const url of _thumbCache.values()) URL.revokeObjectURL(url);
+    _thumbCache.clear();
+    _thumbQueue.length = 0;
 }
 
 // _cardThumbError is still used by detail-panel preview images (not thumb queue).
@@ -1324,6 +1402,7 @@ async function doBulkRemoveTagChip(tagStr) {
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
     renderTags();
     renderContent();
+    _thumbInit();
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,6 +1434,7 @@ function render() {
 // ---------------------------------------------------------------------------
 
 async function navigateTo(path) {
+    _thumbClearCache();
     state.selectedFile = null;
     state.selectedDir = null;
     state.selectedPaths.clear();
@@ -1368,6 +1448,7 @@ async function navigateTo(path) {
 
 // Enter a specific root database (from the virtual root listing).
 async function enterRoot(id) {
+    _thumbClearCache();
     state.currentRootId = id;
     state.selectedFile = null;
     state.selectedDir = null;
@@ -1382,6 +1463,7 @@ async function enterRoot(id) {
 
 // Navigate back to the virtual root (show all roots).
 async function goVirtualRoot() {
+    _thumbClearCache();
     state.currentRootId = null;
     state.currentPath = '';
     state.selectedFile = null;
@@ -1399,6 +1481,7 @@ async function goVirtualRoot() {
 
 
 async function doSearch() {
+    _thumbClearCache();
     const input = document.getElementById('search-input');
     const query = input.value.trim();
     if (!query) return;
@@ -1409,6 +1492,7 @@ async function doSearch() {
 }
 
 function doClearSearch() {
+    _thumbClearCache();
     state.activeTags.clear();
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
@@ -1449,6 +1533,7 @@ async function toggleTagFilter(tagName) {
         await navigateTo(state.currentPath || '');
         return;
     }
+    _thumbClearCache();
     const q = [...state.activeTags].map(quoteTag).join(' and ');
     document.getElementById('search-input').value = q;
     await searchFiles(q);
@@ -1529,7 +1614,8 @@ async function selectFile(path, event) {
         layout.classList.remove('detail-collapsed');
         document.getElementById('detail-toggle').classList.add('active');
     }
-    render();
+    _updateCardSelection();
+    renderDetail();
     restoreScrollAnchor(anchor);
 }
 
@@ -1541,7 +1627,7 @@ async function doAddTag() {
     await addTagToFile(state.selectedFile.path, tagStr);
     input.value = '';
     renderTags();
-    renderContent();
+    _updateCardTagBadges();
     renderDetailTagsOnly();
     input.focus();
 }
@@ -1549,7 +1635,7 @@ async function doAddTag() {
 async function doRemoveTag(path, tagStr) {
     await removeTagFromFile(path, tagStr);
     renderTags();
-    renderContent();
+    _updateCardTagBadges();
     renderDetailTagsOnly();
 }
 
@@ -1797,7 +1883,8 @@ function clearSelection() {
     state.selectedDir = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
-    render();
+    _updateCardSelection();
+    renderDetail();
 }
 
 async function doBulkAddTag() {
@@ -1819,6 +1906,7 @@ async function doBulkAddTag() {
     status.textContent = `Added "${tagStr}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
     renderTags();
     renderContent();
+    _thumbInit();
     const el = document.getElementById('bulk-tag-chips');
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
     else renderDetail(); // chips container not in DOM yet (first tag added)
@@ -1831,6 +1919,7 @@ async function toggleShowHidden() {
     if (state.mode === 'browse') {
         await loadFiles(state.currentPath);
         renderContent();
+        _thumbInit();
     }
 }
 
@@ -1884,6 +1973,7 @@ function setViewMode(mode) {
     document.getElementById('view-list').classList.toggle('active', mode === 'list');
     document.getElementById('zoom-slider').style.display = mode === 'grid' ? '' : 'none';
     renderContent();
+    _thumbInit();
 }
 
 function toggleDetailPanel() {
@@ -1911,6 +2001,7 @@ function toggleTagGroup(prefix) {
 
 async function doTagGroupSearch(prefix) {
     // Expand group on click and clear any active tag filters
+    _thumbClearCache();
     state.activeTags.clear();
     state.expandedGroups.add(prefix);
     const hasRoot = state.tags.some(t => t.name === prefix);
@@ -1926,10 +2017,13 @@ function closeDetail() {
     const anchor = saveScrollAnchor(activePath);
     state.selectedFile = null;
     state.selectedDir = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
     state.detailOpen = false;
     document.querySelector('.layout').classList.add('detail-collapsed');
     document.getElementById('detail-toggle').classList.remove('active');
-    render();
+    _updateCardSelection();
+    renderDetail();
     restoreScrollAnchor(anchor);
 }
 
