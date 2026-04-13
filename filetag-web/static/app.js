@@ -23,7 +23,7 @@ const ICONS = {
 const EXT_MAP = {
     image:    ['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','avif'],
     audio:    ['mp3','flac','wav','ogg','opus','aac','m4a','wma','aiff','alac'],
-    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v'],
+    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg'],
     pdf:      ['pdf'],
     markdown: ['md','markdown'],
     zip:      ['zip','cbz','rar','cbr','7z','cb7'],
