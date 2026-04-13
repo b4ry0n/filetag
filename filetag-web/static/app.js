@@ -276,11 +276,15 @@ function selectDir(path, name, fileCount) {
     const anchor = saveScrollAnchor(path);
     state.selectedDir = { path, name, file_count: fileCount };
     state.selectedFile = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    _lastClickedPath = null;
     if (!state.detailOpen) {
         state.detailOpen = true;
         document.querySelector('.layout').classList.remove('detail-collapsed');
         document.getElementById('detail-toggle').classList.add('active');
     }
+    _updateCardSelection();
     renderDetail();
     restoreScrollAnchor(anchor);
 }
@@ -558,7 +562,11 @@ function renderBreadcrumb() {
             accumulated += (i === 0 ? '' : '/') + parts[i];
             const isCurrent = i === parts.length - 1 && state.mode !== 'zip';
             const path = accumulated;
-            html += `<span class="breadcrumb-sep">/</span>`;
+            // In single-root mode the root button is already "/", so skip the
+            // separator before the very first path component to avoid "/ / Foo".
+            if (i > 0 || isMultiRoot) {
+                html += `<span class="breadcrumb-sep">/</span>`;
+            }
             html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${jesc(path)}')">${esc(parts[i])}</button>`;
         }
     }
