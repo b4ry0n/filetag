@@ -2491,12 +2491,7 @@ function cvApplyScrollZoom(newSize, event) {
     const btn   = document.getElementById('cv-zoom-reset-btn');
     if (_cv.scrollDir === 'h') {
         if (newSize !== undefined) {
-            // Cap the height at the actual stage height (images should not overflow
-            // the stage vertically in horizontal scroll mode).
-            const maxVh = (stage && stage.clientHeight > 0 && window.innerHeight > 0)
-                ? (stage.clientHeight / window.innerHeight) * 100
-                : 200;
-            _cv.scrollHeight = Math.max(20, Math.min(maxVh, newSize));
+            _cv.scrollHeight = Math.max(20, Math.min(300, newSize));
         }
         if (stage) {
             // Always anchor: use cursor position when available, stage centre otherwise.

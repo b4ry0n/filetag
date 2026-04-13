@@ -1429,6 +1429,15 @@ h3, h4 { font-weight: 600; }
     backdrop-filter: blur(4px);
 }
 
+/* Divider between toolbar button groups */
+.cv-sep {
+    width: 1px;
+    height: 22px;
+    background: rgba(255,255,255,0.15);
+    margin: 0 6px;
+    flex-shrink: 0;
+}
+
 .cv-status {
     flex: 1;
     text-align: center;
@@ -1497,7 +1506,7 @@ h3, h4 { font-weight: 600; }
 /* Horizontal scroll mode */
 .cv-stage.cv-hscroll-mode {
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: auto;
     justify-content: flex-start;
     cursor: default;
     scroll-behavior: smooth;
