@@ -517,7 +517,14 @@ pub struct OpenDb {
 /// Linked paths may be relative (child, under current root) or absolute
 /// (partner/parent, outside current root). `PathBuf::join` handles both:
 /// joining with an absolute path replaces the base entirely.
-pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<OpenDb>> {
+/// Collect this database and all reachable linked databases recursively.
+/// When `include_ancestors` is `false`, automatic ancestor-database discovery
+/// is skipped and only explicit links are followed.
+pub fn collect_all_databases(
+    conn: Connection,
+    root: PathBuf,
+    include_ancestors: bool,
+) -> Result<Vec<OpenDb>> {
     use std::collections::HashSet;
 
     let mut result = Vec::new();
@@ -560,16 +567,18 @@ pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<Open
         // sub-tree that has its own database (e.g. ~/Documents), parent
         // databases (e.g. ~/) are implicitly relevant even if they are not
         // explicitly registered as a linked database.
-        let mut ancestor = r.parent();
-        while let Some(dir) = ancestor {
-            let ancestor_db_path = dir.join(DB_DIR).join(DB_FILE);
-            if ancestor_db_path.is_file()
-                && let Ok(ancestor_conn) = open_at(&ancestor_db_path)
-                && migrate(&ancestor_conn).is_ok()
-            {
-                queue.push((ancestor_conn, dir.to_path_buf()));
+        if include_ancestors {
+            let mut ancestor = r.parent();
+            while let Some(dir) = ancestor {
+                let ancestor_db_path = dir.join(DB_DIR).join(DB_FILE);
+                if ancestor_db_path.is_file()
+                    && let Ok(ancestor_conn) = open_at(&ancestor_db_path)
+                    && migrate(&ancestor_conn).is_ok()
+                {
+                    queue.push((ancestor_conn, dir.to_path_buf()));
+                }
+                ancestor = dir.parent();
             }
-            ancestor = dir.parent();
         }
 
         result.push(OpenDb { conn: c, root: r });
