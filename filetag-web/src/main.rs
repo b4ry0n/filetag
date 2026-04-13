@@ -2394,10 +2394,15 @@ async fn main() -> anyhow::Result<()> {
             let path_str = dir.display().to_string();
             let display = if path_str.len() > budget {
                 // Keep the tail of the path so the deepest component is visible.
-                format!(
-                    "…{}",
-                    &path_str[path_str.len() - budget.saturating_sub(1)..]
-                )
+                // Find a valid UTF-8 boundary at or after the target byte offset.
+                let tail_bytes = budget.saturating_sub(1);
+                let start = path_str.len().saturating_sub(tail_bytes);
+                let start = path_str
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .find(|&i| i >= start)
+                    .unwrap_or(path_str.len());
+                format!("…{}", &path_str[start..])
             } else {
                 path_str
             };
