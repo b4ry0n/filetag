@@ -707,14 +707,17 @@ h3, h4 { font-weight: 600; }
 .card-filmstrip-badge svg { width: 10px; height: 10px; }
 
 .card-icon {
-    font-size: 36px;
+    font-size: calc(var(--card-size, 140px) * 0.26);
     color: var(--text-tertiary);
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-.card-icon svg { width: 40px; height: 40px; }
+.card-icon svg {
+    width: calc(var(--card-size, 140px) * 0.29);
+    height: calc(var(--card-size, 140px) * 0.29);
+}
 
 .card-body {
     padding: 4px 6px 8px;
@@ -722,7 +725,7 @@ h3, h4 { font-weight: 600; }
 }
 
 .card-name {
-    font-size: 12px;
+    font-size: clamp(10px, calc(var(--card-size, 140px) * 0.086), 16px);
     font-weight: 400;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -734,7 +737,7 @@ h3, h4 { font-weight: 600; }
 }
 
 .card-meta {
-    font-size: 10px;
+    font-size: clamp(9px, calc(var(--card-size, 140px) * 0.072), 13px);
     color: var(--text-tertiary);
     margin-top: 2px;
 }
