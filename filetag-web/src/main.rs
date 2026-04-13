@@ -85,9 +85,10 @@ fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&DbRoot> {
 fn file_is_covered(state: &AppState, meta: &std::fs::Metadata, abs_path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     let file_dev = meta.dev();
-    state.roots.iter().any(|root| {
-        root.dev.map_or(true, |d| d == file_dev) && abs_path.starts_with(&root.root)
-    })
+    state
+        .roots
+        .iter()
+        .any(|root| root.dev.is_none_or(|d| d == file_dev) && abs_path.starts_with(&root.root))
 }
 
 #[cfg(not(unix))]
@@ -2393,7 +2394,10 @@ async fn main() -> anyhow::Result<()> {
             let path_str = dir.display().to_string();
             let display = if path_str.len() > budget {
                 // Keep the tail of the path so the deepest component is visible.
-                format!("…{}", &path_str[path_str.len() - budget.saturating_sub(1)..])
+                format!(
+                    "…{}",
+                    &path_str[path_str.len() - budget.saturating_sub(1)..]
+                )
             } else {
                 path_str
             };
@@ -2464,9 +2468,9 @@ async fn main() -> anyhow::Result<()> {
         roots
             .into_iter()
             .map(|mut r| {
-                let has_ancestor = paths.iter().any(|other| {
-                    other != &r.root && r.root.starts_with(other)
-                });
+                let has_ancestor = paths
+                    .iter()
+                    .any(|other| other != &r.root && r.root.starts_with(other));
                 r.entry_point = !has_ancestor;
                 r
             })
