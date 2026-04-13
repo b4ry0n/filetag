@@ -44,6 +44,7 @@ filetag tag -r ./Music -t collection/main
 # Pipe file paths from other tools
 fd -e flac | filetag tag -t lossless
 find . -name '*.jpg' -print0 | filetag tag -0 -t photo
+find . -name '*.mp3' -print0 | filetag untag -0 -t genre
 
 # List all tags
 filetag tags
@@ -58,7 +59,7 @@ filetag show photo.jpg
 filetag find genre/rock
 filetag find 'genre/rock and year>=2020'
 filetag find 'genre/* and not live' --with-tags
-filetag find vacation --count
+filetag find vacation --count        # or: -c
 filetag find vacation -0 | xargs -0 ls -l
 
 # JSON output
@@ -66,22 +67,25 @@ filetag find 'genre/rock' --json
 filetag tags --json
 filetag info --json
 
-# Generate a symlink view
+# Generate a symlink view (Unix only)
 filetag view genre/rock -o ~/Views/rock
 
 # Check for missing/modified/untagged files
 filetag status
+filetag status ./Music       # Limit to a subdirectory
 
 # Find moved files by file identity or name+size
 filetag repair
-filetag repair --dry-run
+filetag repair ./Music       # Limit to a subdirectory
+filetag repair -n            # Dry run (alias: --dry-run)
 
 # Rename a tag
 filetag mv old-tag new-tag
 
-# Merge a tag into another
+# Merge a tag into another (destructive: removes source tag)
 filetag merge old-tag target-tag
-filetag merge --dry-run old-tag target-tag
+filetag merge -n old-tag target-tag   # Dry run (alias: --dry-run)
+filetag merge -f old-tag target-tag   # Skip confirmation prompt (alias: --force)
 
 # Child database management
 filetag db add ./Music                # Register a child database
@@ -92,8 +96,8 @@ filetag db pull ./Music               # Transfer tags back to parent DB
 filetag db prune                      # Remove dead registrations
 
 # Cross-database queries
-filetag tags --all                    # Tags from all child databases
-filetag find genre/rock --all         # Search across all databases
+filetag tags --all                    # Tags from all child databases (or: -a)
+filetag find genre/rock --all         # Search across all databases (or: -a)
 
 # Global database registry
 filetag db register                   # Add current DB to global registry
