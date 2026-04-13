@@ -2821,16 +2821,39 @@ function cvShowPage(idx) {
         : null;
 
     cvResetZoom();
-    // RTL spread: right page (current) first, then left page (next) to its left
-    let html;
-    if (_cv.rtl && url2) {
-        html = `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">` +
-               `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
-    } else {
-        html = `<img class="cv-page" src="${url1}" alt="page ${idx + 1}">`;
-        if (url2) html += `<img class="cv-page" src="${url2}" alt="page ${idx + 2}">`;
+
+    // Build Image elements and wait for decode before swapping into the DOM,
+    // so the browser has the bitmap ready and the switch is instantaneous.
+    const img1 = new Image();
+    img1.className = 'cv-page';
+    img1.alt = `page ${idx + 1}`;
+    img1.src = url1;
+
+    const img2 = url2 ? new Image() : null;
+    if (img2) {
+        img2.className = 'cv-page';
+        img2.alt = `page ${idx + 2}`;
+        img2.src = url2;
     }
-    container.innerHTML = html;
+
+    // decode() resolves when the image is fully decoded (or immediately if
+    // already cached). Fall back silently if the API isn't available.
+    const decodes = [img1.decode ? img1.decode().catch(() => {}) : Promise.resolve()];
+    if (img2) decodes.push(img2.decode ? img2.decode().catch(() => {}) : Promise.resolve());
+
+    Promise.all(decodes).then(() => {
+        // Only update the DOM if the viewer hasn't moved on to another page
+        // while we were decoding (rapid navigation).
+        if (_cv.current !== idx) return;
+        container.innerHTML = '';
+        if (_cv.rtl && img2) {
+            container.appendChild(img2);
+            container.appendChild(img1);
+        } else {
+            container.appendChild(img1);
+            if (img2) container.appendChild(img2);
+        }
+    });
 
     const total = _cv.spread
         ? `${idx + 1}${url2 ? '–' + (idx + 2) : ''} / ${_cv.pages.length}`
