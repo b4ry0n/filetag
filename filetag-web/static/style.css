@@ -595,6 +595,7 @@ h3, h4 { font-weight: 600; }
 
 .card {
     width: var(--card-size, 140px);
+    height: var(--card-size, 140px);
     background: var(--bg-surface);
     border: 1px solid transparent;
     border-radius: var(--radius);
@@ -654,7 +655,8 @@ h3, h4 { font-weight: 600; }
 }
 
 .card-preview {
-    height: calc(var(--card-size, 140px) * 0.65);
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -682,9 +684,6 @@ h3, h4 { font-weight: 600; }
 }
 
 /* Filmstrip overlay on video cards */
-.card-preview {
-    position: relative;
-}
 .card:not(.folder) .card-preview img.card-thumb-strip::after {
     content: '';
 }
@@ -720,8 +719,14 @@ h3, h4 { font-weight: 600; }
 }
 
 .card-body {
-    padding: 4px 6px 8px;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 5px 6px 5px;
     text-align: center;
+    background: linear-gradient(to bottom, transparent 0px, rgba(30,30,40,0.55) 5px);
+    z-index: 1;
 }
 
 .card-name {
@@ -734,12 +739,37 @@ h3, h4 { font-weight: 600; }
     -webkit-box-orient: vertical;
     word-break: break-word;
     line-height: 1.3;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
 }
 
 .card-meta {
     font-size: clamp(9px, calc(var(--card-size, 140px) * 0.072), 13px);
-    color: var(--text-tertiary);
+    color: rgba(255,255,255,0.75);
     margin-top: 2px;
+}
+
+/* Icon-only cards (folders, unsupported file types): revert to stacked layout */
+.card:has(.card-icon) {
+    height: auto;
+}
+.card:has(.card-icon) .card-preview {
+    position: relative;
+    inset: unset;
+    height: calc(var(--card-size, 140px) * 0.65);
+    background: var(--bg);
+}
+.card:has(.card-icon) .card-body {
+    position: static;
+    background: transparent;
+    padding: 4px 6px 8px;
+}
+.card:has(.card-icon) .card-name {
+    color: var(--text);
+    text-shadow: none;
+}
+.card:has(.card-icon) .card-meta {
+    color: var(--text-tertiary);
 }
 
 /* Folder cards */
