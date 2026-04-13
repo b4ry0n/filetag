@@ -1521,7 +1521,8 @@ h3, h4 { font-weight: 600; }
     height: var(--cv-scroll-height, 90vh);
     width: auto;
     max-width: none;
-    max-height: none;
+    /* Cap at the stage height so images can't overflow vertically */
+    max-height: 100%;
     flex-shrink: 0;
     display: block;
     margin: 0;
@@ -1614,6 +1615,16 @@ h3, h4 { font-weight: 600; }
 #comic-viewer:-webkit-full-screen .cv-page { max-height: calc(100vh - 54px); }
 #comic-viewer:fullscreen .cv-thumbs { max-height: calc(100vh - 54px); }
 #comic-viewer:-webkit-full-screen .cv-thumbs { max-height: calc(100vh - 54px); }
+/* Scroll modes must not be capped by the single-page fullscreen max-height */
+#comic-viewer:fullscreen .cv-stage.cv-scroll-mode .cv-page,
+#comic-viewer:-webkit-full-screen .cv-stage.cv-scroll-mode .cv-page {
+    max-height: none;
+}
+#comic-viewer:fullscreen .cv-stage.cv-hscroll-mode .cv-page,
+#comic-viewer:-webkit-full-screen .cv-stage.cv-hscroll-mode .cv-page {
+    /* Cap at stage height (not viewport minus toolbar) */
+    max-height: 100%;
+}
 
 /* Zip cover in detail panel */
 .zip-cover-wrap {
