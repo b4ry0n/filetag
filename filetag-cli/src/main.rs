@@ -107,9 +107,9 @@ enum Command {
         /// Show tags for specific files (omit for all tags)
         files: Vec<PathBuf>,
 
-        /// Include tags from linked databases
+        /// Only query this database (no linked children, no ancestor databases)
         #[arg(short, long)]
-        all: bool,
+        isolated: bool,
 
         /// Search across all registered databases (global registry)
         #[arg(long)]
@@ -141,9 +141,9 @@ enum Command {
         #[arg(short = '0', long)]
         null: bool,
 
-        /// Search across all linked databases
+        /// Only query this database (no linked children, no ancestor databases)
         #[arg(short, long)]
-        all: bool,
+        isolated: bool,
 
         /// Search across all registered databases (global registry)
         #[arg(long)]
@@ -328,16 +328,16 @@ fn main() -> Result<()> {
         Command::Untag { files, tags, null } => cmd_untag(&cli, files.clone(), tags.clone(), *null),
         Command::Tags {
             files,
-            all,
+            isolated,
             all_dbs,
-        } => cmd_tags(&cli, files.clone(), *all, *all_dbs),
+        } => cmd_tags(&cli, files.clone(), *isolated, *all_dbs),
         Command::Show { file } => cmd_show(&cli, file.clone()),
         Command::Find {
             query,
             with_tags,
             count,
             null,
-            all,
+            isolated,
             all_dbs,
         } => cmd_find(
             &cli,
@@ -345,7 +345,7 @@ fn main() -> Result<()> {
             *with_tags,
             *count,
             *null,
-            *all,
+            *isolated,
             *all_dbs,
         ),
         #[cfg(unix)]
@@ -605,11 +605,11 @@ fn cmd_untag(cli: &Cli, files: Vec<PathBuf>, tags: Vec<String>, null: bool) -> R
     Ok(())
 }
 
-fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<()> {
+fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, isolated: bool, all_dbs: bool) -> Result<()> {
     let (conn, root) = open_db(cli)?;
 
     if files.is_empty() {
-        // Collect tags (optionally from all linked databases)
+        // Collect tags from databases
         let mut merged_tags: std::collections::HashMap<String, i64> =
             std::collections::HashMap::new();
 
@@ -626,7 +626,13 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<
                     }
                 }
             }
-        } else if all {
+        } else if isolated {
+            // Isolated: only the current database, no linked children, no ancestors.
+            let tags = db::all_tags(&conn)?;
+            for (name, count, _color) in tags {
+                merged_tags.insert(name, count);
+            }
+        } else {
             let databases = db::collect_all_databases(conn, root, !cli.no_parents)?;
             for db in &databases {
                 if let Ok(tags) = db::all_tags(&db.conn) {
@@ -634,11 +640,6 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<
                         *merged_tags.entry(name).or_insert(0) += count;
                     }
                 }
-            }
-        } else {
-            let tags = db::all_tags(&conn)?;
-            for (name, count, _color) in tags {
-                merged_tags.insert(name, count);
             }
         }
 
@@ -749,7 +750,7 @@ fn cmd_find(
     with_tags: bool,
     count: bool,
     null: bool,
-    all: bool,
+    isolated: bool,
     all_dbs: bool,
 ) -> Result<()> {
     let (conn, root) = open_db(cli)?;
@@ -772,7 +773,10 @@ fn cmd_find(
                 collector.add(&c, &r, &cwd, &expr, with_tags || cli.json)?;
             }
         }
-    } else if all {
+    } else if isolated {
+        // Isolated: only the current database, no linked children, no ancestors.
+        collector.add(&conn, &root, &cwd, &expr, with_tags || cli.json)?;
+    } else {
         let databases = db::collect_all_databases(conn, root, !cli.no_parents)?;
         for database in &databases {
             collector.add(
@@ -783,8 +787,6 @@ fn cmd_find(
                 with_tags || cli.json,
             )?;
         }
-    } else {
-        collector.add(&conn, &root, &cwd, &expr, with_tags || cli.json)?;
     }
 
     if count {

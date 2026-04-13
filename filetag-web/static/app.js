@@ -218,9 +218,10 @@ function rootParam(sep) {
 
 async function loadRoots() {
     state.roots = await api('/api/roots');
-    // Single database: enter it automatically so the UI is transparent.
-    if (state.roots.length === 1) {
-        state.currentRootId = 0;
+    // Single entry-point: enter it automatically so the UI is transparent.
+    const entryPoints = state.roots.filter(r => r.entry_point);
+    if (entryPoints.length === 1) {
+        state.currentRootId = entryPoints[0].id;
     }
 }
 
@@ -530,7 +531,7 @@ function renderBreadcrumb() {
         return;
     }
 
-    const isMultiRoot = state.roots.length > 1;
+    const isMultiRoot = state.roots.filter(r => r.entry_point).length > 1;
     const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip' && state.currentRootId != null;
 
     // "/" button: goes to virtual root in multi-root mode, or to '' in single-root mode.
@@ -660,15 +661,17 @@ function renderGrid(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
+            const uncoveredBadge = entry.covered === false ? '<span class="card-uncovered" title="No filetag database on this filesystem">&#128274;</span>' : '';
+            const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
-                    ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
+                    ${checkmark}${gotoDirBtn}${uncoveredBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
                 const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="card${multiSel}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
-                    ${checkmark}${gotoDirBtn}<div class="card-preview">${preview}</div>
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
+                    ${checkmark}${gotoDirBtn}${uncoveredBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             }
@@ -721,19 +724,21 @@ function renderList(items) {
             const gotoDirBtn = state.mode === 'search'
                 ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
+            const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
+            const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             if (fileType(name) === 'zip') {
-                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
-                    <span class="name">${esc(name)}</span>
+                    <span class="name">${esc(name)}${uncoveredBadge}</span>
                     <span class="size">${size}</span>
                     <span class="date">${date}</span>
                     <span class="tags-count">${tags}${gotoDirBtn}</span>
                 </div>`;
             } else {
                 const dblFnL = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="list-row${multiSel}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
-                    <span class="name">${esc(name)}</span>
+                    <span class="name">${esc(name)}${uncoveredBadge}</span>
                     <span class="size">${size}</span>
                     <span class="date">${date}</span>
                     <span class="tags-count">${tags}${gotoDirBtn}</span>
@@ -1053,10 +1058,14 @@ const _thumbObserver = new IntersectionObserver((entries) => {
         if (!e.isIntersecting) continue;
         const el = e.target;
         _thumbObserver.unobserve(el);
-        // Remove from wherever it sits in the queue (if present).
         const i = _thumbQueue.indexOf(el);
-        if (i > 0) _thumbQueue.splice(i, 1);
-        if (i !== 0) newly.push(el);
+        // i === -1 means the element was already shifted by _thumbRun and is
+        // currently being fetched — don't re-queue it.
+        if (i === -1) continue;
+        // Remove from wherever it sits (including index 0) so we can re-insert
+        // in proper sorted order below.
+        _thumbQueue.splice(i, 1);
+        newly.push(el);
     }
     if (newly.length > 0) {
         // Sort by vertical position so top-most cards are processed first
@@ -1276,13 +1285,10 @@ function renderDetail() {
         <div class="detail-tags-section">
             <h4>Tags</h4>
             <div class="detail-tags">${tagChips}</div>
-            <div class="tag-add-form">
-                <input type="text" id="tag-input" placeholder="Add tag (e.g. genre/rock)">
-                <button onclick="doAddTag()">Add</button>
-            </div>
+            ${tagAddSection}
         </div>`;
 
-    attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
+    if (covered) attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
 
     // Async-fetch text/markdown content after DOM is set
     if (type_ === 'text') {
@@ -2901,7 +2907,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const savedRoot = sessionStorage.getItem('ft_root');
     await loadRoots();
     // Restore root selection; for single-root loadRoots() already set currentRootId = 0.
-    if (state.roots.length > 1 && savedRoot !== '' && savedRoot != null) {
+    if (state.roots.filter(r => r.entry_point).length > 1 && savedRoot !== '' && savedRoot != null) {
         const id = parseInt(savedRoot, 10);
         if (!isNaN(id) && id < state.roots.length) {
             state.currentRootId = id;

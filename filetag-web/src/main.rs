@@ -51,6 +51,13 @@ struct DbRoot {
     name: String,
     db_path: PathBuf,
     root: PathBuf,
+    /// Device ID of the root directory (Unix only). Used to detect filesystem
+    /// boundary crossings when showing/tagging files.
+    #[cfg(unix)]
+    dev: Option<u64>,
+    /// True when no other loaded root is a strict ancestor of this one.
+    /// Entry-point roots are shown as top-level navigation tiles.
+    entry_point: bool,
 }
 
 struct AppState {
@@ -63,6 +70,29 @@ fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&DbRoot> {
         .roots
         .get(idx)
         .ok_or_else(|| anyhow::anyhow!("root {} not found", idx))
+}
+
+/// Returns true when `abs_path` is covered by any loaded database root.
+///
+/// A file is covered when there is a loaded `DbRoot` that:
+///   1. resides on the same filesystem as the file (`st_dev` match), AND
+///   2. whose root directory is an ancestor of `abs_path`.
+///
+/// This correctly handles mounted volumes that have their own database: even if
+/// the file appears inside the directory tree of a parent root, the mount's own
+/// DbRoot makes it covered. On non-Unix platforms all files are considered covered.
+#[cfg(unix)]
+fn file_is_covered(state: &AppState, meta: &std::fs::Metadata, abs_path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let file_dev = meta.dev();
+    state.roots.iter().any(|root| {
+        root.dev.map_or(true, |d| d == file_dev) && abs_path.starts_with(&root.root)
+    })
+}
+
+#[cfg(not(unix))]
+fn file_is_covered(_state: &AppState, _meta: &std::fs::Metadata, _abs_path: &Path) -> bool {
+    true
 }
 
 fn resolve_names(names: Vec<String>) -> Vec<String> {
@@ -165,6 +195,10 @@ struct ApiDirEntry {
     /// Set for virtual-root entries; identifies which database root to enter.
     #[serde(skip_serializing_if = "Option::is_none")]
     root_id: Option<usize>,
+    /// False when the file is on a different filesystem than the database root.
+    /// Tagging is not allowed in that case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    covered: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -175,6 +209,8 @@ struct ApiFileDetail {
     mtime: i64,
     indexed_at: String,
     tags: Vec<ApiFileTag>,
+    /// False when the file is on a different filesystem than the database root.
+    covered: bool,
 }
 
 #[derive(Serialize)]
@@ -235,6 +271,9 @@ struct ApiRoot {
     name: String,
     path: String,
     sort_order: i64,
+    /// False when this root is a subdirectory of another loaded root.
+    /// Non-entry-point roots are not shown as top-level navigation tiles.
+    entry_point: bool,
 }
 
 #[derive(Deserialize)]
@@ -1785,6 +1824,7 @@ async fn api_roots(State(state): State<Arc<AppState>>) -> Json<Vec<ApiRoot>> {
                 name: r.name.clone(),
                 path: r.root.display().to_string(),
                 sort_order,
+                entry_point: r.entry_point,
             }
         })
         .collect();
@@ -1950,13 +1990,18 @@ async fn api_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileListParams>,
 ) -> Result<Json<ApiDirListing>, AppError> {
-    // Virtual root: no root_id specified and no path — list all roots as directories
-    if params.root.is_none() && params.path.is_empty() && state.roots.len() > 1 {
-        let entries = state
-            .roots
+    // Virtual root: only when there are multiple entry-point roots and no root
+    // has been explicitly selected yet.
+    let entry_point_roots: Vec<(usize, &DbRoot)> = state
+        .roots
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.entry_point)
+        .collect();
+    if params.root.is_none() && params.path.is_empty() && entry_point_roots.len() > 1 {
+        let entries = entry_point_roots
             .iter()
-            .enumerate()
-            .map(|(id, r)| ApiDirEntry {
+            .map(|&(id, r)| ApiDirEntry {
                 name: r.name.clone(),
                 is_dir: true,
                 size: None,
@@ -1964,6 +2009,7 @@ async fn api_files(
                 file_count: None,
                 tag_count: None,
                 root_id: Some(id),
+                covered: None,
             })
             .collect();
         return Ok(Json(ApiDirListing {
@@ -2023,6 +2069,7 @@ async fn api_files(
                 file_count: Some(child_count),
                 tag_count: None,
                 root_id: None,
+                covered: None,
             });
         } else if meta.is_file() {
             let rel_path = format!("{}{}", prefix, name);
@@ -2046,6 +2093,7 @@ async fn api_files(
                 file_count: None,
                 tag_count: Some(tag_count),
                 root_id: None,
+                covered: Some(file_is_covered(&state, &meta, &entry.path())),
             });
         }
     }
@@ -2105,6 +2153,7 @@ async fn api_file_detail(
             file_id: record.file_id,
             mtime: record.mtime_ns,
             indexed_at,
+            covered: true, // already indexed — passed device check at index time
             tags: tags
                 .into_iter()
                 .map(|(name, value)| ApiFileTag { name, value })
@@ -2118,6 +2167,7 @@ async fn api_file_detail(
             file_id: None,
             mtime: 0,
             indexed_at: String::new(),
+            covered: true, // zip entries are always under the db root
             tags: vec![],
         }))
     } else {
@@ -2138,6 +2188,7 @@ async fn api_file_detail(
             file_id: None,
             mtime,
             indexed_at: String::new(),
+            covered: file_is_covered(&state, &meta, &abs),
             tags: vec![],
         }))
     }
@@ -2148,14 +2199,28 @@ async fn api_tag(
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_at(&state, body.root_id)?;
-    let conn = open_conn(db_root)?;
-    let file_id = if body.path.contains("::") {
-        // Virtual zip entry — no filesystem check
-        ensure_zip_entry_record(&conn, &body.path).map_err(AppError)?
+
+    // Find the most specific database for this path. For zip entries
+    // ("some/archive.zip::entry") the zip file itself determines the db.
+    let fs_path = if let Some(zip_path) = body.path.split_once("::").map(|(z, _)| z) {
+        db_root.root.join(zip_path)
     } else {
         safe_path(&db_root.root, &body.path)?;
-        // Auto-index the file if not yet in the database
-        db::get_or_index_file(&conn, &body.path, &db_root.root)
+        db_root.root.join(&body.path)
+    };
+    let start = fs_path.parent().unwrap_or(&fs_path);
+    let (conn, effective_root) = db::find_and_open(start).map_err(AppError)?;
+
+    let file_id = if body.path.contains("::") {
+        // Store the entry with its full virtual path relative to the effective root.
+        let zip_abs = db_root.root.join(body.path.split_once("::").unwrap().0);
+        let zip_rel = db::relative_to_root(&zip_abs, &effective_root).map_err(AppError)?;
+        let entry_name = body.path.split_once("::").unwrap().1;
+        let virtual_path = format!("{}::{}", zip_rel, entry_name);
+        ensure_zip_entry_record(&conn, &virtual_path).map_err(AppError)?
+    } else {
+        let rel = db::relative_to_root(&fs_path, &effective_root).map_err(AppError)?;
+        db::get_or_index_file(&conn, &rel, &effective_root)
             .map_err(AppError)?
             .id
     };
@@ -2176,8 +2241,27 @@ async fn api_untag(
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_at(&state, body.root_id)?;
-    let conn = open_conn(db_root)?;
-    let record = db::file_by_path(&conn, &body.path)
+
+    // Same routing logic as api_tag.
+    let fs_path = if let Some(zip_path) = body.path.split_once("::").map(|(z, _)| z) {
+        db_root.root.join(zip_path)
+    } else {
+        safe_path(&db_root.root, &body.path)?;
+        db_root.root.join(&body.path)
+    };
+    let start = fs_path.parent().unwrap_or(&fs_path);
+    let (conn, effective_root) = db::find_and_open(start).map_err(AppError)?;
+
+    let effective_rel = if body.path.contains("::") {
+        let zip_abs = db_root.root.join(body.path.split_once("::").unwrap().0);
+        let zip_rel = db::relative_to_root(&zip_abs, &effective_root).map_err(AppError)?;
+        let entry_name = body.path.split_once("::").unwrap().1;
+        format!("{}::{}", zip_rel, entry_name)
+    } else {
+        db::relative_to_root(&fs_path, &effective_root).map_err(AppError)?
+    };
+
+    let record = db::file_by_path(&conn, &effective_rel)
         .map_err(AppError)?
         .ok_or_else(|| AppError(anyhow::anyhow!("file not found: {}", body.path)))?;
 
@@ -2243,6 +2327,20 @@ async fn api_delete_tag(
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Terminal helpers
+// ---------------------------------------------------------------------------
+
+/// Best-effort terminal column width.  Falls back to 80 when unavailable.
+/// Reads the `COLUMNS` environment variable (set by most interactive shells).
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(80)
+}
+
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -2254,9 +2352,64 @@ async fn main() -> anyhow::Result<()> {
     let root =
         std::fs::canonicalize(&root).with_context(|| format!("resolving {}", root.display()))?;
 
-    // Open primary database and collect all linked databases.
+    // Open primary database and collect all explicitly linked databases
+    // (including automatic ancestor discovery).
     let (conn, root) = db::find_and_open(&root)?;
     let mut all_dbs = db::collect_all_databases(conn, root.clone(), !args.no_parents)?;
+
+    // filetag-web intentionally goes further than the CLI: it also discovers
+    // any nested databases by recursively scanning the filesystem under each
+    // loaded root. This ensures that browsing, tagging, and searching are
+    // always consistent — every sub-tree with its own `.filetag/` database is
+    // included, whether or not it was explicitly registered with `filetag db add`.
+    //
+    // The CLI does not do this because it operates from a specific working
+    // directory and only follows explicit links; unexpected databases in
+    // sibling or cousin directories would be surprising there. In the web
+    // interface the user sees the full directory tree, so every database that
+    // is visible should also be searchable.
+    {
+        // Build the visited set from already-loaded roots so we do not open
+        // the same database twice.
+        let mut visited: std::collections::HashSet<std::path::PathBuf> = all_dbs
+            .iter()
+            .filter_map(|db| std::fs::canonicalize(&db.root).ok())
+            .collect();
+
+        // Scan under each already-loaded root (ancestors + explicit links).
+        // Collect roots first to avoid borrow conflict.
+        let scan_roots: Vec<std::path::PathBuf> =
+            all_dbs.iter().map(|db| db.root.clone()).collect();
+
+        // Show progress on stderr while scanning; overwrite the same line with \r.
+        // The path is truncated to fit within the terminal width (default 80) so
+        // the line never wraps — a wrapped line cannot be erased with \r\x1b[K.
+        use std::io::Write as _;
+        let term_width = terminal_width();
+        let mut on_dir = |dir: &std::path::Path| {
+            let prefix = "Scanning ";
+            let suffix = "...";
+            let budget = term_width.saturating_sub(prefix.len() + suffix.len() + 1);
+            let path_str = dir.display().to_string();
+            let display = if path_str.len() > budget {
+                // Keep the tail of the path so the deepest component is visible.
+                format!("…{}", &path_str[path_str.len() - budget.saturating_sub(1)..])
+            } else {
+                path_str
+            };
+            eprint!("\r\x1b[K{prefix}{display}{suffix}");
+            let _ = std::io::stderr().flush();
+        };
+
+        for scan_root in &scan_roots {
+            let found = db::scan_for_databases(scan_root, &mut visited, 10, &mut on_dir);
+            all_dbs.extend(found);
+        }
+
+        // Clear the progress line.
+        eprint!("\r\x1b[K");
+        let _ = std::io::stderr().flush();
+    }
 
     // Sort so that ancestor (shorter path) databases come first. This ensures
     // that when the user launches from a child directory, the topmost ancestor
@@ -2285,12 +2438,40 @@ async fn main() -> anyhow::Result<()> {
     let roots: Vec<DbRoot> = all_dbs
         .into_iter()
         .zip(names)
-        .map(|(open_db, name)| DbRoot {
-            name,
-            db_path: open_db.root.join(".filetag").join("db.sqlite3"),
-            root: open_db.root,
+        .map(|(open_db, name)| {
+            #[cfg(unix)]
+            let dev = {
+                use std::os::unix::fs::MetadataExt;
+                std::fs::metadata(&open_db.root).ok().map(|m| m.dev())
+            };
+            DbRoot {
+                name,
+                db_path: open_db.root.join(".filetag").join("db.sqlite3"),
+                #[cfg(unix)]
+                dev,
+                entry_point: true, // filled in below
+                root: open_db.root,
+            }
         })
         .collect();
+
+    // Mark entry points: a root is an entry point only if no other loaded root
+    // is a strict ancestor of it. Roots that are subdirectories of another root
+    // are still kept for DB routing and tag operations, but are not shown as
+    // separate top-level navigation tiles.
+    let roots: Vec<DbRoot> = {
+        let paths: Vec<PathBuf> = roots.iter().map(|r| r.root.clone()).collect();
+        roots
+            .into_iter()
+            .map(|mut r| {
+                let has_ancestor = paths.iter().any(|other| {
+                    other != &r.root && r.root.starts_with(other)
+                });
+                r.entry_point = !has_ancestor;
+                r
+            })
+            .collect()
+    };
 
     if roots.is_empty() {
         anyhow::bail!("no databases found");

@@ -96,8 +96,10 @@ filetag db pull ./Music               # Transfer tags back to parent DB
 filetag db prune                      # Remove dead registrations
 
 # Cross-database queries
-filetag tags --all                    # Tags from all child databases (or: -a)
-filetag find genre/rock --all         # Search across all databases (or: -a)
+filetag tags                          # Tags from current DB and all linked databases
+filetag find genre/rock               # Search current DB and all linked databases
+filetag tags --isolated               # Tags from current database only (or: -i)
+filetag find genre/rock --isolated    # Search current database only (or: -i)
 
 # Global database registry
 filetag db register                   # Add current DB to global registry
@@ -125,6 +127,8 @@ filetag completions fish > ~/.config/fish/completions/filetag.fish
 --db <PATH>         Use a specific database (override auto-detect)
 --no-parents        Do not automatically include ancestor databases
 ```
+
+`tags` and `find` include all linked child databases and ancestor databases by default. Use `-i`/`--isolated` on those commands to query only the current database (no children, no ancestors).
 
 ## Command aliases
 
@@ -162,9 +166,22 @@ filetag-web ~/Music --port 8080
 
 # Bind to all interfaces (e.g. for LAN access)
 filetag-web --bind 0.0.0.0
+
+# Suppress automatic ancestor database discovery
+filetag-web --no-parents
 ```
 
 Open `http://127.0.0.1:3000` (default) in your browser. The full query language works in the search bar.
+
+### Database scope in filetag-web
+
+filetag-web intentionally has a broader database scope than the CLI:
+
+At startup it loads the primary database, all explicitly linked child databases, and all ancestor databases (same as the CLI). It then also performs a recursive filesystem scan under each loaded root to find any nested `.filetag/` databases, up to 10 levels deep. This means that every sub-directory with its own database is automatically included in the session, whether or not it was registered with `filetag db add`.
+
+The reason for this difference: in the web interface the user browses the full directory tree and expects that what they can see they can also search and tag consistently. Tags always land in the most specific database for a file (the innermost `.filetag/` that covers it), and searches cover all loaded databases, so browsing, tagging, and searching are always in sync.
+
+The CLI does not scan automatically because it operates from a working directory and follows explicit intent: unexpected databases in unrelated sub-trees would be surprising there.
 
 ### File previews
 
@@ -233,7 +250,15 @@ cd .. && filetag db add ./Music
 
 `db push` transfers tag records for files under the child path from the parent database to the child database. `db pull` does the reverse. Files on disk are never touched. `--all` on `tags` and `find` queries across the entire tree. Child discovery is recursive with cycle detection.
 
-When you are inside a child directory that has its own database, ancestor databases are automatically included as well. Use `--no-parents` to suppress this behaviour and work only with the current database.
+#### Database discovery rules
+
+filetag uses two directions of discovery:
+
+- **Upward (ancestors):** automatic. When your current directory has a database, all ancestor directories with a database are automatically included. This means tags on files under `~/` are always visible when working from `~/Documents`, even if `~/` was never explicitly linked. Use `--no-parents` to suppress this.
+
+- **Downward (children):** explicit only, via `filetag db add`. filetag does not automatically scan subdirectories for databases, because it cannot know which sub-trees belong to your workflow. An unregistered child (e.g. `~/Documents/Work` with its own database) is never included in queries unless you register it.
+
+This means that by default `tags` and `find` include the current database, all registered child databases (recursively), and all ancestor databases. Use `--isolated` to query only the current database in isolation, ignoring both children and ancestors.
 
 ### Global registry
 
