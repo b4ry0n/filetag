@@ -2257,7 +2257,39 @@ const _cv = {
     panY: 0,
     mode: 'zip',     // 'zip' | 'dir'
     filePaths: [],   // used in 'dir' mode: absolute relative paths per page
+    _prefetchCache: new Map(), // url → HTMLImageElement, keeps references alive
 };
+
+// Prefetch pages adjacent to the current index so navigation is instant.
+// Caches Image objects keyed by URL to keep decoded bitmaps in browser memory.
+function _cvPrefetch(idx) {
+    const step = _cv.spread ? 2 : 1;
+    const total = _cv.pages.length;
+    // Indices to preload: 1 and 2 steps in each direction
+    const candidates = [
+        idx + step, idx + step * 2,
+        idx - step, idx - step * 2,
+    ].filter(i => i >= 0 && i < total);
+    // In spread mode also load the partner page of each candidate
+    if (_cv.spread) {
+        for (const i of [...candidates]) {
+            if (i + 1 < total) candidates.push(i + 1);
+        }
+    }
+    const wanted = new Set(candidates.map(i => cvPageUrl(i)));
+    // Evict entries that are no longer neighbours
+    for (const url of _cv._prefetchCache.keys()) {
+        if (!wanted.has(url)) _cv._prefetchCache.delete(url);
+    }
+    // Start loading new entries
+    for (const url of wanted) {
+        if (!_cv._prefetchCache.has(url)) {
+            const img = new Image();
+            img.src = url;
+            _cv._prefetchCache.set(url, img);
+        }
+    }
+}
 
 // Return the URL for a single page image.
 function cvPageUrl(i) {
@@ -2356,6 +2388,7 @@ function closeComicViewer() {
     document.getElementById('comic-viewer').hidden = true;
     document.removeEventListener('keydown', _cvKeyHandler);
     _cv.mode = 'zip'; _cv.path = null; _cv.pages = []; _cv.filePaths = []; _cv.current = 0;
+    _cv._prefetchCache.clear();
     document.getElementById('cv-pages').innerHTML = '';
     document.getElementById('cv-thumbs').innerHTML = '';
 }
@@ -2804,6 +2837,7 @@ function cvShowPage(idx) {
         : `${idx + 1} / ${_cv.pages.length}`;
     document.getElementById('cv-status').textContent = total;
     cvUpdateThumbActive(idx);
+    _cvPrefetch(idx);
 }
 
 function cvNext() {
