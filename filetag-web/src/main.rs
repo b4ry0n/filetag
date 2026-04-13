@@ -2252,7 +2252,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Open primary database and collect all linked databases.
     let (conn, root) = db::find_and_open(&root)?;
-    let all_dbs = db::collect_all_databases(conn, root.clone())?;
+    let mut all_dbs = db::collect_all_databases(conn, root.clone())?;
+
+    // Sort so that ancestor (shorter path) databases come first. This ensures
+    // that when the user launches from a child directory, the topmost ancestor
+    // database is the primary root (index 0) in the web interface.
+    all_dbs.sort_by_key(|db| db.root.components().count());
 
     // Build named roots (name comes from the `settings` table key "name", or
     // falls back to the last path component of the root directory).
@@ -2287,8 +2292,6 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("no databases found");
     }
 
-    let primary_root = roots[0].root.display().to_string();
-    let n_roots = roots.len();
     let state = Arc::new(AppState { roots });
 
     let app = Router::new()
@@ -2316,20 +2319,61 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dir/images", get(api_dir_images))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = format!("{}:{}", args.bind, args.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding to {}", addr))?;
 
-    if n_roots > 1 {
-        println!(
-            "filetag-web serving {} databases (primary: {}) at http://{}",
-            n_roots, primary_root, addr
-        );
-    } else {
-        println!("filetag-web serving {} at http://{}", primary_root, addr);
+    // Build parent index: for each root, find the closest ancestor root.
+    let n = state.roots.len();
+    let mut parent_idx: Vec<Option<usize>> = vec![None; n];
+    for i in 1..n {
+        let mut best: Option<usize> = None;
+        let mut best_depth = 0usize;
+        for j in 0..i {
+            let comp = state.roots[j].root.components().count();
+            if state.roots[i].root.starts_with(&state.roots[j].root) && comp > best_depth {
+                best_depth = comp;
+                best = Some(j);
+            }
+        }
+        parent_idx[i] = best;
+    }
+    let top_level_count = parent_idx.iter().filter(|p| p.is_none()).count();
+
+    println!("filetag-web at http://{}", addr);
+    for i in 0..n {
+        // Build ancestor chain from topmost ancestor down to direct parent.
+        let mut chain: Vec<usize> = Vec::new();
+        let mut cur = i;
+        while let Some(p) = parent_idx[cur] {
+            chain.push(p);
+            cur = p;
+        }
+        chain.reverse();
+        let depth = chain.len();
+
+        // Continuation characters from root down to (but not including) the direct parent.
+        let mut prefix = String::new();
+        let cont_end = depth.saturating_sub(1);
+        for &anc in &chain[..cont_end] {
+            let anc_is_last = (anc + 1..n).all(|j| parent_idx[j] != parent_idx[anc]);
+            if anc_is_last { prefix.push_str("   "); } else { prefix.push_str("│  "); }
+        }
+
+        let is_last = (i + 1..n).all(|j| parent_idx[j] != parent_idx[i]);
+        let connector = if depth == 0 && top_level_count == 1 {
+            ""
+        } else if is_last {
+            "└─ "
+        } else {
+            "├─ "
+        };
+
+        let label = format!("{} ({})", state.roots[i].name, state.roots[i].root.display());
+        println!("  {}{}{}", prefix, connector, label);
     }
     axum::serve(listener, app).await?;
 

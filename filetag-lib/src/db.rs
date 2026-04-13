@@ -556,6 +556,26 @@ pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<Open
             }
         }
 
+        // Automatically include ancestor databases. When working under a
+        // sub-tree that has its own database (e.g. ~/Documents), parent
+        // databases (e.g. ~/) are implicitly relevant even if they are not
+        // explicitly registered as a linked database.
+        let mut ancestor = r.parent();
+        while let Some(dir) = ancestor {
+            let ancestor_db_path = dir.join(DB_DIR).join(DB_FILE);
+            if ancestor_db_path.is_file() {
+                match open_at(&ancestor_db_path) {
+                    Ok(ancestor_conn) => {
+                        if migrate(&ancestor_conn).is_ok() {
+                            queue.push((ancestor_conn, dir.to_path_buf()));
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            ancestor = dir.parent();
+        }
+
         result.push(OpenDb { conn: c, root: r });
     }
 
