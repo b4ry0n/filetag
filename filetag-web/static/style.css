@@ -750,6 +750,19 @@ h3, h4 { font-weight: 600; }
 }
 .card.folder .card-icon { color: #fab005; }
 
+/* Files not covered by a database on their filesystem */
+.card.uncovered { opacity: 0.6; }
+.card.uncovered .card-preview { filter: grayscale(40%); }
+.card-uncovered {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 13px;
+    line-height: 1;
+    pointer-events: none;
+}
+.list-row.uncovered { opacity: 0.6; }
+
 /* ------------------------------------------------------------------ */
 /* List view                                                          */
 /* ------------------------------------------------------------------ */
@@ -1181,6 +1194,20 @@ h3, h4 { font-weight: 600; }
 
 .tag-chip .remove:hover {
     background: rgba(0, 0, 0, 0.1);
+}
+
+.tag-chip--readonly {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.uncovered-notice {
+    margin-top: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-size: 12px;
 }
 
 .tag-add-form {

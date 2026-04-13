@@ -20,9 +20,22 @@ pub fn init(root: &Path) -> Result<Connection> {
 
 /// Walk parent directories to find an existing `.filetag/db.sqlite3`.
 /// Returns (connection, root_dir) where root_dir is the parent of `.filetag/`.
+///
+/// Never crosses a filesystem boundary: if the parent directory resides on a
+/// different device than the starting path, the search stops.  A database from
+/// another filesystem must not be used as the authority for files on this one.
 pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
     let start = std::fs::canonicalize(start)
         .with_context(|| format!("canonicalizing {}", start.display()))?;
+
+    // Record the device of the starting path once so we can detect a mount-
+    // point crossing without an extra stat(2) on every ancestor directory.
+    #[cfg(unix)]
+    let start_dev: Option<u64> = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&start).ok().map(|m| m.dev())
+    };
+
     let mut dir = start.as_path();
     loop {
         let candidate = dir.join(DB_DIR).join(DB_FILE);
@@ -32,7 +45,27 @@ pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
             return Ok((conn, dir.to_path_buf()));
         }
         match dir.parent() {
-            Some(parent) => dir = parent,
+            Some(parent) => {
+                // On Unix: stop if the parent is on a different device.
+                // Tags on files without a database on the same filesystem
+                // must be refused — storing them in a database on another
+                // device would break portability and file-identity tracking.
+                #[cfg(unix)]
+                if let Some(start_d) = start_dev {
+                    use std::os::unix::fs::MetadataExt;
+                    if let Ok(meta) = std::fs::metadata(parent) {
+                        if meta.dev() != start_d {
+                            bail!(
+                                "no filetag database found on this filesystem \
+                                 (stopped at filesystem boundary at {})\n\
+                                 Run `filetag init` inside this filesystem to create one.",
+                                parent.display()
+                            );
+                        }
+                    }
+                }
+                dir = parent;
+            }
             None => bail!(
                 "no filetag database found (looked from {} upward)\n\
                  Run `filetag init` to create one.",
@@ -161,10 +194,36 @@ pub struct FileRecord {
 }
 
 /// Get or insert a file record. Updates metadata if the file has changed.
+///
+/// # Filesystem boundary check (Unix)
+///
+/// A file MUST reside on the same filesystem as the database root.  Storing a
+/// tag in a database on a different device would silently break portability and
+/// file-identity tracking.  This function enforces that invariant by comparing
+/// `st_dev` of the file against `st_dev` of the database root.
 pub fn get_or_index_file(conn: &Connection, rel_path: &str, root: &Path) -> Result<FileRecord> {
     let abs = root.join(rel_path);
     let meta = std::fs::metadata(&abs)
         .with_context(|| format!("reading metadata for {}", abs.display()))?;
+
+    // --- filesystem boundary guard (Unix only) ----------------------------
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let file_dev = meta.dev();
+        let root_dev = std::fs::metadata(root)
+            .with_context(|| format!("reading metadata for database root {}", root.display()))?
+            .dev();
+        if file_dev != root_dev {
+            bail!(
+                "cannot tag {}: file is on a different filesystem than the database at {}\n\
+                 Run `filetag init` inside the filesystem that contains this file.",
+                abs.display(),
+                root.display()
+            );
+        }
+    }
+    // ----------------------------------------------------------------------
     let size = meta.len() as i64;
     let mtime_ns = {
         let mt = meta
@@ -567,15 +626,24 @@ pub fn collect_all_databases(
         // sub-tree that has its own database (e.g. ~/Documents), parent
         // databases (e.g. ~/) are implicitly relevant even if they are not
         // explicitly registered as a linked database.
+        //
+        // Ancestors are pushed directly into `result` (not `queue`) so that
+        // their own linked databases (siblings of the current root) are NOT
+        // pulled in transitively. Only the ancestor chain itself is relevant.
         if include_ancestors {
             let mut ancestor = r.parent();
             while let Some(dir) = ancestor {
                 let ancestor_db_path = dir.join(DB_DIR).join(DB_FILE);
-                if ancestor_db_path.is_file()
-                    && let Ok(ancestor_conn) = open_at(&ancestor_db_path)
-                    && migrate(&ancestor_conn).is_ok()
-                {
-                    queue.push((ancestor_conn, dir.to_path_buf()));
+                if ancestor_db_path.is_file() {
+                    let canonical_anc = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+                    if !visited.contains(&canonical_anc) {
+                        if let Ok(ancestor_conn) = open_at(&ancestor_db_path) {
+                            if migrate(&ancestor_conn).is_ok() {
+                                visited.insert(canonical_anc);
+                                result.push(OpenDb { conn: ancestor_conn, root: dir.to_path_buf() });
+                            }
+                        }
+                    }
                 }
                 ancestor = dir.parent();
             }
@@ -585,6 +653,102 @@ pub fn collect_all_databases(
     }
 
     Ok(result)
+}
+
+/// Recursively scan `root` for nested `.filetag/db.sqlite3` databases up to
+/// `max_depth` levels deep. Returns one `OpenDb` per database found, skipping
+/// any path already in `visited` (canonical paths).
+///
+/// This is used by filetag-web to discover all databases under the served
+/// root(s) at startup, so that browsing, tagging, and searching are always
+/// consistent: every directory that has its own database is included in the
+/// session, whether or not it was explicitly registered via `filetag db add`.
+/// Recursively scan the filesystem under `root` for nested `.filetag/db.sqlite3` databases.
+///
+/// `visited` is the set of already-known canonical roots (used for cycle detection).
+/// `max_depth` limits how deep the scan descends (10 is a sensible default).
+/// `on_dir` is called for every directory entered (depth >= 1) so callers can show progress.
+pub fn scan_for_databases(
+    root: &Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    max_depth: usize,
+    on_dir: &mut dyn FnMut(&Path),
+) -> Vec<OpenDb> {
+    let mut result = Vec::new();
+    scan_recursive(root, visited, 0, max_depth, &mut result, on_dir);
+    result
+}
+
+/// Directories that are known to never contain `.filetag/` databases and are either
+/// extremely large or virtual/system filesystems. Skipping them keeps the scan fast.
+///
+/// Names are matched against the final path component only (case-sensitive).
+/// Note: hidden directories (names starting with `.`) are already skipped unconditionally.
+const SCAN_SKIP_DIRS: &[&str] = &[
+    // macOS system directories
+    "Library",          // ~/Library and /Library (caches, app support, frameworks)
+    "System",           // /System — macOS OS files
+    "private",          // /private — macOS private system tree
+    "cores",            // /cores — kernel core dumps
+    // Linux virtual/system filesystems
+    "proc",             // /proc — Linux process virtual fs
+    "sys",              // /sys — Linux sysfs
+    "run",              // /run — Linux runtime data
+    "snap",             // /snap — snapd package mount point
+    // Common large build/cache directories that never hold databases
+    "node_modules",
+    "__pycache__",
+    ".Trash",
+];
+
+fn scan_recursive(
+    dir: &Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    depth: usize,
+    max_depth: usize,
+    result: &mut Vec<OpenDb>,
+    on_dir: &mut dyn FnMut(&Path),
+) {
+    if depth > max_depth {
+        return;
+    }
+    if depth >= 1 {
+        on_dir(dir);
+    }
+    let db_path = dir.join(DB_DIR).join(DB_FILE);
+    if db_path.is_file() {
+        let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        if !visited.contains(&canonical) {
+            if let Ok(conn) = open_at(&db_path) {
+                if migrate(&conn).is_ok() {
+                    visited.insert(canonical);
+                    result.push(OpenDb { conn, root: dir.to_path_buf() });
+                }
+            }
+        }
+    }
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in read_dir.flatten() {
+        // Use file_type() from the readdir entry — avoids an extra stat(2) syscall.
+        let Ok(ft) = entry.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // Skip hidden directories (the .filetag/ dir we already handled above).
+        if name_str.starts_with('.') {
+            continue;
+        }
+        // Skip known large directories that never contain .filetag/ databases.
+        if SCAN_SKIP_DIRS.contains(&&*name_str) {
+            continue;
+        }
+        scan_recursive(&entry.path(), visited, depth + 1, max_depth, result, on_dir);
+    }
 }
 
 // ---------------------------------------------------------------------------
