@@ -2329,7 +2329,7 @@ async fn main() -> anyhow::Result<()> {
     // Build parent index: for each root, find the closest ancestor root.
     let n = state.roots.len();
     let mut parent_idx: Vec<Option<usize>> = vec![None; n];
-    for i in 1..n {
+    for (i, entry) in parent_idx.iter_mut().enumerate().skip(1) {
         let mut best: Option<usize> = None;
         let mut best_depth = 0usize;
         for j in 0..i {
@@ -2339,7 +2339,7 @@ async fn main() -> anyhow::Result<()> {
                 best = Some(j);
             }
         }
-        parent_idx[i] = best;
+        *entry = best;
     }
     let top_level_count = parent_idx.iter().filter(|p| p.is_none()).count();
 
@@ -2360,7 +2360,11 @@ async fn main() -> anyhow::Result<()> {
         let cont_end = depth.saturating_sub(1);
         for &anc in &chain[..cont_end] {
             let anc_is_last = (anc + 1..n).all(|j| parent_idx[j] != parent_idx[anc]);
-            if anc_is_last { prefix.push_str("   "); } else { prefix.push_str("│  "); }
+            if anc_is_last {
+                prefix.push_str("   ");
+            } else {
+                prefix.push_str("│  ");
+            }
         }
 
         let is_last = (i + 1..n).all(|j| parent_idx[j] != parent_idx[i]);
@@ -2372,7 +2376,11 @@ async fn main() -> anyhow::Result<()> {
             "├─ "
         };
 
-        let label = format!("{} ({})", state.roots[i].name, state.roots[i].root.display());
+        let label = format!(
+            "{} ({})",
+            state.roots[i].name,
+            state.roots[i].root.display()
+        );
         println!("  {}{}{}", prefix, connector, label);
     }
     axum::serve(listener, app).await?;

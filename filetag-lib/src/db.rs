@@ -563,15 +563,11 @@ pub fn collect_all_databases(conn: Connection, root: PathBuf) -> Result<Vec<Open
         let mut ancestor = r.parent();
         while let Some(dir) = ancestor {
             let ancestor_db_path = dir.join(DB_DIR).join(DB_FILE);
-            if ancestor_db_path.is_file() {
-                match open_at(&ancestor_db_path) {
-                    Ok(ancestor_conn) => {
-                        if migrate(&ancestor_conn).is_ok() {
-                            queue.push((ancestor_conn, dir.to_path_buf()));
-                        }
-                    }
-                    Err(_) => {}
-                }
+            if ancestor_db_path.is_file()
+                && let Ok(ancestor_conn) = open_at(&ancestor_db_path)
+                && migrate(&ancestor_conn).is_ok()
+            {
+                queue.push((ancestor_conn, dir.to_path_buf()));
             }
             ancestor = dir.parent();
         }
