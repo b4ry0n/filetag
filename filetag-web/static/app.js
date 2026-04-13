@@ -2490,30 +2490,40 @@ function cvApplyScrollZoom(newSize, event) {
     const stage = document.getElementById('cv-stage');
     const btn   = document.getElementById('cv-zoom-reset-btn');
     if (_cv.scrollDir === 'h') {
-        if (newSize !== undefined) _cv.scrollHeight = Math.max(20, Math.min(200, newSize));
+        if (newSize !== undefined) {
+            // Cap the height at the actual stage height (images should not overflow
+            // the stage vertically in horizontal scroll mode).
+            const maxVh = (stage && stage.clientHeight > 0 && window.innerHeight > 0)
+                ? (stage.clientHeight / window.innerHeight) * 100
+                : 200;
+            _cv.scrollHeight = Math.max(20, Math.min(maxVh, newSize));
+        }
         if (stage) {
-            // Capture anchor before CSS change so we can restore the cursor position
-            let anchor = null;
-            if (event) {
-                const rect = stage.getBoundingClientRect();
-                const cx = event.clientX - rect.left;
-                if (stage.scrollWidth > 0) anchor = { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx };
-            }
+            // Always anchor: use cursor position when available, stage centre otherwise.
+            const rect = stage.getBoundingClientRect();
+            const cx = event ? (event.clientX - rect.left) : rect.width / 2;
+            const anchor = stage.scrollWidth > 0
+                ? { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx }
+                : null;
             stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
-            if (anchor) requestAnimationFrame(() => { stage.scrollTo({ left: anchor.ratio * stage.scrollWidth - anchor.cx, behavior: 'instant' }); });
+            if (anchor) requestAnimationFrame(() => {
+                stage.scrollTo({ left: anchor.ratio * stage.scrollWidth - anchor.cx, behavior: 'instant' });
+            });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.display = _cv.scrollHeight === 90 ? 'none' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
-            let anchor = null;
-            if (event) {
-                const rect = stage.getBoundingClientRect();
-                const cy = event.clientY - rect.top;
-                if (stage.scrollHeight > 0) anchor = { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy };
-            }
+            // Always anchor: use cursor position when available, stage centre otherwise.
+            const rect = stage.getBoundingClientRect();
+            const cy = event ? (event.clientY - rect.top) : rect.height / 2;
+            const anchor = stage.scrollHeight > 0
+                ? { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy }
+                : null;
             stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-            if (anchor) requestAnimationFrame(() => { stage.scrollTo({ top: anchor.ratio * stage.scrollHeight - anchor.cy, behavior: 'instant' }); });
+            if (anchor) requestAnimationFrame(() => {
+                stage.scrollTo({ top: anchor.ratio * stage.scrollHeight - anchor.cy, behavior: 'instant' });
+            });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.display = _cv.scrollWidth === 100 ? 'none' : ''; }
     }
