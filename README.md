@@ -110,8 +110,8 @@ filetag find genre/rock --all-dbs     # Search across all registered databases
 filetag info
 
 # Shell completions
-filetag completions zsh >> ~/.zfunc/_filetag
-filetag completions bash >> ~/.bash_completion.d/filetag
+filetag completions zsh  > ~/.zfunc/_filetag
+filetag completions bash > ~/.bash_completion.d/filetag
 filetag completions fish > ~/.config/fish/completions/filetag.fish
 ```
 
@@ -123,6 +123,7 @@ filetag completions fish > ~/.config/fish/completions/filetag.fish
 -q, --quiet         Suppress informational messages
 -v, --verbose       Extra detail
 --db <PATH>         Use a specific database (override auto-detect)
+--no-parents        Do not automatically include ancestor databases
 ```
 
 ## Command aliases
@@ -231,6 +232,8 @@ cd .. && filetag db add ./Music
 ```
 
 `db push` transfers tag records for files under the child path from the parent database to the child database. `db pull` does the reverse. Files on disk are never touched. `--all` on `tags` and `find` queries across the entire tree. Child discovery is recursive with cycle detection.
+
+When you are inside a child directory that has its own database, ancestor databases are automatically included as well. Use `--no-parents` to suppress this behaviour and work only with the current database.
 
 ### Global registry
 

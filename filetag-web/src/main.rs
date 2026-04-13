@@ -32,6 +32,10 @@ struct Args {
     /// Address to bind to
     #[arg(short, long, default_value = "127.0.0.1")]
     bind: String,
+
+    /// Do not automatically include ancestor databases (stop at the current root)
+    #[arg(long)]
+    no_parents: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -2252,7 +2256,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Open primary database and collect all linked databases.
     let (conn, root) = db::find_and_open(&root)?;
-    let mut all_dbs = db::collect_all_databases(conn, root.clone())?;
+    let mut all_dbs = db::collect_all_databases(conn, root.clone(), !args.no_parents)?;
 
     // Sort so that ancestor (shorter path) databases come first. This ensures
     // that when the user launches from a child directory, the topmost ancestor

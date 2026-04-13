@@ -43,6 +43,10 @@ struct Cli {
     #[arg(long, global = true)]
     db: Option<PathBuf>,
 
+    /// Do not automatically include ancestor databases (stop at the current root)
+    #[arg(long, global = true)]
+    no_parents: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -623,7 +627,7 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, all: bool, all_dbs: bool) -> Result<
                 }
             }
         } else if all {
-            let databases = db::collect_all_databases(conn, root)?;
+            let databases = db::collect_all_databases(conn, root, !cli.no_parents)?;
             for db in &databases {
                 if let Ok(tags) = db::all_tags(&db.conn) {
                     for (name, count, _color) in tags {
@@ -769,7 +773,7 @@ fn cmd_find(
             }
         }
     } else if all {
-        let databases = db::collect_all_databases(conn, root)?;
+        let databases = db::collect_all_databases(conn, root, !cli.no_parents)?;
         for database in &databases {
             collector.add(
                 &database.conn,
