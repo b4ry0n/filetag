@@ -5,8 +5,9 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::{
     Router,
+    body::Body,
     extract::{Path as AxumPath, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
@@ -298,6 +299,7 @@ async fn preview_handler(
     AxumPath(rel_path): AxumPath<String>,
     Query(rp): Query<RootParam>,
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
 ) -> Response {
     let db_root = match root_at(&state, rp.root) {
         Ok(r) => r,
@@ -320,7 +322,7 @@ async fn preview_handler(
             preview_raw(&abs, &db_root.root).await
         }
         "heic" | "heif" => preview_heic(&abs, &db_root.root).await,
-        _ => serve_file_bytes(&abs).await,
+        _ => serve_file_range(&abs, &headers).await,
     }
 }
 
@@ -395,6 +397,93 @@ async fn serve_file_bytes(path: &Path) -> Response {
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+/// Serve a file with HTTP Range request support (required for video/audio seeking).
+async fn serve_file_range(path: &Path, headers: &HeaderMap) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let meta = match tokio::fs::metadata(path).await {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (StatusCode::NOT_FOUND, "File not found").into_response();
+        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let total = meta.len();
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let ct = mime_for_ext(&ext);
+
+    if let Some(range_str) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
+        let Some((start, end)) = parse_byte_range(range_str, total) else {
+            return axum::http::Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        };
+
+        let length = end - start + 1;
+        let mut file = match tokio::fs::File::open(path).await {
+            Ok(f) => f,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
+        if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let mut buf = vec![0u8; length as usize];
+        if file.read_exact(&mut buf).await.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+
+        return axum::http::Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(header::CONTENT_TYPE, ct)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
+            .header(header::CONTENT_LENGTH, length)
+            .body(Body::from(buf))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    }
+
+    // No Range header: return full file and advertise range support.
+    match tokio::fs::read(path).await {
+        Ok(data) => axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, ct)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_LENGTH, total)
+            .body(Body::from(data))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (StatusCode::NOT_FOUND, "File not found").into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Parse a `bytes=<start>-[<end>]` range header value.
+/// Returns `(start, end)` as inclusive byte offsets clamped to `total - 1`.
+fn parse_byte_range(s: &str, total: u64) -> Option<(u64, u64)> {
+    let s = s.strip_prefix("bytes=")?;
+    let mut parts = s.splitn(2, '-');
+    let start_str = parts.next()?;
+    let end_str = parts.next().unwrap_or("");
+    let start: u64 = start_str.parse().ok()?;
+    let end: u64 = if end_str.is_empty() {
+        total.saturating_sub(1)
+    } else {
+        end_str.parse().ok()?
+    };
+    if start >= total {
+        return None;
+    }
+    Some((start, end.min(total - 1)))
 }
 
 /// Return a cache path for a derived preview file, keyed by mtime + size.
@@ -1043,7 +1132,7 @@ async fn thumb_handler(
         }
 
         // Everything else: fall through to preview handler
-        _ => preview_handler(AxumPath(rel_path), Query(rp), State(state)).await,
+        _ => preview_handler(AxumPath(rel_path), Query(rp), State(state), HeaderMap::new()).await,
     }
 }
 
