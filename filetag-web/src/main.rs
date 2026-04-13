@@ -322,6 +322,10 @@ async fn preview_handler(
             preview_raw(&abs, &db_root.root).await
         }
         "heic" | "heif" => preview_heic(&abs, &db_root.root).await,
+        // Formats browsers cannot decode natively: transcode to mp4 via ffmpeg
+        "avi" | "wmv" | "mkv" | "flv" | "mpg" | "mpeg" | "ts" | "3gp" | "f4v" | "m4v" => {
+            serve_transcoded_mp4(&abs, &db_root.root, &headers).await
+        }
         _ => serve_file_range(&abs, &headers).await,
     }
 }
@@ -366,6 +370,7 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "wmv" => "video/x-ms-wmv",
         "flv" => "video/x-flv",
         "ts" => "video/mp2t",
+        "mpg" | "mpeg" => "video/mpeg",
         "mp3" => "audio/mpeg",
         "flac" => "audio/flac",
         "ogg" => "audio/ogg",
@@ -487,6 +492,74 @@ fn parse_byte_range(s: &str, total: u64) -> Option<(u64, u64)> {
         return None;
     }
     Some((start, end.min(total - 1)))
+}
+
+/// Transcode a video file to H.264/AAC mp4 via ffmpeg, cache the result under
+/// `<root>/.filetag/cache/video/`, then serve with Range support.
+/// Browser-incompatible formats (avi, wmv, mkv, mpg/mpeg, …) become seekable
+/// mp4 streams this way.
+async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap) -> Response {
+    // Use the generic file_cache_path infrastructure, storing under "video/" with suffix "mp4".
+    let cache_path = match file_cache_path(path, root, "video", "mp4") {
+        Some(p) => p,
+        None => return serve_file_range(path, headers).await,
+    };
+
+    // If a cached transcode already exists, serve it directly.
+    if cache_path.exists() {
+        return serve_file_range(&cache_path, headers).await;
+    }
+
+    // Acquire the shared concurrency permit to avoid spawning many ffmpeg
+    // processes in parallel.
+    let _permit = match THUMB_LIMITER.acquire().await {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
+    };
+
+    // Re-check after acquiring permit (another task may have finished it).
+    if cache_path.exists() {
+        return serve_file_range(&cache_path, headers).await;
+    }
+
+    let tmp = cache_path.with_extension("tmp.mp4");
+    let status = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg"])
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            // fragmented mp4 so the file is valid even if cut short
+            "-movflags",
+            "+faststart",
+            "-y",
+        ])
+        .arg(&tmp)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await;
+
+    match status {
+        Ok(s) if s.success() => {
+            let _ = tokio::fs::rename(&tmp, &cache_path).await;
+            serve_file_range(&cache_path, headers).await
+        }
+        _ => {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            // ffmpeg missing or failed: fall back to raw bytes (browser may reject it)
+            serve_file_range(path, headers).await
+        }
+    }
 }
 
 /// Return a cache path for a derived preview file, keyed by mtime + size.
@@ -1025,9 +1098,8 @@ async fn thumb_handler(
         }
 
         // Video: 2×2 contact-sheet
-        "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp" | "f4v" => {
-            video_thumb_strip(&abs, &root).await
-        }
+        "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp" | "f4v"
+        | "mpg" | "mpeg" => video_thumb_strip(&abs, &root).await,
 
         // HEIC/HEIF: full-res conversion is already cached; thumbnail via image_thumb_jpeg
         "heic" | "heif" => {
