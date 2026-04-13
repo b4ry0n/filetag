@@ -53,15 +53,15 @@ pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
                 #[cfg(unix)]
                 if let Some(start_d) = start_dev {
                     use std::os::unix::fs::MetadataExt;
-                    if let Ok(meta) = std::fs::metadata(parent) {
-                        if meta.dev() != start_d {
-                            bail!(
-                                "no filetag database found on this filesystem \
+                    if let Ok(meta) = std::fs::metadata(parent)
+                        && meta.dev() != start_d
+                    {
+                        bail!(
+                            "no filetag database found on this filesystem \
                                  (stopped at filesystem boundary at {})\n\
                                  Run `filetag init` inside this filesystem to create one.",
-                                parent.display()
-                            );
-                        }
+                            parent.display()
+                        );
                     }
                 }
                 dir = parent;
@@ -635,14 +635,17 @@ pub fn collect_all_databases(
             while let Some(dir) = ancestor {
                 let ancestor_db_path = dir.join(DB_DIR).join(DB_FILE);
                 if ancestor_db_path.is_file() {
-                    let canonical_anc = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-                    if !visited.contains(&canonical_anc) {
-                        if let Ok(ancestor_conn) = open_at(&ancestor_db_path) {
-                            if migrate(&ancestor_conn).is_ok() {
-                                visited.insert(canonical_anc);
-                                result.push(OpenDb { conn: ancestor_conn, root: dir.to_path_buf() });
-                            }
-                        }
+                    let canonical_anc =
+                        std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+                    if !visited.contains(&canonical_anc)
+                        && let Ok(ancestor_conn) = open_at(&ancestor_db_path)
+                        && migrate(&ancestor_conn).is_ok()
+                    {
+                        visited.insert(canonical_anc);
+                        result.push(OpenDb {
+                            conn: ancestor_conn,
+                            root: dir.to_path_buf(),
+                        });
                     }
                 }
                 ancestor = dir.parent();
@@ -686,15 +689,15 @@ pub fn scan_for_databases(
 /// Note: hidden directories (names starting with `.`) are already skipped unconditionally.
 const SCAN_SKIP_DIRS: &[&str] = &[
     // macOS system directories
-    "Library",          // ~/Library and /Library (caches, app support, frameworks)
-    "System",           // /System — macOS OS files
-    "private",          // /private — macOS private system tree
-    "cores",            // /cores — kernel core dumps
+    "Library", // ~/Library and /Library (caches, app support, frameworks)
+    "System",  // /System — macOS OS files
+    "private", // /private — macOS private system tree
+    "cores",   // /cores — kernel core dumps
     // Linux virtual/system filesystems
-    "proc",             // /proc — Linux process virtual fs
-    "sys",              // /sys — Linux sysfs
-    "run",              // /run — Linux runtime data
-    "snap",             // /snap — snapd package mount point
+    "proc", // /proc — Linux process virtual fs
+    "sys",  // /sys — Linux sysfs
+    "run",  // /run — Linux runtime data
+    "snap", // /snap — snapd package mount point
     // Common large build/cache directories that never hold databases
     "node_modules",
     "__pycache__",
@@ -718,13 +721,15 @@ fn scan_recursive(
     let db_path = dir.join(DB_DIR).join(DB_FILE);
     if db_path.is_file() {
         let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-        if !visited.contains(&canonical) {
-            if let Ok(conn) = open_at(&db_path) {
-                if migrate(&conn).is_ok() {
-                    visited.insert(canonical);
-                    result.push(OpenDb { conn, root: dir.to_path_buf() });
-                }
-            }
+        if !visited.contains(&canonical)
+            && let Ok(conn) = open_at(&db_path)
+            && migrate(&conn).is_ok()
+        {
+            visited.insert(canonical);
+            result.push(OpenDb {
+                conn,
+                root: dir.to_path_buf(),
+            });
         }
     }
     let read_dir = match std::fs::read_dir(dir) {
