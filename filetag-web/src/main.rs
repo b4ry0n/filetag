@@ -445,7 +445,10 @@ async fn serve_file_range(path: &Path, headers: &HeaderMap) -> Response {
             .status(StatusCode::PARTIAL_CONTENT)
             .header(header::CONTENT_TYPE, ct)
             .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
+            .header(
+                header::CONTENT_RANGE,
+                format!("bytes {start}-{end}/{total}"),
+            )
             .header(header::CONTENT_LENGTH, length)
             .body(Body::from(buf))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
@@ -1132,7 +1135,15 @@ async fn thumb_handler(
         }
 
         // Everything else: fall through to preview handler
-        _ => preview_handler(AxumPath(rel_path), Query(rp), State(state), HeaderMap::new()).await,
+        _ => {
+            preview_handler(
+                AxumPath(rel_path),
+                Query(rp),
+                State(state),
+                HeaderMap::new(),
+            )
+            .await
+        }
     }
 }
 
