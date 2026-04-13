@@ -1252,11 +1252,13 @@ function renderDetail() {
         preview = `<div class="zip-cover-wrap">
             <img src="/thumb/${encodeURI(f.path)}${rootParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
-            <button class="tag-action-btn" onclick="openComicViewer('${jjesc(f.path)}')">Open comic viewer</button>
+            <button class="tag-action-btn" onclick="openComicViewer('${jesc(f.path)}')">Open comic viewer</button>
         </div>`;
     } else {
         preview = `<div class="no-preview">${fileIcon(name)}</div>`;
     }
+
+    const covered = f.covered !== false;
 
     const tagChips = f.tags.length === 0
         ? '<span class="no-tags">No tags assigned</span>'
@@ -1264,8 +1266,18 @@ function renderDetail() {
             const tagStr = formatTag(t);
             const stateTag = state.tags.find(st => st.name === t.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+            if (!covered) {
+                return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
+            }
             return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
+
+    const tagAddSection = covered
+        ? `<div class="tag-add-form">
+                <input type="text" id="tag-input" placeholder="Add tag (e.g. genre/rock)">
+                <button onclick="doAddTag()">Add</button>
+            </div>`
+        : `<div class="uncovered-notice">This file is on a different filesystem. Tags cannot be added here.</div>`;
 
     panel.innerHTML = `
         <div class="detail-header">
