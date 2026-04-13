@@ -2510,7 +2510,7 @@ function cvApplyScrollZoom(newSize, event) {
                 stage.scrollTo({ left: anchor.ratio * stage.scrollWidth - anchor.cx, behavior: 'instant' });
             });
         }
-        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.display = _cv.scrollHeight === 90 ? 'none' : ''; }
+        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.visibility = _cv.scrollHeight === 90 ? 'hidden' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
@@ -2525,7 +2525,7 @@ function cvApplyScrollZoom(newSize, event) {
                 stage.scrollTo({ top: anchor.ratio * stage.scrollHeight - anchor.cy, behavior: 'instant' });
             });
         }
-        if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.display = _cv.scrollWidth === 100 ? 'none' : ''; }
+        if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.visibility = _cv.scrollWidth === 100 ? 'hidden' : ''; }
     }
 }
 
@@ -2623,7 +2623,7 @@ function cvApplyTransform() {
     if (btn) {
         const pct = Math.round(_cv.zoom * 100);
         btn.textContent = pct + '%';
-        btn.style.display = _cv.zoom === 1 ? 'none' : '';
+        btn.style.visibility = _cv.zoom === 1 ? 'hidden' : '';
     }
 }
 
