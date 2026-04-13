@@ -2,6 +2,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio_util::bytes::Bytes;
+
 use anyhow::Context;
 use axum::{
     Router,
@@ -494,36 +498,39 @@ fn parse_byte_range(s: &str, total: u64) -> Option<(u64, u64)> {
     Some((start, end.min(total - 1)))
 }
 
-/// Transcode a video file to H.264/AAC mp4 via ffmpeg, cache the result under
-/// `<root>/.filetag/cache/video/`, then serve with Range support.
-/// Browser-incompatible formats (avi, wmv, mkv, mpg/mpeg, …) become seekable
-/// mp4 streams this way.
+/// Transcode a video file to H.264/AAC mp4 via ffmpeg and stream it immediately
+/// to the client as a fragmented mp4. The output is simultaneously written to a
+/// cache file under `<root>/.filetag/cache/video/` so subsequent requests are
+/// served instantly with full Range support.
 async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap) -> Response {
-    // Use the generic file_cache_path infrastructure, storing under "video/" with suffix "mp4".
     let cache_path = match file_cache_path(path, root, "video", "mp4") {
         Some(p) => p,
         None => return serve_file_range(path, headers).await,
     };
 
-    // If a cached transcode already exists, serve it directly.
+    // If a cached transcode already exists, serve it directly with Range support.
     if cache_path.exists() {
         return serve_file_range(&cache_path, headers).await;
     }
 
-    // Acquire the shared concurrency permit to avoid spawning many ffmpeg
-    // processes in parallel.
-    let _permit = match THUMB_LIMITER.acquire().await {
+    // Acquire the shared concurrency permit to avoid too many ffmpeg processes.
+    let permit = match THUMB_LIMITER.acquire().await {
         Ok(p) => p,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
     };
 
     // Re-check after acquiring permit (another task may have finished it).
     if cache_path.exists() {
+        drop(permit);
         return serve_file_range(&cache_path, headers).await;
     }
 
     let tmp = cache_path.with_extension("tmp.mp4");
-    let status = tokio::process::Command::new("nice")
+
+    // Spawn ffmpeg writing a fragmented mp4 to stdout. Fragmented mp4 is playable
+    // from the first byte, so the browser starts instantly without waiting for the
+    // full transcode to finish.
+    let mut child = match tokio::process::Command::new("nice")
         .args(["-n", "10", "ffmpeg"])
         .arg("-i")
         .arg(path)
@@ -538,28 +545,85 @@ async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap) -> 
             "aac",
             "-b:a",
             "128k",
-            // fragmented mp4 so the file is valid even if cut short
+            // Fragmented mp4: playable from byte 0, no need to wait for moov atom.
             "-movflags",
-            "+faststart",
-            "-y",
+            "frag_keyframe+empty_moov+default_base_moof",
+            "-f",
+            "mp4",
+            "pipe:1",
         ])
-        .arg(&tmp)
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
-        .status()
-        .await;
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return serve_file_range(path, headers).await,
+    };
 
-    match status {
-        Ok(s) if s.success() => {
-            let _ = tokio::fs::rename(&tmp, &cache_path).await;
-            serve_file_range(&cache_path, headers).await
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => return serve_file_range(path, headers).await,
+    };
+
+    let tmp_clone = tmp.clone();
+    let cache_clone = cache_path.clone();
+
+    // Use a channel to bridge the background reader task and the HTTP response stream.
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(16);
+
+    tokio::spawn(async move {
+        // Hold the permit and keep the child alive for the duration of the stream.
+        let _permit = permit;
+        let _child = child;
+
+        let mut reader = tokio::io::BufReader::new(stdout);
+        let mut cache_file = tokio::fs::File::create(&tmp_clone).await.ok();
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut ok = true;
+
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = Bytes::copy_from_slice(&buf[..n]);
+                    if let Some(ref mut f) = cache_file
+                        && f.write_all(&chunk).await.is_err()
+                    {
+                        ok = false;
+                        cache_file = None;
+                    }
+                    if tx.send(Ok::<Bytes, std::io::Error>(chunk)).await.is_err() {
+                        // Client disconnected; abort caching too.
+                        ok = false;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    ok = false;
+                    break;
+                }
+            }
         }
-        _ => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            // ffmpeg missing or failed: fall back to raw bytes (browser may reject it)
-            serve_file_range(path, headers).await
+
+        // Flush and persist the cache file only if the full stream was sent.
+        if ok {
+            if let Some(mut f) = cache_file {
+                let _ = f.flush().await;
+                let _ = tokio::fs::rename(&tmp_clone, &cache_clone).await;
+            }
+        } else {
+            let _ = tokio::fs::remove_file(&tmp_clone).await;
         }
-    }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 /// Return a cache path for a derived preview file, keyed by mtime + size.
@@ -2172,9 +2236,22 @@ async fn api_files(
         .filter(|(_, r)| r.entry_point)
         .collect();
     if params.root.is_none() && params.path.is_empty() && entry_point_roots.len() > 1 {
-        let entries = entry_point_roots
+        // Sort by the persisted sort_order so drag-and-drop reordering is reflected.
+        let mut ordered: Vec<(usize, &DbRoot, i64)> = entry_point_roots
             .iter()
-            .map(|&(id, r)| ApiDirEntry {
+            .map(|&(id, r)| {
+                let order = Connection::open(&r.db_path)
+                    .ok()
+                    .and_then(|c| db::get_setting(&c, "sort_order").ok().flatten())
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(id as i64);
+                (id, r, order)
+            })
+            .collect();
+        ordered.sort_by_key(|&(_, _, o)| o);
+        let entries = ordered
+            .iter()
+            .map(|&(id, r, _)| ApiDirEntry {
                 name: r.name.clone(),
                 is_dir: true,
                 size: None,
