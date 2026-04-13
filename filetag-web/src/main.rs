@@ -974,15 +974,23 @@ fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
     file_cache_path(abs, root, "thumbs", "thumb.jpg")
 }
 
-/// Get video duration in seconds via ffprobe.
-async fn video_duration(path: &Path) -> Option<f64> {
+struct VideoInfo {
+    duration: f64,
+    width: u32,
+    height: u32,
+}
+
+/// Get video duration (seconds) and dimensions via a single ffprobe call.
+async fn video_info(path: &Path) -> Option<VideoInfo> {
     let out = tokio::process::Command::new("nice")
         .args(["-n", "10", "ffprobe"])
         .args([
             "-v",
             "error",
+            "-select_streams",
+            "v:0",
             "-show_entries",
-            "format=duration",
+            "stream=width,height:format=duration",
             "-of",
             "csv=p=0",
         ])
@@ -991,28 +999,49 @@ async fn video_duration(path: &Path) -> Option<f64> {
         .output()
         .await
         .ok()?;
-    if out.status.success() {
-        std::str::from_utf8(&out.stdout)
-            .ok()?
-            .trim()
-            .parse::<f64>()
-            .ok()
-    } else {
-        None
+    if !out.status.success() {
+        return None;
     }
+    // Output lines: "width,height" then "duration" (or vice-versa depending on ffprobe version).
+    // We parse all lines and pick out what we need.
+    let text = std::str::from_utf8(&out.stdout).ok()?;
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut duration = 0f64;
+    for line in text.lines() {
+        let parts: Vec<&str> = line.trim().split(',').collect();
+        if parts.len() == 2 {
+            if let (Ok(w), Ok(h)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                width = w;
+                height = h;
+            } else if let Ok(d) = parts[0].parse::<f64>() {
+                duration = d;
+            }
+        } else if parts.len() == 1
+            && let Ok(d) = parts[0].parse::<f64>()
+        {
+            duration = d;
+        }
+    }
+    if width == 0 || height == 0 || duration <= 0.0 {
+        return None;
+    }
+    Some(VideoInfo {
+        duration,
+        width,
+        height,
+    })
 }
 
-/// Generate a 2×2 JPEG contact-sheet thumbnail for a video file.
-/// Uses ffmpeg fast-seek (-ss before -i) for each of 4 frames.
+/// Generate a JPEG contact-sheet thumbnail for a video file.
+/// Landscape videos: 2 columns × 3 rows (6 frames).
+/// Portrait videos:  3 columns × 2 rows (6 frames).
 async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
-    // Serve from cache if available
     if let Some(cache) = thumb_cache_path(path, root) {
         if let Ok(data) = tokio::fs::read(&cache).await {
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
-        // Acquire a concurrency permit so we don't spawn dozens of ffmpeg processes
-        // in parallel when browsing directories with many large video files.
         let _permit = match THUMB_LIMITER.try_acquire() {
             Ok(p) => p,
             Err(_) => {
@@ -1020,12 +1049,22 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             }
         };
 
-        // Determine seek positions
-        let dur = video_duration(path).await;
-        let positions: [f64; 4] = match dur {
-            Some(d) if d > 0.5 => [d * 0.08, d * 0.33, d * 0.62, d * 0.87],
-            // Fallback: fixed offsets; ffmpeg will just grab what's available
-            _ => [2.0, 10.0, 30.0, 60.0],
+        let info = video_info(path).await;
+        let (cols, rows, tile_w) = match &info {
+            // portrait: more columns, fewer rows
+            Some(i) if i.height > i.width => (3u32, 2u32, 160u32),
+            // landscape (default): fewer columns, more rows
+            _ => (2u32, 3u32, 240u32),
+        };
+        let n = (cols * rows) as usize;
+        let dur = info.as_ref().map(|i| i.duration);
+
+        // Compute n evenly-spaced seek positions, avoiding the very start/end.
+        let positions: Vec<f64> = match dur {
+            Some(d) if d > 0.5 => (0..n)
+                .map(|i| d * (0.05 + 0.90 * i as f64 / (n - 1).max(1) as f64))
+                .collect(),
+            _ => (0..n).map(|i| 2.0 + i as f64 * 10.0).collect(),
         };
 
         let mut cmd = tokio::process::Command::new("nice");
@@ -1033,16 +1072,26 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
         for t in &positions {
             cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(path);
         }
-        // Build a 2×2 grid: top row = frames 0+1, bottom row = 2+3
+
+        // Build filter: scale each frame, hstack into rows, vstack rows.
+        let scale = format!("scale={tile_w}:-2,setsar=1");
+        let labels: Vec<String> = (0..n).map(|i| format!("[{i}:v]{scale}[f{i}]")).collect();
+        let mut filter = labels.join(";");
+
+        // hstack each row
+        for r in 0..rows as usize {
+            let inputs: String = (0..cols as usize)
+                .map(|c| format!("[f{}]", r * cols as usize + c))
+                .collect();
+            filter += &format!(";{inputs}hstack={cols}[row{r}]");
+        }
+        // vstack all rows
+        let row_labels: String = (0..rows as usize).map(|r| format!("[row{r}]")).collect();
+        filter += &format!(";{row_labels}vstack={rows}");
+
         cmd.args([
             "-filter_complex",
-            "[0:v]scale=240:-2,setsar=1[a];\
-             [1:v]scale=240:-2,setsar=1[b];\
-             [2:v]scale=240:-2,setsar=1[c];\
-             [3:v]scale=240:-2,setsar=1[d];\
-             [a][b]hstack[top];\
-             [c][d]hstack[bot];\
-             [top][bot]vstack",
+            &filter,
             "-frames:v",
             "1",
             "-f",
@@ -1062,8 +1111,7 @@ async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
-        // 4-input hstack failed (e.g. video shorter than all seek points).
-        // Fall back to single frame at ~10% or 5 s.
+        // Fallback: single frame
         let ss = match dur {
             Some(d) if d > 1.0 => format!("{:.2}", d * 0.1),
             _ => "5".to_string(),
