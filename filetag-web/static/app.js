@@ -182,6 +182,7 @@ const state = {
     detailOpen: true,
     expandedGroups: new Set(), // tag group prefixes that are expanded
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
+    aiAnalysing: new Set(),    // paths currently being analysed by AI
 };
 
 let _lastClickedPath = null; // for shift-range selection
@@ -217,6 +218,32 @@ async function apiPost(url, body) {
 // Helper: append root query param when a root is selected.
 function rootParam(sep) {
     return state.currentRootId != null ? `${sep}root=${state.currentRootId}` : '';
+}
+
+// ---------------------------------------------------------------------------
+// Toast notifications
+// ---------------------------------------------------------------------------
+
+function showToast(msg, duration = 3000) {
+    const container = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    container.appendChild(el);
+    if (duration > 0) {
+        setTimeout(() => dismissToast(el), duration);
+    }
+    return el;
+}
+
+function updateToast(el, msg) {
+    if (el && el.isConnected) el.textContent = msg;
+}
+
+function dismissToast(el) {
+    if (!el || !el.isConnected) return;
+    el.classList.add('toast-out');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
 }
 
 async function loadRoots() {
@@ -628,9 +655,7 @@ function renderGrid(items) {
 
         let preview = '';
         if (isDir) {
-            const ftPath = fullPath(entry);
-            const ftSrc = `/api/folder-thumb?path=${encodeURIComponent(ftPath)}${rootParam('&')}`;
-            preview = `<div class="card-thumb-pending" data-thumb-src="${ftSrc}" data-fallback="folder"></div>`;
+            preview = `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
@@ -659,7 +684,7 @@ function renderGrid(items) {
                     ondragleave="_rootDragLeave(event)"
                     ondrop="_rootDrop(event,${entry.root_id})"
                     ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
-                    <div class="card-preview"><div class="card-thumb-pending" data-thumb-src="/api/folder-thumb?path=&root=${entry.root_id}" data-fallback="folder"></div></div>
+                    <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
             } else {
@@ -1301,12 +1326,6 @@ async function _thumbRun() {
                     _thumbQueue.push(el);
                     _thumbObserver.observe(el);
                 }
-            } else if (el.isConnected && el.dataset.fallback === 'folder') {
-                // No media files in folder: show folder icon.
-                el.replaceWith(Object.assign(document.createElement('div'), {
-                    className: 'card-icon',
-                    innerHTML: ICONS.folder,
-                }));
             }
         } catch (_) { /* network error: leave placeholder */ }
     }
@@ -1339,6 +1358,11 @@ function renderDetail() {
         const count = state.selectedPaths.size;
         const bulkTags = aggregateBulkTags();
         const chipsHtml = renderBulkTagChips(bulkTags, count);
+        const paths = [...state.selectedPaths];
+        const hasAiTagsBulk = bulkTags.some(t => t.name.startsWith('ai/'));
+        const aiClearBulkBtn = hasAiTagsBulk
+            ? `<button class="ai-clear-btn" onclick="aiClearTags(${JSON.stringify(paths)})">Verwijder alle ai/-tags</button>`
+            : '';
         panel.innerHTML = `
             <div class="detail-header">
                 <h3>${count} files selected</h3>
@@ -1352,6 +1376,7 @@ function renderDetail() {
                     <input type="text" id="bulk-tag-input" placeholder="Tag (e.g. genre/rock)">
                     <button onclick="doBulkAddTag()">Add</button>
                 </div>
+                ${aiClearBulkBtn}
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
         attachTagAutocomplete(document.getElementById('bulk-tag-input'), () => doBulkAddTag());
@@ -1433,6 +1458,7 @@ function renderDetail() {
 
     const covered = f.covered !== false;
 
+    const hasAiTags = covered && f.tags.some(t => t.name.startsWith('ai/'));
     const tagChips = f.tags.length === 0
         ? '<span class="no-tags">No tags assigned</span>'
         : f.tags.map(t => {
@@ -1442,7 +1468,10 @@ function renderDetail() {
             if (!covered) {
                 return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
             }
-            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
+            const promoteBtn = t.name.startsWith('ai/')
+                ? `<button class="promote" title="Bewaar zonder ai/-prefix" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
+                : '';
+            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
 
     const tagAddSection = covered
@@ -1451,6 +1480,15 @@ function renderDetail() {
                 <button onclick="doAddTag()">Add</button>
             </div>`
         : `<div class="uncovered-notice">This file is on a different filesystem. Tags cannot be added here.</div>`;
+
+    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw');
+    const isAnalysing = state.aiAnalysing.has(f.path);
+    const aiClearBtn = hasAiTags
+        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Verwijder ai/-tags</button>`
+        : '';
+    const aiBtn = isAnalysable || hasAiTags
+        ? `<div class="ai-analyse-row">${isAnalysable ? `<button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? 'Analyseren…' : '✨ Analyse (AI)'}</button>` : ''}${aiClearBtn}</div>`
+        : '';
 
     panel.innerHTML = `
         <div class="detail-header">
@@ -1471,6 +1509,7 @@ function renderDetail() {
             <h4>Tags</h4>
             <div class="detail-tags">${tagChips}</div>
             ${tagAddSection}
+            ${aiBtn}
         </div>`;
 
     if (covered) attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
@@ -2137,6 +2176,7 @@ async function clearCache(all = false) {
 
     const btn = document.getElementById('cache-clear-page-btn');
     btn.disabled = true;
+    const toast = showToast(all ? 'Cache wissen…' : 'Cache van huidige pagina wissen…', 0);
     try {
         let body = null;
         if (!all) {
@@ -2151,16 +2191,302 @@ async function clearCache(all = false) {
             headers: body ? { 'Content-Type': 'application/json' } : {},
             body: body ?? undefined,
         });
+        updateToast(toast, all ? 'Volledige cache gewist' : 'Cache van pagina gewist');
     } catch (_) {
-        // Reload regardless
+        updateToast(toast, 'Cache wissen mislukt');
     } finally {
         btn.disabled = false;
+        dismissToast(toast);
+        showToast(all ? 'Cache gewist' : 'Paginacache gewist');
         if (state.mode === 'search') {
             await doSearch();
         } else {
             await loadFiles(state.currentPath);
         }
     }
+}
+
+async function pregenSprites() {
+    const menu = document.getElementById('cache-menu');
+    if (menu) menu.hidden = true;
+
+    const VIDEO_EXTS = new Set([
+        'mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg',
+        'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
+        'mpe','m1v','mpv','qt',
+    ]);
+
+    const items = state.mode === 'search' ? state.searchResults : state.entries;
+    const videoPaths = (items || [])
+        .filter(e => !e.is_dir && e.path && VIDEO_EXTS.has(e.path.split('.').pop().toLowerCase()))
+        .map(e => e.path);
+
+    if (videoPaths.length === 0) return;
+
+    const btn = document.getElementById('pregen-sprites-btn');
+    btn.disabled = true;
+
+    const toast = showToast(`Video sprites genereren… (0 / ${videoPaths.length})`, 0);
+    toast.classList.add('toast-progress');
+
+    let done = 0;
+    for (const path of videoPaths) {
+        updateToast(toast, `Video sprites genereren… (${done} / ${videoPaths.length})`);
+        try {
+            await fetch('/api/vthumbs?' + new URLSearchParams({ path, n: 8 }) + rootParam('&'));
+        } catch (_) { /* ignore */ }
+        done++;
+        _trickplayCache.delete(path);
+    }
+
+    dismissToast(toast);
+    showToast(`Klaar: ${done} sprite${done !== 1 ? 's' : ''} gegenereerd`);
+    btn.disabled = false;
+}
+
+// ---------------------------------------------------------------------------
+// AI image analysis
+// ---------------------------------------------------------------------------
+
+const AI_IMAGE_EXTS = new Set([
+    'jpg','jpeg','png','gif','webp','bmp','avif','tiff','tif','heic','heif',
+    'arw','cr2','cr3','nef','orf','rw2','dng','raf','pef','srw',
+    'raw','3fr','x3f','rwl','iiq','mef','mos',
+]);
+
+function isAiImage(path) {
+    return AI_IMAGE_EXTS.has((path || '').split('.').pop().toLowerCase());
+}
+
+async function openAiSettings() {
+    const menu = document.getElementById('cache-menu');
+    if (menu) menu.hidden = true;
+    try {
+        const res = await fetch('/api/ai/config?' + new URLSearchParams({ root_id: state.currentRootId ?? 0 }));
+        const cfg = await res.json();
+        document.getElementById('ai-endpoint').value = cfg.endpoint || '';
+        document.getElementById('ai-model').value = cfg.model || '';
+        document.getElementById('ai-api-key').value = '';
+        document.getElementById('ai-api-key').placeholder = cfg.api_key || 'Leave empty for local models';
+        document.getElementById('ai-tag-prefix').value = cfg.tag_prefix || 'ai/';
+        document.getElementById('ai-max-tokens').value = cfg.max_tokens || 512;
+        document.getElementById('ai-prompt').value = cfg.prompt || '';
+        document.getElementById('ai-prompt').placeholder = cfg.default_prompt || '';
+        document.getElementById('ai-format').value = cfg.format || 'openai';
+    } catch (_) { /* defaults are fine */ }
+    document.getElementById('ai-test-result').hidden = true;
+    document.getElementById('ai-settings-modal').hidden = false;
+}
+
+function closeAiSettings() {
+    document.getElementById('ai-settings-modal').hidden = true;
+}
+
+async function aiSaveSettings() {
+    const body = {
+        endpoint: document.getElementById('ai-endpoint').value.trim(),
+        model: document.getElementById('ai-model').value.trim(),
+        prompt: document.getElementById('ai-prompt').value,
+        tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
+        max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
+        format: document.getElementById('ai-format').value,
+        root_id: state.currentRootId ?? 0,
+    };
+    const apiKey = document.getElementById('ai-api-key').value;
+    if (apiKey) body.api_key = apiKey;
+    try {
+        await apiPost('/api/ai/config', body);
+        closeAiSettings();
+    } catch (e) {
+        alert('Save failed: ' + e.message);
+    }
+}
+
+async function aiTestConnection() {
+    const resultEl = document.getElementById('ai-test-result');
+    resultEl.hidden = false;
+    resultEl.textContent = 'Saving settings and testing…';
+
+    // Save first so the server has the current config
+    await aiSaveSettings();
+    // Re-open the modal (save closes it)
+    document.getElementById('ai-settings-modal').hidden = false;
+    resultEl.hidden = false;
+
+    // Find an image to test with: prefer the selected file, then the current view
+    let testFile = null;
+    if (state.selectedFile && isAiImage(state.selectedFile.path)) {
+        testFile = state.selectedFile;
+    } else {
+        const items = state.mode === 'search' ? (state.searchResults || []) : (state.entries || []);
+        testFile = items.find(e => !e.is_dir && isAiImage(e.path));
+    }
+    if (!testFile) {
+        resultEl.textContent = 'Geen afbeelding gevonden in huidige map om te testen.';
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/ai/analyse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: testFile.path, root_id: state.currentRootId ?? 0, dry_run: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            resultEl.textContent = 'Error: ' + (data.error || res.statusText);
+        } else {
+            if ((data.tags || []).length > 0) {
+                resultEl.textContent = 'Tags: ' + data.tags.join(', ');
+            } else {
+                resultEl.textContent = 'Geen tags herkend.\n\nRuwe respons van model:\n' + (data.raw || '(leeg)');
+            }
+        }
+    } catch (e) {
+        resultEl.textContent = 'Connection failed: ' + e.message;
+    }
+}
+
+/// Promote an ai/* tag: add it without the prefix, then remove the original.
+async function aiPromoteTag(path, tagName, value) {
+    // tagName is e.g. "ai/necklace", promoted becomes "necklace".
+    // value may be "" or e.g. "gold" for key=value tags.
+    const promoted = tagName.slice('ai/'.length);
+    if (!promoted) return;
+    const newTagStr = value ? `${promoted}=${value}` : promoted;
+    const toast = showToast(`Promoten: ${newTagStr}…`, 0);
+    try {
+        // Add the promoted tag, then remove the ai/ original.
+        await apiPost('/api/tag', { path, tags: [newTagStr], root_id: state.currentRootId });
+        const origStr = value ? `${tagName}=${value}` : tagName;
+        await apiPost('/api/untag', { path, tags: [origStr], root_id: state.currentRootId });
+        await loadFileDetail(path);
+        await loadTags();
+        renderDetailTagsOnly();
+        _updateCardTagBadges();
+    } catch (e) {
+        showToast('Promoten mislukt: ' + e.message);
+    } finally {
+        dismissToast(toast);
+    }
+}
+
+/// Remove all ai/* tags from given paths.
+async function aiClearTags(paths) {
+    const toast = showToast(`ai/-tags verwijderen van ${paths.length} bestand${paths.length !== 1 ? 'en' : ''}…`, 0);
+    try {
+        await apiPost('/api/ai/clear-tags', { paths, root_id: state.currentRootId ?? 0 });
+        // Refresh each file that may be currently selected.
+        for (const p of paths) {
+            if (state.selectedFile?.path === p) {
+                await loadFileDetail(p);
+            }
+        }
+        await loadTags();
+        renderDetail();
+        _updateCardTagBadges();
+        dismissToast(toast);
+        showToast(`ai/-tags verwijderd`);
+    } catch (e) {
+        dismissToast(toast);
+        showToast('Verwijderen mislukt: ' + e.message);
+    }
+}
+
+async function aiAnalyseSingle(path) {
+    if (state.aiAnalysing.has(path)) return; // already running
+    state.aiAnalysing.add(path);
+    // Re-render so the button shows "Analyseren…" immediately (also persists on navigate-away & back)
+    if (state.selectedFile?.path === path) renderDetail();
+    const toast = showToast(`AI: analyseren…`, 0);
+    try {
+        const res = await fetch('/api/ai/analyse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, root_id: state.currentRootId ?? 0 }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        const n = (data.tags || []).length;
+        dismissToast(toast);
+        showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} toegevoegd`);
+        if (state.selectedFile?.path === path) {
+            await refreshSelectedFile();
+        }
+    } catch (e) {
+        dismissToast(toast);
+        showToast('AI fout: ' + e.message);
+    } finally {
+        state.aiAnalysing.delete(path);
+        if (state.selectedFile?.path === path) renderDetail();
+    }
+}
+
+async function aiAnalyseBatch() {
+    const menu = document.getElementById('cache-menu');
+    if (menu) menu.hidden = true;
+
+    const items = state.mode === 'search' ? state.searchResults : state.entries;
+    const imagePaths = (items || [])
+        .filter(e => !e.is_dir && isAiImage(e.path))
+        .map(e => e.path);
+
+    if (imagePaths.length === 0) {
+        showToast('Geen afbeeldingen in huidige weergave');
+        return;
+    }
+
+    const btn = document.getElementById('ai-analyse-btn');
+    if (btn) btn.disabled = true;
+
+    const toast = showToast(`AI: ${imagePaths.length} afbeeldingen in wachtrij…`, 0);
+    toast.classList.add('toast-progress');
+
+    try {
+        const res = await fetch('/api/ai/analyse-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: imagePaths, root_id: state.currentRootId ?? 0 }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+
+        // Poll progress
+        const poll = setInterval(async () => {
+            try {
+                const sr = await fetch('/api/ai/status');
+                const prog = await sr.json();
+                updateToast(toast, `AI: analyseren… (${prog.done} / ${prog.total})`);
+                if (!prog.running) {
+                    clearInterval(poll);
+                    dismissToast(toast);
+                    showToast(`AI klaar: ${prog.done} afbeelding${prog.done !== 1 ? 'en' : ''} geanalyseerd`);
+                    if (btn) btn.disabled = false;
+                    await loadTags();
+                }
+            } catch (_) {
+                clearInterval(poll);
+                dismissToast(toast);
+                if (btn) btn.disabled = false;
+            }
+        }, 2000);
+    } catch (e) {
+        dismissToast(toast);
+        showToast('AI fout: ' + e.message);
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function refreshSelectedFile() {
+    if (!state.selectedFile) return;
+    try {
+        const res = await fetch('/api/file?' + new URLSearchParams({ path: state.selectedFile.path, root_id: state.currentRootId ?? 0 }));
+        if (res.ok) {
+            state.selectedFile = await res.json();
+            renderDetailTagsOnly();
+        }
+    } catch (_) {}
+    await loadTags();
 }
 
 function setViewMode(mode) {
@@ -2604,7 +2930,7 @@ function cvBuildThumbs() {
         cell.dataset.page = i;
         cell.onclick = () => cvShowPage(i);
         const url = cvThumbUrl(i);
-        cell.innerHTML = `<img src="${url}" loading="lazy" alt="page ${i + 1}">` +
+        cell.innerHTML = `<img src="${url}" loading="lazy" alt="page ${i + 1}" onerror="this.style.visibility='hidden'">` +
             `<div class="cv-thumb-num">${i + 1}</div>`;
         panel.appendChild(cell);
     });

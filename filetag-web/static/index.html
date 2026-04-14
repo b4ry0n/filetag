@@ -76,8 +76,14 @@
                         </button>
                         <div class="toolbar-dropdown" id="cache-menu" hidden>
                             <button onclick="clearCache(true)">Clear entire cache</button>
+                            <button id="pregen-sprites-btn" onclick="pregenSprites()">Generate video sprites</button>
+                            <hr>
+                            <button id="ai-analyse-btn" onclick="aiAnalyseBatch()">Analyse images (AI)</button>
                         </div>
                     </div>
+                    <button class="view-btn" id="ai-settings-btn" title="AI image analysis settings" onclick="openAiSettings()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
                 </div>
             </div>
             <div id="content" class="file-grid"></div>
@@ -175,6 +181,49 @@
             </div>
         </div>
     </div>
+    <div id="toast-container"></div>
+    <!-- AI settings modal -->
+    <div id="ai-settings-modal" class="modal-overlay" hidden onclick="if(event.target===this)closeAiSettings()">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>AI Image Analysis</h3>
+                <button class="modal-close" onclick="closeAiSettings()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label>Format
+                    <select id="ai-format">
+                        <option value="openai">OpenAI-compatible (llama.cpp, LM Studio, vLLM)</option>
+                        <option value="ollama">Ollama</option>
+                    </select>
+                </label>
+                <label>Endpoint URL
+                    <input type="text" id="ai-endpoint" placeholder="http://localhost:8080">
+                </label>
+                <label>Model
+                    <input type="text" id="ai-model" placeholder="e.g. qwen2.5-vl">
+                </label>
+                <label>API key (optional)
+                    <input type="password" id="ai-api-key" placeholder="Leave empty for local models">
+                </label>
+                <label>Tag prefix
+                    <input type="text" id="ai-tag-prefix" placeholder="ai/">
+                </label>
+                <label>Max tokens
+                    <input type="number" id="ai-max-tokens" value="512" min="64" max="4096">
+                </label>
+                <label>Prompt
+                    <textarea id="ai-prompt" rows="8" placeholder="Leave empty for default prompt"></textarea>
+                </label>
+                <div class="modal-actions">
+                    <button id="ai-test-btn" onclick="aiTestConnection()">Test connection</button>
+                    <button onclick="aiSaveSettings()">Save</button>
+                    <button onclick="closeAiSettings()">Cancel</button>
+                </div>
+                <div id="ai-test-result" class="ai-test-result" hidden></div>
+            </div>
+        </div>
+    </div>
+
     <script src="/app.js"></script>
 </body>
 </html>
