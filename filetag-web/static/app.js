@@ -1130,9 +1130,7 @@ function _trickplayAttach(img, path) {
 
         // Horizontal: center on card.  Vertical: center for landscape, top for portrait.
         let left = cardRect.left + (cardRect.width - popupW) / 2;
-        let top  = isPortrait
-            ? cardRect.top
-            : cardRect.top + (cardRect.height - popupH) / 2;
+        let top  = cardRect.top + (cardRect.height - popupH) / 2;
 
         // Clamp to viewport so the popup doesn't escape the screen.
         left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
