@@ -1580,10 +1580,17 @@ fn apply_ai_tags(
     prefix: &str,
 ) -> anyhow::Result<()> {
     let file_rec = db::get_or_index_file(conn, rel_path, root)?;
+    let existing = db::tags_for_file(conn, file_rec.id)?;
 
-    // Remove existing tags with the AI prefix (re-analysis replaces old ones).
+    // Build a set of existing non-ai tag names (lowercase) for duplicate filtering.
+    let existing_names: std::collections::HashSet<String> = existing
+        .iter()
+        .filter(|(name, _)| !name.starts_with(prefix))
+        .map(|(name, _)| name.to_lowercase())
+        .collect();
+
+    // Remove existing AI tags (re-analysis replaces old ones).
     if !prefix.is_empty() {
-        let existing = db::tags_for_file(conn, file_rec.id)?;
         for (name, value) in &existing {
             if name.starts_with(prefix)
                 && let Ok(tag_id) = db::get_or_create_tag(conn, name)
@@ -1593,7 +1600,7 @@ fn apply_ai_tags(
         }
     }
 
-    // Apply new tags
+    // Apply new tags, skipping any whose base name (without prefix) already exists.
     for tag_str in tags {
         let (name, value) = if let Some(eq) = tag_str.find('=') {
             (
@@ -1603,6 +1610,15 @@ fn apply_ai_tags(
         } else {
             (tag_str.clone(), None)
         };
+        // Strip prefix to get the bare tag name, then check against existing.
+        let bare = if !prefix.is_empty() && name.starts_with(prefix) {
+            name[prefix.len()..].to_string()
+        } else {
+            name.clone()
+        };
+        if existing_names.contains(&bare) {
+            continue;
+        }
         let tag_id = db::get_or_create_tag(conn, &name)?;
         db::apply_tag(conn, file_rec.id, tag_id, value.as_deref())?;
     }
