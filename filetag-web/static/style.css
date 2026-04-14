@@ -616,6 +616,11 @@ h3, h4 { font-weight: 600; }
     position: relative;
 }
 
+.card.kb-focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
 .card-goto {
     position: absolute;
     top: 5px;
@@ -707,6 +712,45 @@ h3, h4 { font-weight: 600; }
     gap: 3px;
 }
 .card-filmstrip-badge svg { width: 10px; height: 10px; }
+
+/* Trickplay hover: a sprite-sheet overlay sits on top of the contact-sheet
+   thumbnail. Moving the cursor shifts background-position over the strip. */
+.card-trickplay {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    cursor: default;
+}
+/* The original contact-sheet <img> stays in the DOM at all times. */
+.card-trickplay img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+/* Sprite overlay: fixed-position popup, sized + placed by JS */
+.card-trickplay-sprite {
+    background-repeat: no-repeat;
+    /* background-size, background-position, position, size set inline */
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
+    border-radius: 4px;
+    overflow: hidden;
+    pointer-events: all;
+}
+/* Progress bar at the bottom of the trickplay area */
+.card-trickplay-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: var(--accent);
+    pointer-events: none;
+    transition: width 0.06s linear;
+    width: 0;
+}
 
 .card-icon {
     font-size: calc(var(--card-size, 140px) * 0.26);
@@ -834,6 +878,10 @@ h3, h4 { font-weight: 600; }
 
 .list-row:hover { background: var(--bg-hover); }
 .list-row.selected { background: var(--primary-light); }
+.list-row.kb-focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
 
 .list-row .icon { display: flex; align-items: center; justify-content: center; }
 .list-row .icon svg { width: 18px; height: 18px; color: var(--text-tertiary); }
@@ -1445,7 +1493,7 @@ h3, h4 { font-weight: 600; }
 /* Comic viewer                                                       */
 /* ------------------------------------------------------------------ */
 
-.comic-viewer {
+.media-viewer {
     position: fixed;
     inset: 0;
     background: #0a0a0a;
@@ -1453,7 +1501,7 @@ h3, h4 { font-weight: 600; }
     display: flex;
     flex-direction: column;
 }
-.comic-viewer[hidden] { display: none; }
+.media-viewer[hidden] { display: none; }
 
 .cv-toolbar {
     display: flex;
@@ -1654,19 +1702,19 @@ h3, h4 { font-weight: 600; }
 }
 
 /* In native full-screen the toolbar is still 54 px, rest is the image */
-#comic-viewer:fullscreen { background: #000; }
-#comic-viewer:-webkit-full-screen { background: #000; }
-#comic-viewer:fullscreen .cv-page { max-height: calc(100vh - 54px); }
-#comic-viewer:-webkit-full-screen .cv-page { max-height: calc(100vh - 54px); }
-#comic-viewer:fullscreen .cv-thumbs { max-height: calc(100vh - 54px); }
-#comic-viewer:-webkit-full-screen .cv-thumbs { max-height: calc(100vh - 54px); }
+#media-viewer:fullscreen { background: #000; }
+#media-viewer:-webkit-full-screen { background: #000; }
+#media-viewer:fullscreen .cv-page { max-height: calc(100vh - 54px); }
+#media-viewer:-webkit-full-screen .cv-page { max-height: calc(100vh - 54px); }
+#media-viewer:fullscreen .cv-thumbs { max-height: calc(100vh - 54px); }
+#media-viewer:-webkit-full-screen .cv-thumbs { max-height: calc(100vh - 54px); }
 /* Scroll modes must not be capped by the single-page fullscreen max-height */
-#comic-viewer:fullscreen .cv-stage.cv-scroll-mode .cv-page,
-#comic-viewer:-webkit-full-screen .cv-stage.cv-scroll-mode .cv-page {
+#media-viewer:fullscreen .cv-stage.cv-scroll-mode .cv-page,
+#media-viewer:-webkit-full-screen .cv-stage.cv-scroll-mode .cv-page {
     max-height: none;
 }
-#comic-viewer:fullscreen .cv-stage.cv-hscroll-mode .cv-page,
-#comic-viewer:-webkit-full-screen .cv-stage.cv-hscroll-mode .cv-page {
+#media-viewer:fullscreen .cv-stage.cv-hscroll-mode .cv-page,
+#media-viewer:-webkit-full-screen .cv-stage.cv-hscroll-mode .cv-page {
     /* Cap at stage height (not viewport minus toolbar) */
     max-height: 100%;
 }
