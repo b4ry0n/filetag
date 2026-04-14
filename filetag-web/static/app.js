@@ -2414,7 +2414,8 @@ async function aiAnalyseSingle(path) {
         dismissToast(toast);
         showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} toegevoegd`);
         if (state.selectedFile?.path === path) {
-            await refreshSelectedFile();
+            await loadFileDetail(path);
+            await loadTags();
         }
     } catch (e) {
         dismissToast(toast);
