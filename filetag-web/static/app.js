@@ -2285,6 +2285,11 @@ function closeAiSettings() {
     document.getElementById('ai-settings-modal').hidden = true;
 }
 
+function aiUseDefaultPrompt() {
+    const el = document.getElementById('ai-prompt');
+    if (el) el.value = el.placeholder;
+}
+
 async function aiSaveSettings() {
     const body = {
         endpoint: document.getElementById('ai-endpoint').value.trim(),

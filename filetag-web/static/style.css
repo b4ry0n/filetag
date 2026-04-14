@@ -1821,6 +1821,17 @@ h3, h4 { font-weight: 600; }
 .modal-actions button:first-child {
     margin-right: auto;
 }
+.use-default-btn {
+    margin-top: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.use-default-btn:hover { color: var(--fg); }
 .ai-test-result {
     margin-top: 8px;
     padding: 8px;
