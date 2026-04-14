@@ -1452,12 +1452,33 @@ async fn vlm_call(
 /// Single-step image analysis: send the image together with the tagging
 /// prompt and parse the JSON array the model returns.
 /// Returns `(raw_response_for_debug, tags)`.
+fn build_ai_prompt(existing_tags: &[String]) -> String {
+    if existing_tags.is_empty() {
+        return AI_DEFAULT_PROMPT.to_string();
+    }
+    let list = existing_tags
+        .iter()
+        .map(|t| format!("\"{t}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Look at this image. The file already has these tags: [{list}]. \
+Output ONLY a JSON array of additional short descriptive tags (English, lowercase) \
+that complement the existing ones. Do not repeat existing tags. \
+No thinking, no explanation, no other text.\n\n\
+Good: [\"dog\", \"beach\", \"sunny\", \"swimming\"]\n\
+Bad: any text outside the JSON array\n\n/no_think"
+    )
+}
+
 async fn analyse_image(
     config: &AiConfig,
     jpeg_bytes: &[u8],
+    existing_tags: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
-    let raw = vlm_call(config, AI_DEFAULT_PROMPT, Some(&b64)).await?;
+    let prompt = build_ai_prompt(existing_tags);
+    let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     Ok((raw, tags))
 }
@@ -1666,7 +1687,27 @@ async fn api_ai_analyse(
         .await
         .map_err(|e| AppError(anyhow::anyhow!("AI limiter error: {e}")))?;
 
-    let (raw_response, tags) = analyse_image(&config, &jpeg).await.map_err(AppError)?;
+    // Fetch existing non-ai/* tags to guide the model.
+    let existing_tags: Vec<String> = {
+        let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
+        if let Ok(rec) = db::get_or_index_file(&conn, &rel, &db_root.root) {
+            db::tags_for_file(&conn, rec.id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(name, _)| !name.starts_with(&config.tag_prefix))
+                .map(|(name, value)| match value.as_deref().unwrap_or("") {
+                    "" => name,
+                    v => format!("{name}={v}"),
+                })
+                .collect()
+        } else {
+            vec![]
+        }
+    };
+
+    let (raw_response, tags) = analyse_image(&config, &jpeg, &existing_tags)
+        .await
+        .map_err(AppError)?;
 
     let applied = if !body.dry_run && !tags.is_empty() {
         let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
@@ -1763,12 +1804,27 @@ async fn api_ai_analyse_batch(
                 Ok(r) => r,
                 Err(_) => continue,
             };
-            if let Ok(rec) = db::get_or_index_file(&conn, &rel, &root)
-                && let Ok(existing) = db::tags_for_file(&conn, rec.id)
-                && existing.iter().any(|(n, _)| n == &marker)
-            {
-                continue;
-            }
+            let existing_tags: Vec<String> =
+                if let Ok(rec) = db::get_or_index_file(&conn, &rel, &root) {
+                    if let Ok(all_tags) = db::tags_for_file(&conn, rec.id) {
+                        // Skip this file if it already has the marker tag.
+                        if all_tags.iter().any(|(n, _)| n == &marker) {
+                            continue;
+                        }
+                        all_tags
+                            .into_iter()
+                            .filter(|(name, _)| !name.starts_with(&config.tag_prefix))
+                            .map(|(name, value)| match value.as_deref().unwrap_or("") {
+                                "" => name,
+                                v => format!("{name}={v}"),
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
 
             let jpeg = match ai_prepare_jpeg(&abs, &root).await {
                 Some(j) => j,
@@ -1780,7 +1836,7 @@ async fn api_ai_analyse_batch(
                 Err(_) => break,
             };
 
-            let (_raw, tags) = match analyse_image(&config, &jpeg).await {
+            let (_raw, tags) = match analyse_image(&config, &jpeg, &existing_tags).await {
                 Ok(t) => t,
                 Err(_) => continue,
             };
