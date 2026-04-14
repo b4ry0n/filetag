@@ -1585,6 +1585,11 @@ h3, h4 { font-weight: 600; }
     max-width: var(--cv-scroll-width, 100%);
     margin: 0 auto 8px;
     display: block;
+    /* Reserve space before the image loads so scrollIntoView lands correctly.
+       aspect-ratio is overridden by the image's intrinsic ratio once loaded. */
+    aspect-ratio: 3 / 4;
+    background: #111;
+    object-fit: contain;
 }
 
 /* Horizontal scroll mode */
@@ -1665,6 +1670,9 @@ h3, h4 { font-weight: 600; }
     object-fit: contain;
     background: #1a1a1a;
     min-height: 60px;
+    /* Hide the browser's alt-text broken-image icon; the page number stays visible */
+    overflow: hidden;
+    color: transparent;
 }
 
 .cv-thumb-num {

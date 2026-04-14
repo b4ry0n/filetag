@@ -628,9 +628,7 @@ function renderGrid(items) {
 
         let preview = '';
         if (isDir) {
-            const ftPath = fullPath(entry);
-            const ftSrc = `/api/folder-thumb?path=${encodeURIComponent(ftPath)}${rootParam('&')}`;
-            preview = `<div class="card-thumb-pending" data-thumb-src="${ftSrc}" data-fallback="folder"></div>`;
+            preview = `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
@@ -659,7 +657,7 @@ function renderGrid(items) {
                     ondragleave="_rootDragLeave(event)"
                     ondrop="_rootDrop(event,${entry.root_id})"
                     ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
-                    <div class="card-preview"><div class="card-thumb-pending" data-thumb-src="/api/folder-thumb?path=&root=${entry.root_id}" data-fallback="folder"></div></div>
+                    <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
             } else {
@@ -1301,12 +1299,6 @@ async function _thumbRun() {
                     _thumbQueue.push(el);
                     _thumbObserver.observe(el);
                 }
-            } else if (el.isConnected && el.dataset.fallback === 'folder') {
-                // No media files in folder: show folder icon.
-                el.replaceWith(Object.assign(document.createElement('div'), {
-                    className: 'card-icon',
-                    innerHTML: ICONS.folder,
-                }));
             }
         } catch (_) { /* network error: leave placeholder */ }
     }
@@ -2163,6 +2155,48 @@ async function clearCache(all = false) {
     }
 }
 
+async function pregenSprites() {
+    const menu = document.getElementById('cache-menu');
+    if (menu) menu.hidden = true;
+
+    const VIDEO_EXTS = new Set([
+        'mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg',
+        'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
+        'mpe','m1v','mpv','qt',
+    ]);
+
+    const items = state.mode === 'search' ? state.searchResults : state.entries;
+    const videoPaths = (items || [])
+        .filter(e => !e.is_dir && e.path && VIDEO_EXTS.has(e.path.split('.').pop().toLowerCase()))
+        .map(e => e.path);
+
+    if (videoPaths.length === 0) return;
+
+    const btn = document.getElementById('pregen-sprites-btn');
+    btn.disabled = true;
+    btn.textContent = `Generating… (0 / ${videoPaths.length})`;
+
+    // Poll progress by checking the trickplay cache in JS as sprites load.
+    // We send one batch request and then re-enable after a short wait.
+    let done = 0;
+    // Send one request per video so we get progress feedback.
+    for (const path of videoPaths) {
+        btn.textContent = `Generating… (${done} / ${videoPaths.length})`;
+        try {
+            await fetch('/api/vthumbs?' + new URLSearchParams({ path, n: 8 }) + rootParam('&'));
+        } catch (_) { /* ignore */ }
+        done++;
+        // Invalidate from JS cache so the next hover picks up the fresh sprite.
+        _trickplayCache.delete(path);
+    }
+
+    btn.textContent = `Done (${done} sprites)`;
+    setTimeout(() => {
+        btn.textContent = 'Generate video sprites';
+        btn.disabled = false;
+    }, 2500);
+}
+
 function setViewMode(mode) {
     state.viewMode = mode;
     document.getElementById('view-grid').classList.toggle('active', mode === 'grid');
@@ -2604,7 +2638,7 @@ function cvBuildThumbs() {
         cell.dataset.page = i;
         cell.onclick = () => cvShowPage(i);
         const url = cvThumbUrl(i);
-        cell.innerHTML = `<img src="${url}" loading="lazy" alt="page ${i + 1}">` +
+        cell.innerHTML = `<img src="${url}" loading="lazy" alt="page ${i + 1}" onerror="this.style.visibility='hidden'">` +
             `<div class="cv-thumb-num">${i + 1}</div>`;
         panel.appendChild(cell);
     });

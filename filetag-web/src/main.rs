@@ -987,186 +987,6 @@ struct VThumbsParams {
     n: Option<usize>,
 }
 
-// ---------------------------------------------------------------------------
-// Folder composite thumbnail
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct FolderThumbParams {
-    /// Relative path within the database root.  Empty string means the root itself.
-    #[serde(default)]
-    path: String,
-    root: Option<usize>,
-}
-
-fn folder_thumb_cache_path(dir: &Path, root: &Path) -> Option<PathBuf> {
-    let meta = std::fs::metadata(dir).ok()?;
-    let mtime = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let stem = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "root".to_string());
-    let cache_dir = root.join(".filetag").join("cache").join("folder-thumbs");
-    std::fs::create_dir_all(&cache_dir).ok()?;
-    Some(cache_dir.join(format!("{mtime}_{stem}.jpg")))
-}
-
-const IMAGE_EXTS_FOLDER: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "tif", "avif",
-];
-const VIDEO_EXTS_FOLDER: &[&str] = &[
-    "mp4", "webm", "mov", "avi", "mkv", "wmv", "m4v", "flv", "ts", "3gp",
-];
-
-/// Return a 2×2 composite JPEG thumbnail for a directory, built from up to
-/// four media files found directly inside it.  Images are preferred over
-/// videos.  Returns 404 when no suitable media files are present.
-async fn api_folder_thumb(
-    Query(params): Query<FolderThumbParams>,
-    State(state): State<Arc<AppState>>,
-) -> Response {
-    let db_root = match root_at(&state, params.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
-    };
-    let root = db_root.root.clone();
-    let dir = if params.path.is_empty() {
-        root.clone()
-    } else {
-        match safe_path(&root, &params.path) {
-            Ok(p) => p,
-            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
-        }
-    };
-
-    let cache_path = match folder_thumb_cache_path(&dir, &root) {
-        Some(p) => p,
-        None => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Cache error").into_response();
-        }
-    };
-
-    if let Ok(data) = tokio::fs::read(&cache_path).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-    }
-
-    let _permit = match THUMB_LIMITER.try_acquire() {
-        Ok(p) => p,
-        Err(_) => {
-            return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
-        }
-    };
-
-    // Re-check after acquiring permit — another task may have filled the cache.
-    if let Ok(data) = tokio::fs::read(&cache_path).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-    }
-
-    // Collect candidate media files, sorted alphabetically; scan max 200 entries.
-    let rd = match std::fs::read_dir(&dir) {
-        Ok(r) => r,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-
-    let mut images: Vec<PathBuf> = Vec::new();
-    let mut videos: Vec<PathBuf> = Vec::new();
-    let mut dir_entries: Vec<_> = rd.flatten().collect();
-    dir_entries.sort_by_key(|e| e.file_name());
-
-    'scan: for (i, entry) in dir_entries.iter().enumerate() {
-        if i >= 200 {
-            break;
-        }
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if IMAGE_EXTS_FOLDER.contains(&ext.as_str()) {
-            images.push(path);
-            if images.len() >= 4 {
-                break 'scan;
-            }
-        } else if videos.len() < 4 && VIDEO_EXTS_FOLDER.contains(&ext.as_str()) {
-            videos.push(path);
-        }
-    }
-
-    // Prefer images; fall back to video frames when the folder has no images.
-    let base: Vec<(bool, PathBuf)> = if !images.is_empty() {
-        images.into_iter().take(4).map(|p| (false, p)).collect()
-    } else {
-        videos.into_iter().take(4).map(|p| (true, p)).collect()
-    };
-
-    if base.is_empty() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
-    // Pad to exactly four tiles by repeating the last entry.
-    let mut candidates = base;
-    while candidates.len() < 4 {
-        let last = candidates.last().unwrap().clone();
-        candidates.push(last);
-    }
-
-    // Build ffmpeg command: one input per candidate, then compose a 2×2 grid.
-    let mut cmd = tokio::process::Command::new("nice");
-    cmd.args(["-n", "10", "ffmpeg"]);
-    for (is_video, path) in &candidates {
-        if *is_video {
-            // Fast seek: extract a frame 1 second in (avoids blank first frame).
-            cmd.args(["-ss", "1.0"]);
-        }
-        cmd.arg("-i").arg(path);
-    }
-
-    let scale = "scale=160:160:force_original_aspect_ratio=increase,crop=160:160";
-    let parts: String = (0..4)
-        .map(|i| format!("[{i}:v]{scale}[f{i}]"))
-        .collect::<Vec<_>>()
-        .join(";");
-    let filter = format!("{parts};[f0][f1]hstack=2[r0];[f2][f3]hstack=2[r1];[r0][r1]vstack=2[out]");
-
-    let ok = cmd
-        .args([
-            "-filter_complex",
-            &filter,
-            "-map",
-            "[out]",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "5",
-            "-y",
-        ])
-        .arg(&cache_path)
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if ok && let Ok(data) = tokio::fs::read(&cache_path).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-    }
-
-    StatusCode::NOT_FOUND.into_response()
-}
-
 /// Return a horizontal sprite sheet (JPEG, N×1 grid) of evenly-spaced frames.
 /// One ffmpeg call using `fps=N/duration,scale=320:-2,tile=Nx1`.
 /// Cached as a single file in `.filetag/cache/vthumbs/`.
@@ -1270,6 +1090,99 @@ async fn api_vthumbs(
         Ok(data) => ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Video trickplay pre-generation
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PregenParams {
+    root: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct PregenBody {
+    paths: Vec<String>,
+}
+
+/// Generate trickplay sprites for a list of video paths in the background.
+/// Returns immediately with `{"queued": N}`.  Each path is processed
+/// sequentially using the same THUMB_LIMITER semaphore as regular requests.
+async fn api_vthumbs_pregen(
+    Query(params): Query<PregenParams>,
+    State(state): State<Arc<AppState>>,
+    axum::extract::Json(body): axum::extract::Json<PregenBody>,
+) -> Response {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let root = db_root.root.clone();
+    let n = 8usize;
+    let queued = body.paths.len();
+
+    // Spawn a background task that works through the list.
+    tokio::spawn(async move {
+        for rel_path in body.paths {
+            let abs = match preview_safe_path(&root, &rel_path) {
+                Some(p) => p,
+                None => continue,
+            };
+            let cache_path =
+                match file_cache_path(&abs, &root, "vthumbs", &format!("sprite{n}x1.jpg")) {
+                    Some(p) => p,
+                    None => continue,
+                };
+            if cache_path.exists() {
+                continue; // already done
+            }
+            // Acquire the semaphore (blocks if another thumb is running).
+            let _permit = THUMB_LIMITER.acquire().await;
+            if cache_path.exists() {
+                continue; // generated while we waited
+            }
+            let info = match video_info(&abs).await {
+                Some(i) => i,
+                None => continue,
+            };
+            if let Some(parent) = cache_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let positions: Vec<f64> = (0..n)
+                .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
+                .collect();
+            let mut cmd = tokio::process::Command::new("nice");
+            cmd.args(["-n", "15", "ffmpeg"]);
+            for t in &positions {
+                cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
+            }
+            let scale_parts: Vec<String> = (0..n)
+                .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+                .collect();
+            let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+            let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+            let _ = cmd
+                .args([
+                    "-filter_complex",
+                    &filter,
+                    "-map",
+                    "[out]",
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "4",
+                    "-y",
+                ])
+                .arg(&cache_path)
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await;
+        }
+    });
+
+    Json(serde_json::json!({ "queued": queued })).into_response()
 }
 
 struct VideoInfo {
@@ -3060,7 +2973,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .route("/api/vthumbs", get(api_vthumbs))
-        .route("/api/folder-thumb", get(api_folder_thumb))
+        .route("/api/vthumbs/pregenerate", post(api_vthumbs_pregen))
         .with_state(state.clone());
 
     let addr = format!("{}:{}", args.bind, args.port);
