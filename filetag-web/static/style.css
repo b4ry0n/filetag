@@ -798,12 +798,12 @@ h3, h4 { font-weight: 600; }
 
 /* Icon-only cards (folders, unsupported file types): revert to stacked layout */
 .card:has(.card-icon) {
-    height: auto;
+    height: calc(var(--card-size, 140px) * 0.98);
 }
 .card:has(.card-icon) .card-preview {
     position: relative;
     inset: unset;
-    height: calc(var(--card-size, 140px) * 0.65);
+    height: calc(var(--card-size, 140px) * 0.55);
     background: var(--bg);
 }
 .card:has(.card-icon) .card-body {
@@ -814,6 +814,11 @@ h3, h4 { font-weight: 600; }
 .card:has(.card-icon) .card-name {
     color: var(--text);
     text-shadow: none;
+    -webkit-line-clamp: 2;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
 }
 .card:has(.card-icon) .card-meta {
     color: var(--text-tertiary);
