@@ -2435,9 +2435,41 @@ async fn api_file_detail(
     Query(params): Query<FileDetailParams>,
 ) -> Result<Json<ApiFileDetail>, AppError> {
     let db_root = root_at(&state, params.root)?;
-    let conn = open_conn(db_root)?;
 
-    if let Some(record) = db::file_by_path(&conn, &params.path).map_err(AppError)? {
+    // Determine the filesystem path used to locate the database.  For zip
+    // entries ("archive.zip::entry") use the zip file itself; for regular
+    // files use the file directly.  The path relative to the found database
+    // root may differ from params.path when the file lives inside a child
+    // database (e.g. params.path = "child/Music/song.mp3" while the child DB
+    // stores it as "Music/song.mp3").
+    let is_zip = params.path.contains("::");
+    let fs_path = if is_zip {
+        let zip_part = params.path.split_once("::").unwrap().0;
+        db_root.root.join(zip_part)
+    } else {
+        safe_path(&db_root.root, &params.path)?;
+        db_root.root.join(&params.path)
+    };
+
+    let start = fs_path.parent().unwrap_or(&fs_path);
+
+    // Walk up from the file's directory to find the most specific database.
+    // This correctly handles child databases: a file under child/ is found in
+    // child/.filetag/db.sqlite3, not in the parent database.
+    let db_lookup = db::find_and_open(start).ok().and_then(|(conn, eff_root)| {
+        let eff_rel = if is_zip {
+            let zip_rel = db::relative_to_root(&fs_path, &eff_root).ok()?;
+            let entry = params.path.split_once("::").unwrap().1;
+            Some(format!("{}::{}", zip_rel, entry))
+        } else {
+            db::relative_to_root(&fs_path, &eff_root).ok()
+        };
+        eff_rel.map(|r| (conn, r))
+    });
+
+    if let Some((conn, effective_rel)) = db_lookup
+        && let Some(record) = db::file_by_path(&conn, &effective_rel).map_err(AppError)?
+    {
         let tags = db::tags_for_file(&conn, record.id).map_err(AppError)?;
         let indexed_at: String = conn.query_row(
             "SELECT indexed_at FROM files WHERE id = ?1",
@@ -2445,7 +2477,7 @@ async fn api_file_detail(
             |r| r.get(0),
         )?;
 
-        Ok(Json(ApiFileDetail {
+        return Ok(Json(ApiFileDetail {
             path: params.path,
             size: record.size,
             file_id: record.file_id,
@@ -2456,10 +2488,13 @@ async fn api_file_detail(
                 .into_iter()
                 .map(|(name, value)| ApiFileTag { name, value })
                 .collect(),
-        }))
-    } else if params.path.contains("::") {
+        }));
+    }
+
+    // Not found in any database.
+    if is_zip {
         // Virtual zip entry not yet in DB — return empty detail
-        Ok(Json(ApiFileDetail {
+        return Ok(Json(ApiFileDetail {
             path: params.path,
             size: 0,
             file_id: None,
@@ -2467,29 +2502,29 @@ async fn api_file_detail(
             indexed_at: String::new(),
             covered: true, // zip entries are always under the db root
             tags: vec![],
-        }))
-    } else {
-        // File not yet indexed: return filesystem metadata
-        let abs = safe_path(&db_root.root, &params.path)?;
-        let meta = std::fs::metadata(&abs).with_context(|| format!("reading {}", abs.display()))?;
-        let size = meta.len() as i64;
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-
-        Ok(Json(ApiFileDetail {
-            path: params.path,
-            size,
-            file_id: None,
-            mtime,
-            indexed_at: String::new(),
-            covered: file_is_covered(&state, &meta, &abs),
-            tags: vec![],
-        }))
+        }));
     }
+
+    // Regular file not yet indexed: return filesystem metadata.
+    let meta =
+        std::fs::metadata(&fs_path).with_context(|| format!("reading {}", fs_path.display()))?;
+    let size = meta.len() as i64;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
+
+    Ok(Json(ApiFileDetail {
+        path: params.path,
+        size,
+        file_id: None,
+        mtime,
+        indexed_at: String::new(),
+        covered: file_is_covered(&state, &meta, &fs_path),
+        tags: vec![],
+    }))
 }
 
 async fn api_tag(
