@@ -1554,7 +1554,10 @@ function renderDetailTagsOnly() {
             const tagStr = formatTag(t);
             const stateTag = state.tags.find(st => st.name === t.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
+            const promoteBtn = t.name.startsWith('ai/')
+                ? `<button class="promote" title="Bewaar zonder ai/-prefix" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
+                : '';
+            return `<span class="tag-chip"${chipColor}>${promoteBtn}${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
     tagsEl.innerHTML = tagChips;
 }
