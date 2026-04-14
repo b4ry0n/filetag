@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
+use base64::Engine;
 use clap::Parser;
 use filetag_lib::{db, query};
 use rusqlite::Connection;
@@ -67,6 +68,7 @@ struct DbRoot {
 
 struct AppState {
     roots: Vec<DbRoot>,
+    ai_progress: std::sync::Mutex<AiProgress>,
 }
 
 fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&DbRoot> {
@@ -987,186 +989,6 @@ struct VThumbsParams {
     n: Option<usize>,
 }
 
-// ---------------------------------------------------------------------------
-// Folder composite thumbnail
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct FolderThumbParams {
-    /// Relative path within the database root.  Empty string means the root itself.
-    #[serde(default)]
-    path: String,
-    root: Option<usize>,
-}
-
-fn folder_thumb_cache_path(dir: &Path, root: &Path) -> Option<PathBuf> {
-    let meta = std::fs::metadata(dir).ok()?;
-    let mtime = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let stem = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "root".to_string());
-    let cache_dir = root.join(".filetag").join("cache").join("folder-thumbs");
-    std::fs::create_dir_all(&cache_dir).ok()?;
-    Some(cache_dir.join(format!("{mtime}_{stem}.jpg")))
-}
-
-const IMAGE_EXTS_FOLDER: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "tif", "avif",
-];
-const VIDEO_EXTS_FOLDER: &[&str] = &[
-    "mp4", "webm", "mov", "avi", "mkv", "wmv", "m4v", "flv", "ts", "3gp",
-];
-
-/// Return a 2×2 composite JPEG thumbnail for a directory, built from up to
-/// four media files found directly inside it.  Images are preferred over
-/// videos.  Returns 404 when no suitable media files are present.
-async fn api_folder_thumb(
-    Query(params): Query<FolderThumbParams>,
-    State(state): State<Arc<AppState>>,
-) -> Response {
-    let db_root = match root_at(&state, params.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
-    };
-    let root = db_root.root.clone();
-    let dir = if params.path.is_empty() {
-        root.clone()
-    } else {
-        match safe_path(&root, &params.path) {
-            Ok(p) => p,
-            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
-        }
-    };
-
-    let cache_path = match folder_thumb_cache_path(&dir, &root) {
-        Some(p) => p,
-        None => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Cache error").into_response();
-        }
-    };
-
-    if let Ok(data) = tokio::fs::read(&cache_path).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-    }
-
-    let _permit = match THUMB_LIMITER.try_acquire() {
-        Ok(p) => p,
-        Err(_) => {
-            return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
-        }
-    };
-
-    // Re-check after acquiring permit — another task may have filled the cache.
-    if let Ok(data) = tokio::fs::read(&cache_path).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-    }
-
-    // Collect candidate media files, sorted alphabetically; scan max 200 entries.
-    let rd = match std::fs::read_dir(&dir) {
-        Ok(r) => r,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-
-    let mut images: Vec<PathBuf> = Vec::new();
-    let mut videos: Vec<PathBuf> = Vec::new();
-    let mut dir_entries: Vec<_> = rd.flatten().collect();
-    dir_entries.sort_by_key(|e| e.file_name());
-
-    'scan: for (i, entry) in dir_entries.iter().enumerate() {
-        if i >= 200 {
-            break;
-        }
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if IMAGE_EXTS_FOLDER.contains(&ext.as_str()) {
-            images.push(path);
-            if images.len() >= 4 {
-                break 'scan;
-            }
-        } else if videos.len() < 4 && VIDEO_EXTS_FOLDER.contains(&ext.as_str()) {
-            videos.push(path);
-        }
-    }
-
-    // Prefer images; fall back to video frames when the folder has no images.
-    let base: Vec<(bool, PathBuf)> = if !images.is_empty() {
-        images.into_iter().take(4).map(|p| (false, p)).collect()
-    } else {
-        videos.into_iter().take(4).map(|p| (true, p)).collect()
-    };
-
-    if base.is_empty() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
-    // Pad to exactly four tiles by repeating the last entry.
-    let mut candidates = base;
-    while candidates.len() < 4 {
-        let last = candidates.last().unwrap().clone();
-        candidates.push(last);
-    }
-
-    // Build ffmpeg command: one input per candidate, then compose a 2×2 grid.
-    let mut cmd = tokio::process::Command::new("nice");
-    cmd.args(["-n", "10", "ffmpeg"]);
-    for (is_video, path) in &candidates {
-        if *is_video {
-            // Fast seek: extract a frame 1 second in (avoids blank first frame).
-            cmd.args(["-ss", "1.0"]);
-        }
-        cmd.arg("-i").arg(path);
-    }
-
-    let scale = "scale=160:160:force_original_aspect_ratio=increase,crop=160:160";
-    let parts: String = (0..4)
-        .map(|i| format!("[{i}:v]{scale}[f{i}]"))
-        .collect::<Vec<_>>()
-        .join(";");
-    let filter = format!("{parts};[f0][f1]hstack=2[r0];[f2][f3]hstack=2[r1];[r0][r1]vstack=2[out]");
-
-    let ok = cmd
-        .args([
-            "-filter_complex",
-            &filter,
-            "-map",
-            "[out]",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "5",
-            "-y",
-        ])
-        .arg(&cache_path)
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if ok && let Ok(data) = tokio::fs::read(&cache_path).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-    }
-
-    StatusCode::NOT_FOUND.into_response()
-}
-
 /// Return a horizontal sprite sheet (JPEG, N×1 grid) of evenly-spaced frames.
 /// One ffmpeg call using `fps=N/duration,scale=320:-2,tile=Nx1`.
 /// Cached as a single file in `.filetag/cache/vthumbs/`.
@@ -1270,6 +1092,835 @@ async fn api_vthumbs(
         Ok(data) => ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Video trickplay pre-generation
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PregenParams {
+    root: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct PregenBody {
+    paths: Vec<String>,
+}
+
+/// Generate trickplay sprites for a list of video paths in the background.
+/// Returns immediately with `{"queued": N}`.  Each path is processed
+/// sequentially using the same THUMB_LIMITER semaphore as regular requests.
+async fn api_vthumbs_pregen(
+    Query(params): Query<PregenParams>,
+    State(state): State<Arc<AppState>>,
+    axum::extract::Json(body): axum::extract::Json<PregenBody>,
+) -> Response {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let root = db_root.root.clone();
+    let n = 8usize;
+    let queued = body.paths.len();
+
+    // Spawn a background task that works through the list.
+    tokio::spawn(async move {
+        for rel_path in body.paths {
+            let abs = match preview_safe_path(&root, &rel_path) {
+                Some(p) => p,
+                None => continue,
+            };
+            let cache_path =
+                match file_cache_path(&abs, &root, "vthumbs", &format!("sprite{n}x1.jpg")) {
+                    Some(p) => p,
+                    None => continue,
+                };
+            if cache_path.exists() {
+                continue; // already done
+            }
+            // Acquire the semaphore (blocks if another thumb is running).
+            let _permit = THUMB_LIMITER.acquire().await;
+            if cache_path.exists() {
+                continue; // generated while we waited
+            }
+            let info = match video_info(&abs).await {
+                Some(i) => i,
+                None => continue,
+            };
+            if let Some(parent) = cache_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let positions: Vec<f64> = (0..n)
+                .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
+                .collect();
+            let mut cmd = tokio::process::Command::new("nice");
+            cmd.args(["-n", "15", "ffmpeg"]);
+            for t in &positions {
+                cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
+            }
+            let scale_parts: Vec<String> = (0..n)
+                .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+                .collect();
+            let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+            let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+            let _ = cmd
+                .args([
+                    "-filter_complex",
+                    &filter,
+                    "-map",
+                    "[out]",
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "4",
+                    "-y",
+                ])
+                .arg(&cache_path)
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await;
+        }
+    });
+
+    Json(serde_json::json!({ "queued": queued })).into_response()
+}
+
+// ===========================================================================
+// AI image analysis
+// ===========================================================================
+
+/// Limit concurrent AI analysis calls to one at a time.
+static AI_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+const AI_DEFAULT_PROMPT: &str = "\
+Look at this image. Output ONLY a JSON array of short descriptive tags (English, lowercase). \
+No thinking, no explanation, no other text.
+
+Good: [\"dog\", \"beach\", \"sunny\", \"swimming\"]
+Bad: any text outside the JSON array
+
+/no_think";
+
+const AI_IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "tiff", "tif", "heic", "heif", "arw",
+    "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf", "pef", "srw", "raw", "3fr", "x3f", "rwl",
+    "iiq", "mef", "mos",
+];
+
+struct AiConfig {
+    endpoint: String,
+    model: String,
+    api_key: Option<String>,
+    tag_prefix: String,
+    max_tokens: u32,
+    format: String, // "openai" or "ollama"
+}
+
+#[derive(Default, Clone, Serialize)]
+struct AiProgress {
+    running: bool,
+    done: usize,
+    total: usize,
+    current: Option<String>,
+}
+
+fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
+    let endpoint = db::get_setting(conn, "ai.endpoint").ok().flatten()?;
+    if endpoint.is_empty() {
+        return None;
+    }
+    let model = db::get_setting(conn, "ai.model")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let api_key = db::get_setting(conn, "ai.api_key").ok().flatten();
+    let tag_prefix = db::get_setting(conn, "ai.tag_prefix")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "ai/".to_string());
+    let max_tokens = db::get_setting(conn, "ai.max_tokens")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(512);
+    let format = db::get_setting(conn, "ai.format")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "openai".to_string());
+    Some(AiConfig {
+        endpoint,
+        model,
+        api_key,
+        tag_prefix,
+        max_tokens,
+        format,
+    })
+}
+
+/// Prepare a JPEG suitable for AI analysis (max 800px, stripped metadata).
+async fn ai_prepare_jpeg(abs_path: &Path, root: &Path) -> Option<Vec<u8>> {
+    let ext = abs_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // For RAW/HEIC that browsers cannot read, extract a JPEG first.
+    let source_path;
+    let _tmp_data: Option<Vec<u8>>;
+
+    match ext.as_str() {
+        "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
+        | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" => {
+            // Try the RAW cache first, fall back to extraction.
+            if let Some(cache) = raw_cache_path(abs_path, root) {
+                if !cache.exists() {
+                    if let Some(data) = raw_extract_jpeg(abs_path).await {
+                        let _ = tokio::fs::write(&cache, &data).await;
+                    } else {
+                        return None;
+                    }
+                }
+                source_path = cache;
+                _tmp_data = None;
+            } else {
+                return None;
+            }
+        }
+        // HEIC/HEIF and regular images: magick/ffmpeg can read them directly.
+        _ => {
+            source_path = abs_path.to_path_buf();
+            _tmp_data = None;
+        }
+    }
+
+    // Resize to max 800px using the same tool chain as thumbnails.
+    let path_layer = format!("{}[0]", source_path.display());
+    for cmd in &["magick", "convert"] {
+        if let Ok(out) = tokio::process::Command::new(cmd)
+            .arg(&path_layer)
+            .args([
+                "-auto-orient",
+                "-strip",
+                "-resize",
+                "800x800>",
+                "-quality",
+                "85",
+                "jpg:-",
+            ])
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            && out.status.success()
+            && out.stdout.starts_with(&[0xFF, 0xD8])
+        {
+            return Some(out.stdout);
+        }
+    }
+
+    // ffmpeg fallback
+    if let Ok(out) = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg", "-i"])
+        .arg(&source_path)
+        .args([
+            "-vf",
+            "scale='if(gt(iw,ih),800,-2)':'if(gt(iw,ih),-2,800)':flags=lanczos",
+            "-vframes",
+            "1",
+            "-map_metadata",
+            "-1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            "4",
+            "pipe:1",
+        ])
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+        && out.status.success()
+        && out.stdout.starts_with(&[0xFF, 0xD8])
+    {
+        return Some(out.stdout);
+    }
+
+    // Last resort: read the file as-is (for JPEG/PNG that magick/ffmpeg failed on)
+    tokio::fs::read(&source_path).await.ok()
+}
+
+/// Strip `<think>...</think>` blocks that Qwen3 and similar reasoning models
+/// prepend their output with when thinking mode is active.
+fn strip_think_blocks(text: &str) -> &str {
+    let t = text.trim();
+    // Strip everything up to and including the last </think> tag.
+    if let Some(end) = t.rfind("</think>") {
+        t[end + "</think>".len()..].trim()
+    } else {
+        t
+    }
+}
+
+/// Make a single VLM/LLM API call and return the assistant message content.
+/// `image_data_uri` is `Some("data:image/jpeg;base64,...")` for vision calls,
+/// `None` for text-only calls.
+async fn vlm_call(
+    config: &AiConfig,
+    prompt: &str,
+    b64_image: Option<&str>,
+) -> anyhow::Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let raw = if config.format == "ollama" {
+        let url = format!("{}/api/chat", config.endpoint.trim_end_matches('/'));
+        let msg = if let Some(b64) = b64_image {
+            serde_json::json!({ "role": "user", "content": prompt, "images": [b64] })
+        } else {
+            serde_json::json!({ "role": "user", "content": prompt })
+        };
+        let body = serde_json::json!({
+            "model": config.model,
+            "stream": false,
+            "messages": [msg],
+            "options": { "num_predict": config.max_tokens }
+        });
+        let mut req = client.post(&url).json(&body);
+        if let Some(key) = &config.api_key
+            && !key.is_empty()
+        {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        let raw = req.send().await?.error_for_status()?.text().await?;
+        let resp: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+        resp["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    } else {
+        // OpenAI-compatible
+        let url = format!(
+            "{}/v1/chat/completions",
+            config.endpoint.trim_end_matches('/')
+        );
+        let content = if let Some(b64) = b64_image {
+            let data_uri = format!("data:image/jpeg;base64,{b64}");
+            serde_json::json!([
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_uri}}
+            ])
+        } else {
+            serde_json::json!([{"type": "text", "text": prompt}])
+        };
+        let body = serde_json::json!({
+            "model": config.model,
+            "max_tokens": config.max_tokens,
+            "messages": [{"role": "user", "content": content}]
+        });
+        let mut req = client.post(&url).json(&body);
+        if let Some(key) = &config.api_key
+            && !key.is_empty()
+        {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        let raw = req.send().await?.error_for_status()?.text().await?;
+        let resp: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+        // Qwen3 thinking models sometimes put output in reasoning_content when content is null.
+        let content_str = resp["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("");
+        let reasoning = resp["choices"][0]["message"]["reasoning_content"]
+            .as_str()
+            .unwrap_or("");
+        let raw_text = if !content_str.is_empty() {
+            content_str
+        } else {
+            reasoning
+        };
+        raw_text.to_string()
+    };
+
+    Ok(strip_think_blocks(&raw).to_string())
+}
+
+/// Single-step image analysis: send the image together with the tagging
+/// prompt and parse the JSON array the model returns.
+/// Returns `(raw_response_for_debug, tags)`.
+async fn analyse_image(
+    config: &AiConfig,
+    jpeg_bytes: &[u8],
+) -> anyhow::Result<(String, Vec<String>)> {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
+    let raw = vlm_call(config, AI_DEFAULT_PROMPT, Some(&b64)).await?;
+    let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
+    Ok((raw, tags))
+}
+
+/// Parse the model output into a list of tags.  Tries all `[...]` spans in the
+/// text (last first) to handle thinking models that dump reasoning before the
+/// answer.  Falls back to comma/newline splitting with strict sanity filtering.
+fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
+    let trimmed = text.trim();
+
+    // Collect all [start..=end] spans that look like JSON arrays and try them
+    // from the last one backwards — thinking models output the answer last.
+    let mut raw_tags: Option<Vec<String>> = None;
+    let bytes = trimmed.as_bytes();
+    let mut search_from = trimmed.len();
+    while let Some(end_off) = trimmed[..search_from].rfind(']') {
+        // Find the matching '[' by scanning backwards from end_off.
+        if let Some(start_off) = trimmed[..end_off].rfind('[') {
+            let candidate = &trimmed[start_off..=end_off];
+            if let Ok(arr) = serde_json::from_str::<Vec<String>>(candidate)
+                && !arr.is_empty()
+            {
+                raw_tags = Some(arr);
+                break;
+            }
+        }
+        if end_off == 0 {
+            break;
+        }
+        search_from = end_off;
+    }
+    let _ = bytes; // suppress unused warning
+
+    let raw_tags: Vec<String> = raw_tags.unwrap_or_else(|| {
+        // Fallback: split on commas and newlines, then filter aggressively so
+        // reasoning sentences don't end up as tags.
+        trimmed
+            .replace(['[', ']', '"'], "")
+            .split([',', '\n'])
+            .map(|s| {
+                s.trim()
+                    .trim_start_matches(['-', '*', '•'])
+                    .trim()
+                    .to_string()
+            })
+            .filter(|s| tag_candidate_ok(s))
+            .collect()
+    });
+
+    // Sanitise: lowercase, apply prefix, deduplicate.
+    let mut seen = std::collections::HashSet::new();
+    let tags: Vec<String> = raw_tags
+        .into_iter()
+        .map(|t| {
+            let clean = t.trim().to_lowercase();
+            if prefix.is_empty() {
+                clean
+            } else {
+                format!("{prefix}{clean}")
+            }
+        })
+        .filter(|t| {
+            let tag_part = if prefix.is_empty() {
+                t.as_str()
+            } else {
+                &t[prefix.len()..]
+            };
+            tag_candidate_ok(tag_part) && seen.insert(t.clone())
+        })
+        .collect();
+
+    Ok(tags)
+}
+
+/// Return true if `s` looks like a real short tag rather than a reasoning fragment.
+fn tag_candidate_ok(s: &str) -> bool {
+    if s.is_empty() || s.len() > 50 {
+        return false;
+    }
+    // Reject if it contains characters typical of reasoning text.
+    if s.contains(':') || s.contains('*') || s.contains('(') || s.contains(')') {
+        return false;
+    }
+    // Reject numbered bullets like "1.", "2.", "a."
+    let first = s.chars().next().unwrap_or(' ');
+    if (first.is_ascii_alphanumeric()) && s.chars().nth(1) == Some('.') {
+        return false;
+    }
+    // Reject if more than 4 words (it's a sentence fragment).
+    s.split_whitespace().count() <= 4
+}
+
+/// Apply AI-generated tags to a file, removing any previous AI tags first.
+fn apply_ai_tags(
+    conn: &Connection,
+    root: &Path,
+    rel_path: &str,
+    tags: &[String],
+    prefix: &str,
+) -> anyhow::Result<()> {
+    let file_rec = db::get_or_index_file(conn, rel_path, root)?;
+
+    // Remove existing tags with the AI prefix (re-analysis replaces old ones).
+    if !prefix.is_empty() {
+        let existing = db::tags_for_file(conn, file_rec.id)?;
+        for (name, value) in &existing {
+            if name.starts_with(prefix)
+                && let Ok(tag_id) = db::get_or_create_tag(conn, name)
+            {
+                let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref());
+            }
+        }
+    }
+
+    // Apply new tags
+    for tag_str in tags {
+        let (name, value) = if let Some(eq) = tag_str.find('=') {
+            (
+                tag_str[..eq].to_string(),
+                Some(tag_str[eq + 1..].to_string()),
+            )
+        } else {
+            (tag_str.clone(), None)
+        };
+        let tag_id = db::get_or_create_tag(conn, &name)?;
+        db::apply_tag(conn, file_rec.id, tag_id, value.as_deref())?;
+    }
+
+    Ok(())
+}
+
+/// Remove all tags whose name starts with `prefix` from a file.
+fn remove_prefixed_tags(
+    conn: &Connection,
+    root: &Path,
+    rel_path: &str,
+    prefix: &str,
+) -> anyhow::Result<()> {
+    let file_rec = db::get_or_index_file(conn, rel_path, root)?;
+    let existing = db::tags_for_file(conn, file_rec.id)?;
+    for (name, value) in &existing {
+        if name.starts_with(prefix)
+            && let Ok(tag_id) = db::get_or_create_tag(conn, name)
+        {
+            let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref());
+        }
+    }
+    Ok(())
+}
+
+// ---- AI API endpoints ----
+
+#[derive(Deserialize)]
+struct AiClearTagsRequest {
+    paths: Vec<String>,
+    root_id: Option<usize>,
+    #[serde(default)]
+    prefix: Option<String>,
+}
+
+async fn api_ai_clear_tags(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AiClearTagsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, body.root_id)?;
+    let prefix = body.prefix.as_deref().unwrap_or("ai/");
+    let conn = Connection::open(&db_root.db_path).map_err(|e| AppError(e.into()))?;
+    let mut cleared = 0usize;
+    for path in &body.paths {
+        let abs = safe_path(&db_root.root, path)?;
+        let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
+        remove_prefixed_tags(&conn, &db_root.root, &rel, prefix).map_err(AppError)?;
+        cleared += 1;
+    }
+    Ok(Json(serde_json::json!({ "cleared": cleared })))
+}
+
+#[derive(Deserialize)]
+struct AiAnalyseRequest {
+    path: String,
+    root_id: Option<usize>,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// Analyse a single image with the configured VLM, optionally apply tags.
+async fn api_ai_analyse(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AiAnalyseRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, body.root_id)?;
+    let abs = safe_path(&db_root.root, &body.path)?;
+    let conn = Connection::open(&db_root.db_path).map_err(|e| AppError(e.into()))?;
+    let config = load_ai_config(&conn).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "AI not configured — set endpoint in settings"
+        ))
+    })?;
+
+    let jpeg = ai_prepare_jpeg(&abs, &db_root.root)
+        .await
+        .ok_or_else(|| AppError(anyhow::anyhow!("Could not prepare image for analysis")))?;
+
+    let _permit = AI_LIMITER
+        .acquire()
+        .await
+        .map_err(|e| AppError(anyhow::anyhow!("AI limiter error: {e}")))?;
+
+    let (raw_response, tags) = analyse_image(&config, &jpeg).await.map_err(AppError)?;
+
+    let applied = if !body.dry_run && !tags.is_empty() {
+        let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
+        apply_ai_tags(&conn, &db_root.root, &rel, &tags, &config.tag_prefix).map_err(AppError)?;
+        true
+    } else {
+        false
+    };
+
+    Ok(Json(
+        serde_json::json!({ "tags": tags, "applied": applied, "raw": if body.dry_run { raw_response } else { String::new() } }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct AiBatchRequest {
+    paths: Vec<String>,
+    root_id: Option<usize>,
+}
+
+/// Queue AI analysis for a batch of images (background task).
+async fn api_ai_analyse_batch(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AiBatchRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, body.root_id)?;
+    let root = db_root.root.clone();
+    let db_path = db_root.db_path.clone();
+
+    // Quick-check: is AI configured?
+    {
+        let conn = Connection::open(&db_path).map_err(|e| AppError(e.into()))?;
+        if load_ai_config(&conn).is_none() {
+            return Err(AppError(anyhow::anyhow!(
+                "AI not configured — set endpoint in settings"
+            )));
+        }
+    }
+
+    // Filter to image paths only
+    let paths: Vec<String> = body
+        .paths
+        .into_iter()
+        .filter(|p| {
+            let ext = p.rsplit('.').next().unwrap_or("").to_lowercase();
+            AI_IMAGE_EXTS.contains(&ext.as_str())
+        })
+        .collect();
+
+    let total = paths.len();
+
+    // Set progress to running
+    {
+        let mut prog = state.ai_progress.lock().unwrap();
+        *prog = AiProgress {
+            running: true,
+            done: 0,
+            total,
+            current: None,
+        };
+    }
+
+    let state2 = Arc::clone(&state);
+
+    tokio::spawn(async move {
+        for (i, rel_path) in paths.iter().enumerate() {
+            // Update progress
+            {
+                let mut prog = state2.ai_progress.lock().unwrap();
+                prog.current = Some(rel_path.clone());
+                prog.done = i;
+            }
+
+            let abs = match preview_safe_path(&root, rel_path) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            // Open a fresh connection per file (background task, cannot hold
+            // a Connection across .await).
+            let conn = match Connection::open(&db_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let config = match load_ai_config(&conn) {
+                Some(c) => c,
+                None => break,
+            };
+
+            // Skip files that already have the analysis marker tag.
+            let marker = format!("{}analysed", config.tag_prefix);
+            let rel = match db::relative_to_root(&abs, &root) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            if let Ok(rec) = db::get_or_index_file(&conn, &rel, &root)
+                && let Ok(existing) = db::tags_for_file(&conn, rec.id)
+                && existing.iter().any(|(n, _)| n == &marker)
+            {
+                continue;
+            }
+
+            let jpeg = match ai_prepare_jpeg(&abs, &root).await {
+                Some(j) => j,
+                None => continue,
+            };
+
+            let _permit = match AI_LIMITER.acquire().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+
+            let (_raw, tags) = match analyse_image(&config, &jpeg).await {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+
+            if !tags.is_empty() {
+                // Re-open connection for tagging (cannot hold across .await)
+                if let Ok(conn2) = Connection::open(&db_path) {
+                    let _ = apply_ai_tags(&conn2, &root, &rel, &tags, &config.tag_prefix);
+                    // Apply the marker tag
+                    let _ = (|| -> anyhow::Result<()> {
+                        let rec = db::get_or_index_file(&conn2, &rel, &root)?;
+                        let tid = db::get_or_create_tag(&conn2, &marker)?;
+                        db::apply_tag(&conn2, rec.id, tid, None)?;
+                        Ok(())
+                    })();
+                }
+            }
+        }
+
+        // Mark complete
+        let mut prog = state2.ai_progress.lock().unwrap();
+        *prog = AiProgress {
+            running: false,
+            done: total,
+            total,
+            current: None,
+        };
+    });
+
+    Ok(Json(serde_json::json!({ "queued": total })))
+}
+
+/// Return current AI batch progress.
+async fn api_ai_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let prog = state.ai_progress.lock().unwrap().clone();
+    Json(serde_json::json!(prog))
+}
+
+#[derive(Deserialize)]
+struct AiConfigRequest {
+    endpoint: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+    prompt: Option<String>,
+    tag_prefix: Option<String>,
+    max_tokens: Option<u32>,
+    format: Option<String>,
+    root_id: Option<usize>,
+}
+
+/// Save AI configuration to the database settings table.
+async fn api_ai_config_set(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AiConfigRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, body.root_id)?;
+    let conn = Connection::open(&db_root.db_path).map_err(|e| AppError(e.into()))?;
+
+    if let Some(v) = &body.endpoint {
+        db::set_setting(&conn, "ai.endpoint", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.model {
+        db::set_setting(&conn, "ai.model", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.api_key {
+        db::set_setting(&conn, "ai.api_key", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.prompt {
+        db::set_setting(&conn, "ai.prompt", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.tag_prefix {
+        db::set_setting(&conn, "ai.tag_prefix", v).map_err(AppError)?;
+    }
+    if let Some(v) = body.max_tokens {
+        db::set_setting(&conn, "ai.max_tokens", &v.to_string()).map_err(AppError)?;
+    }
+    if let Some(v) = &body.format {
+        db::set_setting(&conn, "ai.format", v).map_err(AppError)?;
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct AiConfigQuery {
+    root_id: Option<usize>,
+}
+
+/// Read AI configuration (api_key is masked).
+async fn api_ai_config_get(
+    Query(params): Query<AiConfigQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, params.root_id)?;
+    let conn = Connection::open(&db_root.db_path).map_err(|e| AppError(e.into()))?;
+
+    let g = |key: &str| -> String {
+        db::get_setting(&conn, key)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
+
+    let api_key_raw = g("ai.api_key");
+    let api_key_masked = if api_key_raw.is_empty() {
+        String::new()
+    } else if api_key_raw.len() <= 8 {
+        "****".to_string()
+    } else {
+        format!(
+            "{}…{}",
+            &api_key_raw[..4],
+            &api_key_raw[api_key_raw.len() - 4..]
+        )
+    };
+
+    let tag_prefix_raw = g("ai.tag_prefix");
+    let tag_prefix = if tag_prefix_raw.is_empty() {
+        "ai/".to_string()
+    } else {
+        tag_prefix_raw
+    };
+    let max_tokens = g("ai.max_tokens").parse::<u32>().unwrap_or(512);
+    let format_raw = g("ai.format");
+    let format = if format_raw.is_empty() {
+        "openai".to_string()
+    } else {
+        format_raw
+    };
+
+    Ok(Json(serde_json::json!({
+        "endpoint": g("ai.endpoint"),
+        "model": g("ai.model"),
+        "api_key": api_key_masked,
+        "prompt": g("ai.prompt"),
+        "tag_prefix": tag_prefix,
+        "max_tokens": max_tokens,
+        "format": format,
+        "default_prompt": AI_DEFAULT_PROMPT,
+    })))
 }
 
 struct VideoInfo {
@@ -3032,7 +3683,10 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("no databases found");
     }
 
-    let state = Arc::new(AppState { roots });
+    let state = Arc::new(AppState {
+        roots,
+        ai_progress: std::sync::Mutex::new(AiProgress::default()),
+    });
 
     let app = Router::new()
         .route("/", get(index_html))
@@ -3060,7 +3714,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
         .route("/api/vthumbs", get(api_vthumbs))
-        .route("/api/folder-thumb", get(api_folder_thumb))
+        .route("/api/vthumbs/pregenerate", post(api_vthumbs_pregen))
+        .route("/api/ai/analyse", post(api_ai_analyse))
+        .route("/api/ai/analyse-batch", post(api_ai_analyse_batch))
+        .route("/api/ai/clear-tags", post(api_ai_clear_tags))
+        .route("/api/ai/status", get(api_ai_status))
+        .route("/api/ai/config", get(api_ai_config_get))
+        .route("/api/ai/config", post(api_ai_config_set))
         .with_state(state.clone());
 
     let addr = format!("{}:{}", args.bind, args.port);
