@@ -628,7 +628,9 @@ function renderGrid(items) {
 
         let preview = '';
         if (isDir) {
-            preview = `<div class="card-icon">${ICONS.folder}</div>`;
+            const ftPath = fullPath(entry);
+            const ftSrc = `/api/folder-thumb?path=${encodeURIComponent(ftPath)}${rootParam('&')}`;
+            preview = `<div class="card-thumb-pending" data-thumb-src="${ftSrc}" data-fallback="folder"></div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
@@ -657,7 +659,7 @@ function renderGrid(items) {
                     ondragleave="_rootDragLeave(event)"
                     ondrop="_rootDrop(event,${entry.root_id})"
                     ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
-                    <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
+                    <div class="card-preview"><div class="card-thumb-pending" data-thumb-src="/api/folder-thumb?path=&root=${entry.root_id}" data-fallback="folder"></div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
             } else {
@@ -1299,6 +1301,12 @@ async function _thumbRun() {
                     _thumbQueue.push(el);
                     _thumbObserver.observe(el);
                 }
+            } else if (el.isConnected && el.dataset.fallback === 'folder') {
+                // No media files in folder: show folder icon.
+                el.replaceWith(Object.assign(document.createElement('div'), {
+                    className: 'card-icon',
+                    innerHTML: ICONS.folder,
+                }));
             }
         } catch (_) { /* network error: leave placeholder */ }
     }
