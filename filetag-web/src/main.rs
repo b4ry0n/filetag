@@ -974,23 +974,137 @@ fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
     file_cache_path(abs, root, "thumbs", "thumb.jpg")
 }
 
-struct VideoInfo {
-    duration: f64,
-    width: u32,
-    height: u32,
+// ---------------------------------------------------------------------------
+// Video trickplay thumbnails
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct VThumbsParams {
+    path: String,
+    root: Option<usize>,
+    /// Number of frames (default 8, max 16).
+    #[serde(default)]
+    n: Option<usize>,
 }
 
-/// Get video duration (seconds) and dimensions via a single ffprobe call.
+/// Return a horizontal sprite sheet (JPEG, N×1 grid) of evenly-spaced frames.
+/// One ffmpeg call using `fps=N/duration,scale=320:-2,tile=Nx1`.
+/// Cached as a single file in `.filetag/cache/vthumbs/`.
+async fn api_vthumbs(
+    Query(params): Query<VThumbsParams>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+    let root = db_root.root.clone();
+    let abs = match preview_safe_path(&root, &params.path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    let n = params.n.unwrap_or(8).clamp(2, 16);
+
+    let cache_path = match file_cache_path(&abs, &root, "vthumbs", &format!("sprite{n}x1.jpg")) {
+        Some(p) => p,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, "Cache path error").into_response(),
+    };
+
+    if !cache_path.exists() {
+        let _permit = match THUMB_LIMITER.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+            }
+        };
+
+        // Re-check now that the permit is held (another task may have generated it).
+        if !cache_path.exists() {
+            let info = match video_info(&abs).await {
+                Some(i) => i,
+                None => {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "Cannot read video metadata",
+                    )
+                        .into_response();
+                }
+            };
+
+            if let Some(parent) = cache_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+
+            // Use N separate fast-seek inputs rather than fps+tile, which would
+            // require decoding the whole video.  Each -ss before -i is a fast seek.
+            // Frame positions: evenly spaced, centred in each N-th slice.
+            let positions: Vec<f64> = (0..n)
+                .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
+                .collect();
+
+            let mut cmd = tokio::process::Command::new("nice");
+            cmd.args(["-n", "10", "ffmpeg"]);
+            for t in &positions {
+                cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
+            }
+
+            // Scale each input, then hstack into a single row.
+            let scale_parts: Vec<String> = (0..n)
+                .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+                .collect();
+            let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+            let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+
+            let ok = cmd
+                .args([
+                    "-filter_complex",
+                    &filter,
+                    "-map",
+                    "[out]",
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "4",
+                    "-y",
+                ])
+                .arg(&cache_path)
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if !ok {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Video trickplay unavailable — install ffmpeg",
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    match tokio::fs::read(&cache_path).await {
+        Ok(data) => ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
+    }
+}
+
+struct VideoInfo {
+    duration: f64,
+}
+
+/// Get video duration (seconds) via a single ffprobe call.
 async fn video_info(path: &Path) -> Option<VideoInfo> {
     let out = tokio::process::Command::new("nice")
         .args(["-n", "10", "ffprobe"])
         .args([
             "-v",
             "error",
-            "-select_streams",
-            "v:0",
             "-show_entries",
-            "stream=width,height:format=duration",
+            "format=duration",
             "-of",
             "csv=p=0",
         ])
@@ -1002,147 +1116,64 @@ async fn video_info(path: &Path) -> Option<VideoInfo> {
     if !out.status.success() {
         return None;
     }
-    // Output lines: "width,height" then "duration" (or vice-versa depending on ffprobe version).
-    // We parse all lines and pick out what we need.
     let text = std::str::from_utf8(&out.stdout).ok()?;
-    let mut width = 0u32;
-    let mut height = 0u32;
-    let mut duration = 0f64;
-    for line in text.lines() {
-        let parts: Vec<&str> = line.trim().split(',').collect();
-        if parts.len() == 2 {
-            if let (Ok(w), Ok(h)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                width = w;
-                height = h;
-            } else if let Ok(d) = parts[0].parse::<f64>() {
-                duration = d;
-            }
-        } else if parts.len() == 1
-            && let Ok(d) = parts[0].parse::<f64>()
-        {
-            duration = d;
-        }
-    }
-    if width == 0 || height == 0 || duration <= 0.0 {
+    let duration = text.trim().parse::<f64>().ok()?;
+    if duration <= 0.0 {
         return None;
     }
-    Some(VideoInfo {
-        duration,
-        width,
-        height,
-    })
+    Some(VideoInfo { duration })
 }
 
 /// Generate a JPEG contact-sheet thumbnail for a video file.
 /// Landscape videos: 2 columns × 3 rows (6 frames).
 /// Portrait videos:  3 columns × 2 rows (6 frames).
 async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
-    if let Some(cache) = thumb_cache_path(path, root) {
-        if let Ok(data) = tokio::fs::read(&cache).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+    // Use "vthumb.jpg" so old contact-sheet caches ("thumb.jpg") are not served.
+    let cache = match file_cache_path(path, root, "thumbs", "vthumb.jpg") {
+        Some(p) => p,
+        None => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "cache path unavailable").into_response();
         }
+    };
 
-        let _permit = match THUMB_LIMITER.try_acquire() {
-            Ok(p) => p,
-            Err(_) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
-            }
-        };
+    if let Ok(data) = tokio::fs::read(&cache).await {
+        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+    }
 
-        let info = video_info(path).await;
-        let (cols, rows, tile_w) = match &info {
-            // portrait: more columns, fewer rows
-            Some(i) if i.height > i.width => (3u32, 2u32, 160u32),
-            // landscape (default): fewer columns, more rows
-            _ => (2u32, 3u32, 240u32),
-        };
-        let n = (cols * rows) as usize;
-        let dur = info.as_ref().map(|i| i.duration);
-
-        // Compute n evenly-spaced seek positions, avoiding the very start/end.
-        let positions: Vec<f64> = match dur {
-            Some(d) if d > 0.5 => (0..n)
-                .map(|i| d * (0.05 + 0.90 * i as f64 / (n - 1).max(1) as f64))
-                .collect(),
-            _ => (0..n).map(|i| 2.0 + i as f64 * 10.0).collect(),
-        };
-
-        let mut cmd = tokio::process::Command::new("nice");
-        cmd.args(["-n", "10", "ffmpeg"]);
-        for t in &positions {
-            cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(path);
+    let _permit = match THUMB_LIMITER.try_acquire() {
+        Ok(p) => p,
+        Err(_) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
         }
+    };
 
-        // Build filter: scale each frame, hstack into rows, vstack rows.
-        let scale = format!("scale={tile_w}:-2,setsar=1");
-        let labels: Vec<String> = (0..n).map(|i| format!("[{i}:v]{scale}[f{i}]")).collect();
-        let mut filter = labels.join(";");
+    if let Some(parent) = cache.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
 
-        // hstack each row
-        for r in 0..rows as usize {
-            let inputs: String = (0..cols as usize)
-                .map(|c| format!("[f{}]", r * cols as usize + c))
-                .collect();
-            filter += &format!(";{inputs}hstack={cols}[row{r}]");
-        }
-        // vstack all rows
-        let row_labels: String = (0..rows as usize).map(|r| format!("[row{r}]")).collect();
-        filter += &format!(";{row_labels}vstack={rows}");
+    // Single frame at the same position as sprite frame 0: duration / (2 * N).
+    // This ensures the static thumbnail matches what you see when hovering at frame 0.
+    let n_sprite: f64 = 8.0;
+    let info = video_info(path).await;
+    let ss = info
+        .as_ref()
+        .map(|i| format!("{:.2}", i.duration / (2.0 * n_sprite)))
+        .unwrap_or_else(|| "5".to_string());
 
-        cmd.args([
-            "-filter_complex",
-            &filter,
-            "-frames:v",
-            "1",
-            "-f",
-            "image2",
-            "-vcodec",
-            "mjpeg",
-            "-q:v",
-            "5",
-        ])
+    let ok = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg", "-ss", &ss, "-i"])
+        .arg(path)
+        .args(["-vframes", "1", "-vf", "scale=480:-2", "-q:v", "5", "-y"])
         .arg(&cache)
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
 
-        if let Ok(status) = cmd.status().await
-            && status.success()
-            && let Ok(data) = tokio::fs::read(&cache).await
-        {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-        }
-
-        // Fallback: single frame
-        let ss = match dur {
-            Some(d) if d > 1.0 => format!("{:.2}", d * 0.1),
-            _ => "5".to_string(),
-        };
-        let out = tokio::process::Command::new("nice")
-            .args(["-n", "10", "ffmpeg"])
-            .args(["-ss", &ss, "-i"])
-            .arg(path)
-            .args([
-                "-vframes",
-                "1",
-                "-vf",
-                "scale=480:-2",
-                "-f",
-                "image2",
-                "-vcodec",
-                "mjpeg",
-                "-q:v",
-                "5",
-            ])
-            .arg(&cache)
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .status()
-            .await;
-
-        if out.map(|s| s.success()).unwrap_or(false)
-            && let Ok(data) = tokio::fs::read(&cache).await
-        {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
-        }
+    if ok && let Ok(data) = tokio::fs::read(&cache).await {
+        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
     (
@@ -1211,7 +1242,10 @@ async fn thumb_handler(
 
         // Video: 2×2 contact-sheet
         "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp" | "f4v"
-        | "mpg" | "mpeg" => video_thumb_strip(&abs, &root).await,
+        | "mpg" | "mpeg" | "m2v" | "m2ts" | "mts" | "mxf" | "rm" | "rmvb" | "divx" | "vob"
+        | "ogv" | "ogg" | "dv" | "asf" | "amv" | "mpe" | "m1v" | "mpv" | "qt" => {
+            video_thumb_strip(&abs, &root).await
+        }
 
         // HEIC/HEIF: full-res conversion is already cached; thumbnail via image_thumb_jpeg
         "heic" | "heif" => {
@@ -2845,6 +2879,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dir/images", get(api_dir_images))
         .route("/preview/*path", get(preview_handler))
         .route("/thumb/*path", get(thumb_handler))
+        .route("/api/vthumbs", get(api_vthumbs))
         .with_state(state.clone());
 
     let addr = format!("{}:{}", args.bind, args.port);

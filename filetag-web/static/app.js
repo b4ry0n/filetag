@@ -23,7 +23,9 @@ const ICONS = {
 const EXT_MAP = {
     image:    ['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','avif'],
     audio:    ['mp3','flac','wav','ogg','opus','aac','m4a','wma','aiff','alac'],
-    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg'],
+    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg',
+               'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
+               'mpe','m1v','mpv','qt'],
     pdf:      ['pdf'],
     markdown: ['md','markdown'],
     zip:      ['zip','cbz','rar','cbr','7z','cb7'],
@@ -184,6 +186,7 @@ const state = {
 
 let _lastClickedPath = null; // for shift-range selection
 let _armedBulkTag = null;    // two-step delete: which tag is armed
+let _kbCursor = -1;          // keyboard navigation cursor (-1 = none)
 
 // ---------------------------------------------------------------------------
 // API
@@ -265,6 +268,7 @@ async function searchFiles(query) {
     state.selectedFilesData.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
+    _kbCursor = -1;
 }
 
 async function loadFileDetail(path) {
@@ -628,7 +632,8 @@ function renderGrid(items) {
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}" data-cls="card-thumb-strip"></div>` +
+            const vpath = fullPath(entry);
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(vpath)}${rootParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else if (type_ === 'zip') {
             preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>` +
@@ -985,7 +990,7 @@ function renderZipGrid(entries) {
         const tagBadge = entry.tag_count > 0
             ? `<span class="card-tag-count">${entry.tag_count}</span>` : '';
         const dblAttr = entry.is_image
-            ? ` ondblclick="openComicViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
+            ? ` ondblclick="openMediaViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
 
         html += `<div class="card${selected}" data-path="${esc(dbPath)}"
             onclick="selectFile('${jesc(dbPath)}', event)"${dblAttr}>
@@ -1009,7 +1014,7 @@ function renderZipList(entries) {
         const size = formatSize(entry.size);
         const tags = entry.tag_count != null ? `${entry.tag_count} tags` : '';
         const dblAttr = entry.is_image
-            ? ` ondblclick="openComicViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
+            ? ` ondblclick="openMediaViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
         html += `<div class="list-row${selected}" data-path="${esc(dbPath)}"
             onclick="selectFile('${jesc(dbPath)}', event)"${dblAttr}>
             <span class="icon">${icon}</span>
@@ -1043,6 +1048,154 @@ function _previewVideoError(video) {
     d.className = 'no-preview';
     d.innerHTML = `${fileIcon(n)}<div class="preview-unavail-msg">Browser cannot play this format</div>`;
     video.replaceWith(d);
+}
+
+// ---------------------------------------------------------------------------
+// Video trickplay
+// ---------------------------------------------------------------------------
+// On hover over a video card, the single-image sprite sheet returned by
+// /api/vthumbs is loaded once and cached.  Moving the cursor left-to-right
+// shifts a CSS background-position over the sprite, showing different frames
+// without any DOM or src changes (same technique as Jellyfin trickplay).
+
+const _trickplayCache = new Map(); // path → {src, n} | 'loading' | 'failed'
+const TRICKPLAY_N = 8;
+
+/**
+ * Attach trickplay behaviour to the <img> that replaced a .card-thumb-pending
+ * for a video card.  Called from _thumbReplace() when data-video-path is set.
+ */
+function _trickplayAttach(img, path) {
+    // Wrap img in a positional container that holds the progress bar.
+    // The sprite popup is a fixed-position element on document.body so it can
+    // break out of the card boundaries to show the frame at its natural AR.
+    const wrap = document.createElement('div');
+    wrap.className = 'card-trickplay';
+    img.replaceWith(wrap);
+    wrap.appendChild(img);
+    const bar = document.createElement('div');
+    bar.className = 'card-trickplay-bar';
+    wrap.appendChild(bar);
+
+    let spriteEl = null;
+    let cacheEntry = null;
+
+    function ensureSprite() {
+        const cached = _trickplayCache.get(path);
+        if (cached === 'loading' || cached === 'failed') return;
+        if (cached) { cacheEntry = cached; return; }
+
+        _trickplayCache.set(path, 'loading');
+        const src = '/api/vthumbs?' + new URLSearchParams({ path, n: TRICKPLAY_N })
+            + rootParam('&');
+        const preload = new Image();
+        preload.onload = () => {
+            const entry = { src, n: TRICKPLAY_N, natW: preload.naturalWidth, natH: preload.naturalHeight };
+            _trickplayCache.set(path, entry);
+            cacheEntry = entry;
+            if (wrap.matches(':hover')) buildOverlay();
+        };
+        preload.onerror = () => {
+            // Remove from cache so the next hover retries (server may have been busy).
+            _trickplayCache.delete(path);
+        };
+        preload.src = src;
+    }
+
+    function buildOverlay() {
+        if (spriteEl || !cacheEntry) return;
+        const cardRect = wrap.getBoundingClientRect();
+        if (!cardRect.width) return; // not yet laid out
+
+        // Natural aspect ratio of a single tile.
+        const frameW = cacheEntry.natW / cacheEntry.n;
+        const frameH = cacheEntry.natH;
+        const ar = frameW / frameH;
+        const isPortrait = ar < 1;
+
+        // For landscape: keep card height, expand width (max 16:9).
+        // For portrait: keep card width, expand height (max 9:16 = height ≤ width * 16/9).
+        let popupW, popupH;
+        if (isPortrait) {
+            const clampedAR = Math.max(ar, 9 / 16);
+            popupW = cardRect.width;
+            popupH = popupW / clampedAR;
+        } else {
+            const clampedAR = Math.min(ar, 16 / 9);
+            popupH = cardRect.height;
+            popupW = popupH * clampedAR;
+        }
+        popupW = Math.round(popupW);
+        popupH = Math.round(popupH);
+
+        // Horizontal: center on card.  Vertical: center for landscape, top for portrait.
+        let left = cardRect.left + (cardRect.width - popupW) / 2;
+        let top  = isPortrait
+            ? cardRect.top
+            : cardRect.top + (cardRect.height - popupH) / 2;
+
+        // Clamp to viewport so the popup doesn't escape the screen.
+        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+
+        spriteEl = document.createElement('div');
+        spriteEl.className = 'card-trickplay-sprite';
+        Object.assign(spriteEl.style, {
+            position:        'fixed',
+            zIndex:          '1000',
+            pointerEvents:   'none',
+            width:           popupW + 'px',
+            height:          popupH + 'px',
+            left:            left.toFixed(1) + 'px',
+            top:             top.toFixed(1)  + 'px',
+            backgroundImage: `url(${JSON.stringify(cacheEntry.src)})`,
+            backgroundRepeat:'no-repeat',
+            backgroundSize:  'auto 100%',
+        });
+        document.body.appendChild(spriteEl);
+        showFrame(0);
+    }
+
+    /** Jump to a discrete frame; pixel-offset preserves native AR and centers. */
+    function showFrame(idx) {
+        if (!spriteEl || !cacheEntry) return;
+        const popupH = parseFloat(spriteEl.style.height);
+        const popupW = parseFloat(spriteEl.style.width);
+        const scale  = popupH / cacheEntry.natH;
+        const tileW  = (cacheEntry.natW / cacheEntry.n) * scale;
+        const x      = popupW / 2 - tileW * (idx + 0.5);
+        spriteEl.style.backgroundPosition = `${x.toFixed(1)}px 0`;
+    }
+
+    /** Update frame and bar from a MouseEvent. Uses the card rect, not the
+     *  popup rect, so the full [0, N-1] range is reachable across the card width. */
+    function onMove(e) {
+        if (!cacheEntry || !spriteEl) return;
+        const rect = wrap.getBoundingClientRect();
+        const frac = Math.max(0, Math.min(0.9999, (e.clientX - rect.left) / rect.width));
+        const idx  = Math.min(cacheEntry.n - 1, Math.floor(frac * cacheEntry.n));
+        showFrame(idx);
+        bar.style.width = (frac * 100).toFixed(1) + '%';
+    }
+
+    function teardown() {
+        if (spriteEl) { spriteEl.remove(); spriteEl = null; }
+        bar.style.width = '0';
+    }
+
+    wrap.addEventListener('mouseenter', () => {
+        ensureSprite();
+        if (cacheEntry) buildOverlay();
+    }, { passive: true });
+
+    wrap.addEventListener('mouseleave', teardown);
+
+    wrap.addEventListener('mousemove', e => {
+        ensureSprite();
+        if (!cacheEntry) return;
+        if (!spriteEl) buildOverlay();
+        onMove(e);
+    }, { passive: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -1114,6 +1267,11 @@ function _thumbReplace(el, blobUrl) {
     img.alt = '';
     img.dataset.name = el.dataset.name || '';
     el.replaceWith(img);
+
+    // Attach trickplay for video cards.
+    if (el.dataset.videoPath) {
+        _trickplayAttach(img, el.dataset.videoPath);
+    }
 }
 
 async function _thumbRun() {
@@ -1153,6 +1311,7 @@ function _thumbClearCache() {
     for (const url of _thumbCache.values()) URL.revokeObjectURL(url);
     _thumbCache.clear();
     _thumbQueue.length = 0;
+    _trickplayCache.clear();
 }
 
 // _cardThumbError is still used by detail-panel preview images (not thumb queue).
@@ -1228,7 +1387,7 @@ function renderDetail() {
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
             const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index }) + rootParam('&');
-            preview = `<a class="preview-zoomable" onclick="openComicViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
+            preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
@@ -1260,7 +1419,7 @@ function renderDetail() {
         preview = `<div class="zip-cover-wrap">
             <img src="/thumb/${encodeURI(f.path)}${rootParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
-            <button class="tag-action-btn" onclick="openComicViewer('${jesc(f.path)}')">Open comic viewer</button>
+            <button class="tag-action-btn" onclick="openMediaViewer('${jesc(f.path)}')">Open in viewer</button>
         </div>`;
     } else {
         preview = `<div class="no-preview">${fileIcon(name)}</div>`;
@@ -1453,6 +1612,7 @@ function render() {
     renderDetail();
     renderInfo();
     _thumbInit();
+    _kbRestoreFocus();
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,6 +1621,7 @@ function render() {
 
 async function navigateTo(path) {
     _thumbClearCache();
+    _kbCursor = -1;
     state.selectedFile = null;
     state.selectedDir = null;
     state.selectedPaths.clear();
@@ -1475,6 +1636,7 @@ async function navigateTo(path) {
 // Enter a specific root database (from the virtual root listing).
 async function enterRoot(id) {
     _thumbClearCache();
+    _kbCursor = -1;
     state.currentRootId = id;
     state.selectedFile = null;
     state.selectedDir = null;
@@ -1490,6 +1652,7 @@ async function enterRoot(id) {
 // Navigate back to the virtual root (show all roots).
 async function goVirtualRoot() {
     _thumbClearCache();
+    _kbCursor = -1;
     state.currentRootId = null;
     state.currentPath = '';
     state.selectedFile = null;
@@ -1933,6 +2096,7 @@ async function doBulkAddTag() {
     renderTags();
     renderContent();
     _thumbInit();
+    _kbRestoreFocus();
     const el = document.getElementById('bulk-tag-chips');
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
     else renderDetail(); // chips container not in DOM yet (first tag added)
@@ -2000,6 +2164,7 @@ function setViewMode(mode) {
     document.getElementById('zoom-slider').style.display = mode === 'grid' ? '' : 'none';
     renderContent();
     _thumbInit();
+    _kbRestoreFocus();
 }
 
 function toggleDetailPanel() {
@@ -2238,7 +2403,7 @@ function restoreScrollAnchor(anchor) {
 }
 
 // ---------------------------------------------------------------------------
-// Comic viewer
+// Media viewer
 // ---------------------------------------------------------------------------
 
 const _cv = {
@@ -2303,8 +2468,8 @@ function cvThumbUrl(i) {
     return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}` + rootParam('&');
 }
 
-async function openComicViewer(path, startPage = 0) {
-    const overlay = document.getElementById('comic-viewer');
+async function openMediaViewer(path, startPage = 0) {
+    const overlay = document.getElementById('media-viewer');
     overlay.hidden = false;
 
     _cv.path = path;
@@ -2336,7 +2501,7 @@ async function openComicViewer(path, startPage = 0) {
 
 // Open the viewer for a list of plain image files from a directory.
 async function openDirViewer(filePaths, startIdx = 0) {
-    const overlay = document.getElementById('comic-viewer');
+    const overlay = document.getElementById('media-viewer');
     overlay.hidden = false;
 
     _cv.mode = 'dir';
@@ -2382,10 +2547,10 @@ async function openFileInDirViewer(filePath) {
     openDirViewer(images, startIdx);
 }
 
-function closeComicViewer() {
+function closeMediaViewer() {
     if (document.fullscreenElement) document.exitFullscreen();
     if (_cv.scroll) cvExitScrollView();
-    document.getElementById('comic-viewer').hidden = true;
+    document.getElementById('media-viewer').hidden = true;
     document.removeEventListener('keydown', _cvKeyHandler);
     _cv.mode = 'zip'; _cv.path = null; _cv.pages = []; _cv.filePaths = []; _cv.current = 0;
     _cv._prefetchCache.clear();
@@ -2455,7 +2620,7 @@ function cvScrollThumbIntoView(idx) {
 }
 
 // ---------------------------------------------------------------------------
-// Comic viewer – vertical + horizontal scroll mode
+// Media viewer – vertical + horizontal scroll mode
 // ---------------------------------------------------------------------------
 
 let _cvScrollObserver = null;
@@ -2599,7 +2764,7 @@ function cvExitScrollView() {
 }
 
 // ---------------------------------------------------------------------------
-// Comic viewer – zoom / pan
+// Media viewer – zoom / pan
 // ---------------------------------------------------------------------------
 
 const _cvDrag = { active: false, moved: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 };
@@ -2665,7 +2830,7 @@ function _cvInitStageEvents() {
     // - Pinch-to-zoom (reported as Ctrl+wheel by browsers) → zoom
     // - Two-finger pan (deltaX / deltaY without Ctrl) → pan when zoomed, or ignore
     stage.addEventListener('wheel', e => {
-        if (document.getElementById('comic-viewer').hidden) return;
+        if (document.getElementById('media-viewer').hidden) return;
         if (_cv.scroll) {
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
@@ -2697,7 +2862,7 @@ function _cvInitStageEvents() {
 
     // Mousedown: start drag when zoomed (not in scroll mode)
     stage.addEventListener('mousedown', e => {
-        if (document.getElementById('comic-viewer').hidden) return;
+        if (document.getElementById('media-viewer').hidden) return;
         if (_cv.scroll) return;
         _cvDrag.moved   = false;
         _cvDrag.startX  = e.clientX;  _cvDrag.startY  = e.clientY;
@@ -2731,7 +2896,7 @@ function _cvInitStageEvents() {
     // Double-click in the middle zone (30%–70%): zoom to 2× at cursor, or reset if already zoomed.
     // Double-click in the nav zones (left <30%, right >70%) is ignored so rapid page-turning works.
     stage.addEventListener('dblclick', e => {
-        if (document.getElementById('comic-viewer').hidden) return;
+        if (document.getElementById('media-viewer').hidden) return;
         const x = e.clientX / window.innerWidth;
         if (x < 0.3 || x > 0.7) return;  // nav zone — ignore
         e.preventDefault();
@@ -2781,7 +2946,7 @@ const _cvExpandIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="non
 const _cvCompressIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>';
 
 function cvToggleFullscreen() {
-    const overlay = document.getElementById('comic-viewer');
+    const overlay = document.getElementById('media-viewer');
     if (!document.fullscreenElement) {
         overlay.requestFullscreen().catch(() => {});
     } else {
@@ -2893,7 +3058,7 @@ function cvToggleSpread() {
 }
 
 function _cvKeyHandler(e) {
-    if (document.getElementById('comic-viewer').hidden) return;
+    if (document.getElementById('media-viewer').hidden) return;
     // ArrowRight = forward in reading direction (RTL: lower index; LTR: higher index)
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || (e.key === ' ' && !_cv.scroll)) {
         e.preventDefault(); _cv.rtl ? cvPrev() : cvNext();
@@ -2909,7 +3074,7 @@ function _cvKeyHandler(e) {
     else if (e.key === '0') cvResetZoom();
     else if (e.key === 'Escape') {
         if (_cv.zoom > 1 || _cv.scrollWidth !== 100) { cvResetZoom(); }
-        else { closeComicViewer(); }
+        else { closeMediaViewer(); }
     }
 }
 
@@ -2952,6 +3117,154 @@ function jesc(s) {
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard navigation (file browser)
+// ---------------------------------------------------------------------------
+
+/** All navigable items in the content area, in DOM order. */
+function _kbItems() {
+    return [...document.querySelectorAll('#content [data-path], #content [data-root-id]')];
+}
+
+/** Move the keyboard cursor to idx and apply the visual indicator. */
+function _kbSetCursor(idx, scroll = true) {
+    const items = _kbItems();
+    if (!items.length) { _kbCursor = -1; return; }
+    _kbCursor = Math.max(0, Math.min(idx, items.length - 1));
+    items.forEach((el, i) => el.classList.toggle('kb-focus', i === _kbCursor));
+    if (scroll) items[_kbCursor].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+/** Remove the visual cursor without changing selection. */
+function _kbClearCursor() {
+    _kbCursor = -1;
+    document.querySelectorAll('#content .kb-focus').forEach(el => el.classList.remove('kb-focus'));
+}
+
+/**
+ * Re-apply the kb-focus class after a DOM re-render.
+ * Called at the end of render() and renderContent() invocations.
+ */
+function _kbRestoreFocus() {
+    const items = _kbItems();
+    if (_kbCursor < 0 || !items.length) {
+        document.querySelectorAll('#content .kb-focus').forEach(el => el.classList.remove('kb-focus'));
+        return;
+    }
+    if (_kbCursor >= items.length) _kbCursor = items.length - 1;
+    items.forEach((el, i) => el.classList.toggle('kb-focus', i === _kbCursor));
+}
+
+/** Activate the item under the cursor (navigate into dir; select file). */
+function _kbActivate() {
+    const items = _kbItems();
+    if (_kbCursor < 0 || _kbCursor >= items.length) return;
+    const el = items[_kbCursor];
+    if (el.dataset.rootId != null) {
+        enterRoot(Number(el.dataset.rootId));
+    } else if (el.classList.contains('folder')) {
+        navigateTo(el.dataset.path);
+    } else if (el.dataset.path) {
+        const path = el.dataset.path;
+        const name = path.split('/').pop();
+        if (fileType(name) === 'zip') {
+            openZipDir(path);
+        } else {
+            el.click(); // selectFile(path, event)
+        }
+    }
+}
+
+/** Navigate to the parent directory (or exit search/zip mode). */
+async function _kbGoUp() {
+    if (state.mode === 'search') { doClearSearch(); return; }
+    if (state.mode === 'zip') {
+        if (state.zipPath) {
+            const parts = state.zipPath.split('/');
+            await navigateTo(parts.length > 1 ? parts.slice(0, -1).join('/') : '');
+        }
+        return;
+    }
+    if (!state.currentPath) {
+        if (state.currentRootId != null) await goVirtualRoot();
+        return;
+    }
+    const parts = state.currentPath.split('/');
+    await navigateTo(parts.length > 1 ? parts.slice(0, -1).join('/') : '');
+}
+
+/**
+ * Move the cursor spatially in grid mode, or sequentially in list mode.
+ * dir: 'up' | 'down' | 'left' | 'right'
+ *
+ * Grid:  up/down find the card with the closest horizontal centre in the
+ *        nearest row above/below. Left/right step one position in DOM order.
+ * List:  up/down step sequentially; left = go to parent; right = activate.
+ */
+function _kbMove(dir) {
+    const items = _kbItems();
+    if (!items.length) return;
+
+    // No cursor yet: jump to first or last item.
+    if (_kbCursor < 0) {
+        _kbSetCursor(dir === 'up' || dir === 'left' ? items.length - 1 : 0);
+        return;
+    }
+
+    const isGrid = document.getElementById('content').classList.contains('file-grid');
+
+    if (!isGrid) {
+        // List mode: sequential navigation.
+        if      (dir === 'down')  _kbSetCursor(_kbCursor + 1);
+        else if (dir === 'up')    _kbSetCursor(_kbCursor - 1);
+        else if (dir === 'left')  _kbGoUp();
+        else if (dir === 'right') _kbActivate();
+        return;
+    }
+
+    // Grid mode: spatial navigation.
+    if (dir === 'left') {
+        if (_kbCursor > 0) _kbSetCursor(_kbCursor - 1);
+        return;
+    }
+    if (dir === 'right') {
+        if (_kbCursor + 1 < items.length) _kbSetCursor(_kbCursor + 1);
+        return;
+    }
+
+    const curRect = items[_kbCursor].getBoundingClientRect();
+    const curCX   = curRect.left + curRect.width  / 2;
+    const curCY   = curRect.top  + curRect.height / 2;
+
+    // Find the edge of the nearest row in the desired direction.
+    // For 'down': look at r.top values that are greater than curCY (strictly below centre).
+    // For 'up':   look at r.bottom values that are less than curCY (strictly above centre).
+    let rowEdge = dir === 'down' ? Infinity : -Infinity;
+    for (let i = 0; i < items.length; i++) {
+        if (i === _kbCursor) continue;
+        const r = items[i].getBoundingClientRect();
+        if (dir === 'down' && r.top    > curCY) rowEdge = Math.min(rowEdge, r.top);
+        if (dir === 'up'   && r.bottom < curCY) rowEdge = Math.max(rowEdge, r.bottom);
+    }
+    if (!isFinite(rowEdge)) return; // already at the first or last row
+
+    // Among cards in that row (within ±8 px), pick the one whose horizontal
+    // centre is closest to the current card's horizontal centre.
+    const tol = 8;
+    let best = -1, bestHDist = Infinity;
+    for (let i = 0; i < items.length; i++) {
+        if (i === _kbCursor) continue;
+        const r = items[i].getBoundingClientRect();
+        const onRow = dir === 'down'
+            ? Math.abs(r.top    - rowEdge) <= tol
+            : Math.abs(r.bottom - rowEdge) <= tol;
+        if (!onRow) continue;
+        const hDist = Math.abs((r.left + r.width / 2) - curCX);
+        if (hDist < bestHDist) { bestHDist = hDist; best = i; }
+    }
+    if (best >= 0) _kbSetCursor(best);
+}
+
+// ---------------------------------------------------------------------------
 // Event binding
 // ---------------------------------------------------------------------------
 
@@ -2975,12 +3288,64 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target === e.currentTarget) closeDetail();
     });
 
-    // Keyboard shortcuts
+    // Keyboard shortcuts (file browser navigation + Escape handling)
     document.addEventListener('keydown', e => {
+        // Escape is handled regardless of focus state
         if (e.key === 'Escape') {
-            if (state.selectedPaths.size > 1) { clearSelection(); }
-            else if (state.selectedFile) { closeDetail(); }
-            else if (state.mode === 'search') { doClearSearch(); }
+            if (state.selectedPaths.size > 1) { clearSelection(); return; }
+            if (state.selectedFile)            { closeDetail();   return; }
+            if (state.mode === 'search')       { doClearSearch(); return; }
+            if (_kbCursor >= 0)                { _kbClearCursor(); return; }
+            return;
+        }
+
+        // Skip navigation when a modal overlay is open
+        if (!document.getElementById('media-viewer').hidden) return;
+        if (!document.getElementById('lightbox').hidden) return;
+
+        // Skip when an input element has focus
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+
+        // Skip when the tag context menu is open
+        if (document.getElementById('tag-context-menu')) return;
+
+        const items = _kbItems();
+        if (!items.length) return;
+
+        switch (e.key) {
+            // Spatial navigation: arrow keys and vi-keys h/j/k/l move visually
+            // in the grid (left/down/up/right), and sequentially in list mode.
+            case 'ArrowDown':
+            case 'j':
+                e.preventDefault();
+                _kbMove('down');
+                break;
+            case 'ArrowUp':
+            case 'k':
+                e.preventDefault();
+                _kbMove('up');
+                break;
+            case 'ArrowRight':
+            case 'l':
+                e.preventDefault();
+                _kbMove('right');
+                break;
+            case 'ArrowLeft':
+            case 'h':
+                e.preventDefault();
+                _kbMove('left');
+                break;
+            // Enter / Return: open the focused item.
+            case 'Enter':
+                if (_kbCursor >= 0) { e.preventDefault(); _kbActivate(); }
+                break;
+            // u / Backspace: go to parent directory.
+            case 'u':
+            case 'Backspace':
+                e.preventDefault();
+                _kbGoUp();
+                break;
         }
     });
 
@@ -2998,6 +3363,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await Promise.all([loadInfo(), loadTags(), loadFiles(initialPath)]);
     render();
 
-    // Comic viewer stage events (wheel, drag, pinch)
+    // Media viewer stage events (wheel, drag, pinch)
     _cvInitStageEvents();
 });
