@@ -1215,7 +1215,8 @@ struct AiConfig {
     api_key: Option<String>,
     tag_prefix: String,
     max_tokens: u32,
-    format: String, // "openai" or "ollama"
+    format: String,         // "openai" or "ollama"
+    prompt: Option<String>, // custom base prompt; falls back to AI_DEFAULT_PROMPT
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -1249,6 +1250,10 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .unwrap_or_else(|| "openai".to_string());
+    let prompt = db::get_setting(conn, "ai.prompt")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
     Some(AiConfig {
         endpoint,
         model,
@@ -1256,6 +1261,7 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         tag_prefix,
         max_tokens,
         format,
+        prompt,
     })
 }
 
@@ -1452,22 +1458,18 @@ async fn vlm_call(
 /// Single-step image analysis: send the image together with the tagging
 /// prompt and parse the JSON array the model returns.
 /// Returns `(raw_response_for_debug, tags)`.
-fn build_ai_prompt(existing_tags: &[String]) -> String {
+fn build_ai_prompt(base_prompt: &str, existing_tags: &[String]) -> String {
     if existing_tags.is_empty() {
-        return AI_DEFAULT_PROMPT.to_string();
+        return base_prompt.to_string();
     }
     let list = existing_tags
         .iter()
         .map(|t| format!("\"{t}\""))
         .collect::<Vec<_>>()
         .join(", ");
+    // Inject the existing-tags context before the base prompt instructions.
     format!(
-        "Look at this image. The file already has these tags: [{list}]. \
-Output ONLY a JSON array of additional short descriptive tags (English, lowercase) \
-that complement the existing ones. Do not repeat existing tags. \
-No thinking, no explanation, no other text.\n\n\
-Good: [\"dog\", \"beach\", \"sunny\", \"swimming\"]\n\
-Bad: any text outside the JSON array\n\n/no_think"
+        "The file already has these tags: [{list}]. Only suggest additional tags that complement these; do not repeat them.\n\n{base_prompt}"
     )
 }
 
@@ -1477,7 +1479,8 @@ async fn analyse_image(
     existing_tags: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
-    let prompt = build_ai_prompt(existing_tags);
+    let base = config.prompt.as_deref().unwrap_or(AI_DEFAULT_PROMPT);
+    let prompt = build_ai_prompt(base, existing_tags);
     let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     Ok((raw, tags))
