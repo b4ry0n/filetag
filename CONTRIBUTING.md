@@ -63,8 +63,9 @@ files (
 )
 
 tags (
-    id   INTEGER PRIMARY KEY,
-    name TEXT UNIQUE
+    id    INTEGER PRIMARY KEY,
+    name  TEXT UNIQUE,
+    color TEXT
 )
 
 file_tags (
@@ -75,13 +76,18 @@ file_tags (
     PRIMARY KEY (file_id, tag_id, value)
 )
 
-child_databases (
-    id       INTEGER PRIMARY KEY,
-    rel_path TEXT NOT NULL UNIQUE   -- relative to this database's root
+linked_databases (
+    id   INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE   -- relative to this database's root
+)
+
+settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
 )
 ```
 
-Schema version 3. Migration from v1 to v2 adds `child_databases`. Migration from v2 to v3 adds `file_id` and removes `blake3` usage.
+Schema version 6. Migrations: v1→v2 adds `child_databases`; v2→v3 adds `file_id`, removes `blake3`; v3→v4 adds `color` to `tags`; v4→v5 renames `child_databases` to `linked_databases` and `rel_path` to `path`; v5→v6 adds `settings` table.
 
 ## Core principles
 

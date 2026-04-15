@@ -61,13 +61,13 @@ Library entry point. Re-exports modules and defines `TagList` type alias.
 Database module. Key functions:
 - `init(root)` - creates `.filetag/db.sqlite3`
 - `find_and_open(start)` - walks parents until DB found
-- `migrate(conn)` - schema creation + migration (v1→v2: child_databases, v2→v3: file_id)
+- `migrate(conn)` - schema creation + migration (v1→v2: child_databases, v2→v3: file_id, v3→v4: color, v4→v5: rename to linked_databases, v5→v6: settings)
 - `get_or_index_file(conn, rel_path, root)` - indexes file with metadata + file_id
 - `get_or_create_tag(conn, name)` - tag CRUD
 - `apply_tag()`, `remove_tag()`, `tags_for_file()`, `all_tags()`, `file_by_path()`
 - `relative_to_root(path, root)` - resolves abs path to relative path
-- `add_child()`, `remove_child()`, `list_children()` - child database registration
-- `collect_all_databases(conn, root)` - recursively opens all child DBs (cycle detection)
+- `add_child()`, `remove_child()`, `list_children()` - linked database registration
+- `collect_all_databases(conn, root, include_parents)` - recursively opens all linked DBs (cycle detection)
 - `files_under_prefix(conn, prefix)` - file records + tags under a path prefix (for push)
 - `all_files_with_tags(conn)` - all file records + tags (for pull)
 - `delete_file_by_path(conn, rel_path)` - deletes file record from DB (cascade)
@@ -105,7 +105,7 @@ CLI entry point with clap derive. Subcommands: init, tag, untag, tags, show, fin
 Global options: `--json`, `--color`, `-q`/`--quiet`, `-v`/`--verbose`, `--db`.
 Aliases: tag=t, untag=u, tags=ls, show=s, find=f.
 Features: stdin pipe support (auto-detect), NUL-delimited I/O (`-0`), JSON Lines output, confirmation prompts for destructive ops.
-`--all` flag on `tags` and `find` for cross-database queries.
+`--isolated`/`-i` flag on `tags` and `find`: query only the current database (no children, no ancestors). `--all-dbs` flag: query all globally registered databases. Default queries current DB + linked children + ancestor databases.
 `db` subcommand with `DbAction` enum: List, Add, Remove, Prune, Push, Pull, Register, Unregister, Registered.
 Helper functions: `parse_tag_args()`, `expand_recursive()`, `format_size()`, `collect_files()`, `open_db()`.
 
@@ -122,10 +122,11 @@ Static files embedded via `include_str!` from `filetag-web/static/`.
 files (id INTEGER PK, path TEXT UNIQUE, file_id TEXT, size INTEGER, mtime_ns INTEGER, indexed_at TEXT)
 tags (id INTEGER PK, name TEXT UNIQUE, color TEXT)
 file_tags (file_id INTEGER, tag_id INTEGER, value TEXT NOT NULL DEFAULT '', created_at TEXT, PK(file_id, tag_id, value))
-child_databases (id INTEGER PK, rel_path TEXT NOT NULL UNIQUE)
+linked_databases (id INTEGER PK, path TEXT NOT NULL UNIQUE)
+settings (key TEXT PK, value TEXT NOT NULL DEFAULT '')
 ```
 
-Schema version 4. Migration from v1→v2 adds `child_databases` table. v2→v3 adds `file_id`, removes `blake3` usage. v3→v4 adds `color` to tags.
+Schema version 6. v1→v2: `child_databases` table. v2→v3: `file_id`, removes `blake3`. v3→v4: `color` on tags. v4→v5: rename `child_databases`→`linked_databases`, `rel_path`→`path`. v5→v6: `settings` table.
 
 ## CLI Usage
 
@@ -157,11 +158,12 @@ filetag db unregister                   # Remove from global registry
 filetag db registered                   # Show all globally registered DBs
 filetag completions SHELL               # Shell completions (bash/zsh/fish)
 
-# Cross-database queries
-filetag tags --all                      # Tags from all child databases
-filetag find QUERY --all                # Search across all child databases
-filetag tags --all-dbs                  # Tags from all globally registered DBs
-filetag find QUERY --all-dbs            # Search across all globally registered DBs
+# Cross-database queries (default includes linked children + ancestors)
+filetag tags                            # Tags from current DB + linked children + ancestors
+filetag tags --isolated                 # Current database only (alias: -i)
+filetag tags --all-dbs                  # All globally registered DBs
+filetag find QUERY --isolated           # Current database only
+filetag find QUERY --all-dbs            # All globally registered DBs
 
 # Global options
 --json                                  # JSON Lines output
