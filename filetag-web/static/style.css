@@ -26,6 +26,12 @@
     --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
 
+    /* Semantic aliases used in UI components */
+    --fg: #212529;          /* foreground / inverse-bg for toasts */
+    --fg-dim: #868e96;      /* dimmed foreground (labels, hints) */
+    --bg-panel: #ffffff;    /* floating panel background (dropdowns, etc.) */
+    --bg-card: #f8f9fa;     /* card / input background */
+
     /* Syntax highlighting — light mode (GitHub-inspired) */
     --hl-comment:  #6a737d;
     --hl-str:      #032f62;
@@ -63,6 +69,12 @@
         --primary-dark: #74c0fc;
         --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
         --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+
+        /* Semantic aliases — dark mode */
+        --fg: #c1c2c5;
+        --fg-dim: #909296;
+        --bg-panel: #25262b;
+        --bg-card: #2c2e33;
 
         /* Syntax highlighting — dark mode */
         --hl-comment:  #8b949e;
@@ -1306,6 +1318,7 @@ h3, h4 { font-weight: 600; }
     display: flex;
     flex-direction: column;
     gap: 6px;
+    border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
 }
 
@@ -1344,6 +1357,9 @@ h3, h4 { font-weight: 600; }
     flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 12px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 2px; /* prevent scrollbar from touching chips */
 }
 
 .tag-chip {
@@ -1387,6 +1403,7 @@ h3, h4 { font-weight: 600; }
     display: flex;
     gap: 6px;
     position: relative;
+    z-index: 2; /* ensure autocomplete dropdown stacks above sibling .ai-analyse-row */
 }
 
 .tag-autocomplete {

@@ -109,12 +109,56 @@ Features: stdin pipe support (auto-detect), NUL-delimited I/O (`-0`), JSON Lines
 `db` subcommand with `DbAction` enum: List, Add, Remove, Prune, Push, Pull, Register, Unregister, Registered.
 Helper functions: `parse_tag_args()`, `expand_recursive()`, `format_size()`, `collect_files()`, `open_db()`.
 
-### filetag-web/src/main.rs
-axum-based web interface. JSON REST API + embedded static frontend.
-Routes: `/api/info`, `/api/tags`, `/api/files`, `/api/search`, `/api/file`, `/api/tag`, `/api/untag`, `/api/tag-color`, `/api/delete-tag`, `/preview/*`.
-CLI: `filetag-web [--port 3000] [--bind 127.0.0.1] [path]`.
+### filetag-web/src/main.rs (~266 lines)
+Entry point, CLI `Args`, database discovery, router setup, tree display. Delegates to modules below.
+CLI: `filetag-web [--port 3000] [--bind 127.0.0.1] [--no-parents] [path]`.
 Frontend: grid/list file browser, tag sidebar (grouped by prefix, color dots, right-click context menu for color + delete), search bar (full query language), detail panel with preview + tag management.
 Static files embedded via `include_str!` from `filetag-web/static/`.
+
+### filetag-web/src/state.rs (~236 lines)
+Core application state and helpers.
+- `DbRoot` struct (name, root, db_path, dev, entry_point)
+- `AppState` (roots, ai_progress)
+- `AppError` (anyhow → 500)
+- `open_conn(db_root)` — open DB with WAL + busy_timeout PRAGMAs
+- `open_for_file_op(db_root, rel_path)` — **mandatory** gateway for file operations; finds correct DB (child or root) for a given path
+- `open_for_file_op_under(root, rel_path)` — same but takes raw `Path` (for background tasks)
+- `safe_path()`, `preview_safe_path()` — path traversal protection
+- `parse_tag()`, `root_at()`, `file_is_covered()`, `resolve_names()`, `terminal_width()`
+- `THUMB_LIMITER` — semaphore for concurrent thumbnail generation
+
+### filetag-web/src/types.rs (~158 lines)
+All API request/response structs (~20 structs). No logic.
+
+### filetag-web/src/preview.rs (~1130 lines)
+File preview/serving, RAW/HEIC conversion, thumbnailing, video transcoding, trickplay.
+- `preview_handler`, `thumb_handler` — main Axum handlers
+- `thumb_cached` — deduplicates cache-check-permit-generate-serve pattern
+- `serve_file_bytes`, `serve_file_range`, `serve_transcoded_mp4`
+- `raw_extract_jpeg`, `image_thumb_jpeg`, `pdf_thumb_jpeg`
+- `video_info`, `video_thumb_strip`, `api_vthumbs`, `api_vthumbs_pregen`
+
+### filetag-web/src/archive.rs (~705 lines)
+ZIP/RAR/7z archive handling (via `zip`, `unrar`, `sevenz_rust`).
+- `archive_cover_image`, `archive_image_entries`, `archive_read_entry`, `archive_list_entries_raw`
+- `api_dir_images`, `api_zip_pages`, `api_zip_page`, `api_zip_thumb`, `api_zip_entries`
+
+### filetag-web/src/ai.rs (~1047 lines)
+AI/VLM image analysis (OpenAI-compatible + Ollama).
+- `AiConfig`, `AiProgress`, `load_ai_config`
+- `ai_prepare_jpeg`, `ai_prepare_jpeg_from_bytes`, `vlm_call`, `vlm_call_multi`, `analyse_image`, `analyse_archive`, `parse_ai_tags`
+- `apply_ai_tags`, `remove_prefixed_tags`
+- `api_ai_analyse` (handles both images and archives), `api_ai_analyse_batch`, `api_ai_status`, `api_ai_clear_tags`
+- `api_ai_config_get`, `api_ai_config_set`
+- Archive analysis: lists entries, picks sample images, sends entry listing + images to VLM
+
+### filetag-web/src/api.rs (~571 lines)
+Core CRUD API handlers + static file serving.
+- `api_roots`, `api_reorder_roots`, `api_rename_db`, `api_info`, `api_cache_clear`
+- `api_tags`, `api_files`, `api_search`, `api_file_detail`
+- `api_tag`, `api_untag` — use `open_for_file_op` for correct child-DB routing
+- `api_tag_color`, `api_delete_tag`
+- `index_html`, `style_css`, `app_js`, `favicon` — embedded static assets
 
 ## Database Schema
 

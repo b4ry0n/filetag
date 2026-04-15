@@ -38,6 +38,40 @@ const EXT_MAP = {
                'psd','psb','xcf','ai','eps'],
 };
 
+// Video formats that the browser cannot play natively and are served via HLS.
+const HLS_EXTS = new Set(['mkv','avi','wmv','flv','mpg','mpeg','3gp','f4v','m4v']);
+
+function needsHls(name) {
+    return HLS_EXTS.has(name.split('.').pop().toLowerCase());
+}
+
+// Attach an hls.js player to `videoEl` using the HLS playlist for `path`.
+// Falls back to native HLS (Safari) or a direct preview URL when hls.js is
+// not available. Stores the Hls instance on `videoEl._hls` for cleanup.
+function initHlsPlayer(videoEl, path) {
+    const playlistUrl = '/hls/' + encodeURI(path) + rootParam('?');
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: false, maxBufferLength: 30 });
+        hls.loadSource(playlistUrl);
+        hls.attachMedia(videoEl);
+        videoEl._hls = hls;
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari supports HLS natively.
+        videoEl.src = playlistUrl;
+    } else {
+        // Last resort: direct preview (no duration info, but at least loads).
+        videoEl.src = '/preview/' + encodeURI(path) + rootParam('?');
+    }
+}
+
+// Destroy any active hls.js instances inside a DOM container.
+function destroyHlsInContainer(container) {
+    if (!container) return;
+    container.querySelectorAll('video').forEach(v => {
+        if (v._hls) { v._hls.destroy(); delete v._hls; }
+    });
+}
+
 function fileType(name) {
     const ext = name.split('.').pop().toLowerCase();
     for (const [type_, exts] of Object.entries(EXT_MAP)) {
@@ -748,7 +782,7 @@ function closeTagMenu() {
 
 async function setTagColor(tagName, color) {
     closeTagMenu();
-    await apiPost('/api/tag-color', { name: tagName, color });
+    await apiPost('/api/tag-color', { name: tagName, color, root_id: state.currentRootId });
     await loadTags();
     render();
 }
@@ -760,7 +794,7 @@ async function deleteTag(tagName) {
     if (count > 0 && !confirm(`Delete tag "${tagName}"? It is applied to ${count} file(s).`)) {
         return;
     }
-    await apiPost('/api/delete-tag', { name: tagName });
+    await apiPost('/api/delete-tag', { name: tagName, root_id: state.currentRootId });
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();
@@ -1565,6 +1599,9 @@ function _cardThumbError(img) {
 function renderDetail() {
     const panel = document.getElementById('detail');
 
+    // Clean up any active HLS player from the previous selection.
+    destroyHlsInContainer(panel);
+
     // Multi-select bulk panel
     if (state.selectedPaths.size > 1) {
         const count = state.selectedPaths.size;
@@ -1646,9 +1683,16 @@ function renderDetail() {
     } else if (type_ === 'audio') {
         preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')"></audio>`;
     } else if (type_ === 'video') {
-        preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}"` +
-                  ` onclick="openLightbox('${jesc(f.path)}','video')" style="cursor:zoom-in"` +
-                  ` onerror="_previewVideoError(this)"></video>`;
+        if (needsHls(name)) {
+            // HLS player: src is set after DOM insertion via initHlsPlayer().
+            preview = `<video controls preload="none" data-hls="1" data-name="${esc(name)}"` +
+                      ` onclick="openLightbox('${jesc(f.path)}','video')" style="cursor:zoom-in"` +
+                      ` onerror="_previewVideoError(this)"></video>`;
+        } else {
+            preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}"` +
+                      ` onclick="openLightbox('${jesc(f.path)}','video')" style="cursor:zoom-in"` +
+                      ` onerror="_previewVideoError(this)"></video>`;
+        }
     } else if (type_ === 'pdf') {
         preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}"></iframe>` +
                   `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${jesc(f.path)}','pdf')">Full-size PDF</button></div>`;
@@ -1693,7 +1737,7 @@ function renderDetail() {
             </div>`
         : `<div class="uncovered-notice">This file is on a different filesystem. Tags cannot be added here.</div>`;
 
-    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw');
+    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip');
     const isAnalysing = state.aiAnalysing.has(f.path);
     const aiClearBtn = hasAiTags
         ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Verwijder ai/-tags</button>`
@@ -1723,6 +1767,12 @@ function renderDetail() {
             ${tagAddSection}
             ${aiBtn}
         </div>`;
+
+    // Init HLS player after DOM insertion (innerHTML does not run scripts/events).
+    if (type_ === 'video' && needsHls(name)) {
+        const vid = panel.querySelector('video[data-hls]');
+        if (vid) initHlsPlayer(vid, f.path);
+    }
 
     if (covered) attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
 
@@ -2392,7 +2442,7 @@ async function clearCache(all = false) {
 
     const btn = document.getElementById('cache-clear-page-btn');
     btn.disabled = true;
-    const toast = showToast(all ? 'Cache wissen…' : 'Cache van huidige pagina wissen…', 0);
+    const toast = showToast(all ? 'Clearing cache…' : 'Clearing page cache…', 0);
     try {
         let body = null;
         if (!all) {
@@ -2402,18 +2452,18 @@ async function clearCache(all = false) {
                 .map(e => e.path);
             body = JSON.stringify({ paths });
         }
-        await fetch('/api/cache/clear', {
+        await fetch('/api/cache/clear' + rootParam('?'), {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : {},
             body: body ?? undefined,
         });
-        updateToast(toast, all ? 'Volledige cache gewist' : 'Cache van pagina gewist');
+        updateToast(toast, all ? 'Cache cleared' : 'Page cache cleared');
     } catch (_) {
-        updateToast(toast, 'Cache wissen mislukt');
+        updateToast(toast, 'Cache clear failed');
     } finally {
         btn.disabled = false;
         dismissToast(toast);
-        showToast(all ? 'Cache gewist' : 'Paginacache gewist');
+        showToast(all ? 'Cache cleared' : 'Page cache cleared');
         if (state.mode === 'search') {
             await doSearch();
         } else {
@@ -2442,12 +2492,12 @@ async function pregenSprites() {
     const btn = document.getElementById('pregen-sprites-btn');
     btn.disabled = true;
 
-    const toast = showToast(`Video sprites genereren… (0 / ${videoPaths.length})`, 0);
+    const toast = showToast(`Generating video sprites… (0 / ${videoPaths.length})`, 0);
     toast.classList.add('toast-progress');
 
     let done = 0;
     for (const path of videoPaths) {
-        updateToast(toast, `Video sprites genereren… (${done} / ${videoPaths.length})`);
+        updateToast(toast, `Generating video sprites… (${done} / ${videoPaths.length})`);
         try {
             await fetch('/api/vthumbs?' + new URLSearchParams({ path, n: 8 }) + rootParam('&'));
         } catch (_) { /* ignore */ }
@@ -2456,7 +2506,7 @@ async function pregenSprites() {
     }
 
     dismissToast(toast);
-    showToast(`Klaar: ${done} sprite${done !== 1 ? 's' : ''} gegenereerd`);
+    showToast(`Done: ${done} sprite${done !== 1 ? 's' : ''} generated`);
     btn.disabled = false;
 }
 
@@ -2470,15 +2520,18 @@ const AI_IMAGE_EXTS = new Set([
     'raw','3fr','x3f','rwl','iiq','mef','mos',
 ]);
 
+const AI_ARCHIVE_EXTS = new Set(['zip','cbz','rar','cbr','7z','cb7']);
+
 function isAiImage(path) {
-    return AI_IMAGE_EXTS.has((path || '').split('.').pop().toLowerCase());
+    const ext = (path || '').split('.').pop().toLowerCase();
+    return AI_IMAGE_EXTS.has(ext) || AI_ARCHIVE_EXTS.has(ext);
 }
 
 async function openAiSettings() {
     const menu = document.getElementById('cache-menu');
     if (menu) menu.hidden = true;
     try {
-        const res = await fetch('/api/ai/config?' + new URLSearchParams({ root_id: state.currentRootId ?? 0 }));
+        const res = await fetch('/api/ai/config?' + new URLSearchParams({ root_id: state.currentRootId }) + rootParam('&'));
         const cfg = await res.json();
         document.getElementById('ai-endpoint').value = cfg.endpoint || '';
         document.getElementById('ai-model').value = cfg.model || '';
@@ -2511,7 +2564,7 @@ async function aiSaveSettings() {
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,
-        root_id: state.currentRootId ?? 0,
+        root_id: state.currentRootId,
     };
     const apiKey = document.getElementById('ai-api-key').value;
     if (apiKey) body.api_key = apiKey;
@@ -2543,7 +2596,7 @@ async function aiTestConnection() {
         testFile = items.find(e => !e.is_dir && isAiImage(e.path));
     }
     if (!testFile) {
-        resultEl.textContent = 'Geen afbeelding gevonden in huidige map om te testen.';
+        resultEl.textContent = 'No image found in current view to test with.';
         return;
     }
 
@@ -2551,7 +2604,7 @@ async function aiTestConnection() {
         const res = await fetch('/api/ai/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: testFile.path, root_id: state.currentRootId ?? 0, dry_run: true }),
+            body: JSON.stringify({ path: testFile.path, root_id: state.currentRootId, dry_run: true }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -2560,7 +2613,7 @@ async function aiTestConnection() {
             if ((data.tags || []).length > 0) {
                 resultEl.textContent = 'Tags: ' + data.tags.join(', ');
             } else {
-                resultEl.textContent = 'Geen tags herkend.\n\nRuwe respons van model:\n' + (data.raw || '(leeg)');
+                resultEl.textContent = 'No tags recognised.\n\nRaw model response:\n' + (data.raw || '(empty)');
             }
         }
     } catch (e) {
@@ -2575,7 +2628,7 @@ async function aiPromoteTag(path, tagName, value) {
     const promoted = tagName.slice('ai/'.length);
     if (!promoted) return;
     const newTagStr = value ? `${promoted}=${value}` : promoted;
-    const toast = showToast(`Promoten: ${newTagStr}…`, 0);
+    const toast = showToast(`Promoting: ${newTagStr}…`, 0);
     try {
         // Add the promoted tag, then remove the ai/ original.
         await apiPost('/api/tag', { path, tags: [newTagStr], root_id: state.currentRootId });
@@ -2586,7 +2639,7 @@ async function aiPromoteTag(path, tagName, value) {
         renderDetailTagsOnly();
         _updateCardTagBadges();
     } catch (e) {
-        showToast('Promoten mislukt: ' + e.message);
+        showToast('Promote failed: ' + e.message);
     } finally {
         dismissToast(toast);
     }
@@ -2594,9 +2647,9 @@ async function aiPromoteTag(path, tagName, value) {
 
 /// Remove all ai/* tags from given paths.
 async function aiClearTags(paths) {
-    const toast = showToast(`ai/-tags verwijderen van ${paths.length} bestand${paths.length !== 1 ? 'en' : ''}…`, 0);
+    const toast = showToast(`Removing ai/ tags from ${paths.length} file${paths.length !== 1 ? 's' : ''}…`, 0);
     try {
-        await apiPost('/api/ai/clear-tags', { paths, root_id: state.currentRootId ?? 0 });
+        await apiPost('/api/ai/clear-tags', { paths, root_id: state.currentRootId });
         // Refresh each file that may be currently selected.
         for (const p of paths) {
             if (state.selectedFile?.path === p) {
@@ -2607,37 +2660,37 @@ async function aiClearTags(paths) {
         renderDetail();
         _updateCardTagBadges();
         dismissToast(toast);
-        showToast(`ai/-tags verwijderd`);
+        showToast(`ai/ tags removed`);
     } catch (e) {
         dismissToast(toast);
-        showToast('Verwijderen mislukt: ' + e.message);
+        showToast('Remove failed: ' + e.message);
     }
 }
 
 async function aiAnalyseSingle(path) {
     if (state.aiAnalysing.has(path)) return; // already running
     state.aiAnalysing.add(path);
-    // Re-render so the button shows "Analyseren…" immediately (also persists on navigate-away & back)
+    // Re-render so the button shows "Analysing…" immediately (also persists on navigate-away & back)
     if (state.selectedFile?.path === path) renderDetail();
-    const toast = showToast(`AI: analyseren…`, 0);
+    const toast = showToast(`AI: analysing…`, 0);
     try {
         const res = await fetch('/api/ai/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, root_id: state.currentRootId ?? 0 }),
+            body: JSON.stringify({ path, root_id: state.currentRootId }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
         const n = (data.tags || []).length;
         dismissToast(toast);
-        showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} toegevoegd`);
+        showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} added`);
         if (state.selectedFile?.path === path) {
             await loadFileDetail(path);
             await loadTags();
         }
     } catch (e) {
         dismissToast(toast);
-        showToast('AI fout: ' + e.message);
+        showToast('AI error: ' + e.message);
     } finally {
         state.aiAnalysing.delete(path);
         if (state.selectedFile?.path === path) renderDetail();
@@ -2661,21 +2714,21 @@ async function aiAnalyseBatch() {
     }
 
     if (imagePaths.length === 0) {
-        showToast('Geen afbeeldingen in huidige weergave');
+        showToast('No images in current view');
         return;
     }
 
     const btn = document.getElementById('ai-analyse-btn');
     if (btn) btn.disabled = true;
 
-    const toast = showToast(`AI: ${imagePaths.length} afbeeldingen in wachtrij…`, 0);
+    const toast = showToast(`AI: queuing ${imagePaths.length} image${imagePaths.length !== 1 ? 's' : ''}…`, 0);
     toast.classList.add('toast-progress');
 
     try {
         const res = await fetch('/api/ai/analyse-batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: imagePaths, root_id: state.currentRootId ?? 0 }),
+            body: JSON.stringify({ paths: imagePaths, root_id: state.currentRootId }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
@@ -2685,11 +2738,11 @@ async function aiAnalyseBatch() {
             try {
                 const sr = await fetch('/api/ai/status');
                 const prog = await sr.json();
-                updateToast(toast, `AI: analyseren… (${prog.done} / ${prog.total})`);
+                updateToast(toast, `AI: analysing… (${prog.done} / ${prog.total})`);
                 if (!prog.running) {
                     clearInterval(poll);
                     dismissToast(toast);
-                    showToast(`AI klaar: ${prog.done} afbeelding${prog.done !== 1 ? 'en' : ''} geanalyseerd`);
+                    showToast(`AI done: ${prog.done} image${prog.done !== 1 ? 's' : ''} analysed`);
                     if (btn) btn.disabled = false;
                     await loadTags();
                 }
@@ -2701,7 +2754,7 @@ async function aiAnalyseBatch() {
         }, 2000);
     } catch (e) {
         dismissToast(toast);
-        showToast('AI fout: ' + e.message);
+        showToast('AI error: ' + e.message);
         if (btn) btn.disabled = false;
     }
 }
@@ -2709,7 +2762,7 @@ async function aiAnalyseBatch() {
 async function refreshSelectedFile() {
     if (!state.selectedFile) return;
     try {
-        const res = await fetch('/api/file?' + new URLSearchParams({ path: state.selectedFile.path, root_id: state.currentRootId ?? 0 }));
+        const res = await fetch('/api/file?path=' + encodeURIComponent(state.selectedFile.path) + rootParam('&'));
         if (res.ok) {
             state.selectedFile = await res.json();
             renderDetailTagsOnly();
@@ -2855,6 +2908,10 @@ function cvOpenFile(path, type) {
 }
 
 function openLightbox(path, type) {
+    // Pause any media already playing in the detail panel so two players
+    // don't run simultaneously.
+    document.querySelectorAll('#detail-panel video, #detail-panel audio').forEach(m => m.pause());
+
     const url = '/preview/' + encodeURI(path) + rootParam('?');
     const lb = document.getElementById('lightbox');
     const content = document.getElementById('lightbox-content');
@@ -2866,8 +2923,13 @@ function openLightbox(path, type) {
         html = `<img src="${url}" alt="${esc(path.split('/').pop())}"
                      onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Preview unavailable',className:'lightbox-error'}))">`;
     } else if (type === 'video') {
-        html = `<video controls autoplay src="${url}"
-                       onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Cannot play this video format',className:'lightbox-error'}))"></video>`;
+        if (needsHls(path)) {
+            html = `<video controls autoplay data-hls="1"
+                           onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Cannot play this video format',className:'lightbox-error'}))"></video>`;
+        } else {
+            html = `<video controls autoplay src="${url}"
+                           onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'Cannot play this video format',className:'lightbox-error'}))"></video>`;
+        }
     } else if (type === 'audio') {
         html = `<audio controls autoplay src="${url}"></audio>`;
     } else if (type === 'pdf') {
@@ -2876,6 +2938,13 @@ function openLightbox(path, type) {
         html = `<pre class="lightbox-text hl-dark" id="lightbox-text-pre">Loading…</pre>`;
     }
     content.innerHTML = html;
+
+    // Init HLS player after DOM insertion.
+    if (type === 'video' && needsHls(path)) {
+        const vid = content.querySelector('video[data-hls]');
+        if (vid) initHlsPlayer(vid, path);
+    }
+
     lb.hidden = false;
 
     // Zoom hint for images
@@ -2920,7 +2989,11 @@ function closeLightbox(event) {
     _lbDetachZoom();
     const lb = document.getElementById('lightbox');
     lb.hidden = true;
-    document.getElementById('lightbox-content').innerHTML = '';
+    const content = document.getElementById('lightbox-content');
+    // Pause lightbox media before destroying to avoid audio continuing in the background.
+    content.querySelectorAll('video, audio').forEach(m => m.pause());
+    destroyHlsInContainer(content);
+    content.innerHTML = '';
     // Remove leftover hint if any
     lb.querySelectorAll('.lightbox-hint').forEach(h => h.remove());
 }
@@ -2930,7 +3003,10 @@ function _lightboxKeyHandler(e) {
         _lbDetachZoom();
         const lb = document.getElementById('lightbox');
         lb.hidden = true;
-        document.getElementById('lightbox-content').innerHTML = '';
+        const content = document.getElementById('lightbox-content');
+        content.querySelectorAll('video, audio').forEach(m => m.pause());
+        destroyHlsInContainer(content);
+        content.innerHTML = '';
         lb.querySelectorAll('.lightbox-hint').forEach(h => h.remove());
     } else {
         document.addEventListener('keydown', _lightboxKeyHandler, { once: true });
@@ -3830,6 +3906,26 @@ function _kbMove(dir) {
 // Event binding
 // ---------------------------------------------------------------------------
 
+async function _selectAllFiles() {
+    const allItems = state.mode === 'search' ? state.searchResults
+        : state.mode === 'zip' ? state.zipEntries.map(en => ({ path: state.zipPath + '::' + en.name, is_dir: false }))
+        : state.entries;
+    const filePaths = (allItems || [])
+        .filter(en => !en.is_dir)
+        .map(en => (state.mode === 'search' || state.mode === 'zip') ? en.path : fullPath(en));
+    filePaths.forEach(p => state.selectedPaths.add(p));
+    await Promise.all(filePaths.map(async p => {
+        if (!state.selectedFilesData.has(p)) {
+            const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam('&'));
+            state.selectedFilesData.set(p, data);
+        }
+    }));
+    _armedBulkTag = null;
+    state.selectedDir = null;
+    state.selectedFile = filePaths.length === 1 ? state.selectedFilesData.get(filePaths[0]) : null;
+    render();
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     // Search
     document.getElementById('search-btn').addEventListener('click', doSearch);
@@ -3868,6 +3964,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Skip when an input element has focus
         const active = document.activeElement;
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+
+        // Cmd+A / Ctrl+A: select all files on the current page.
+        if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+            e.preventDefault();
+            _selectAllFiles();
+            return;
+        }
 
         // Skip when the tag context menu is open
         if (document.getElementById('tag-context-menu')) return;
@@ -3918,11 +4021,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore root selection; for single-root loadRoots() already set currentRootId = 0.
     if (state.roots.filter(r => r.entry_point).length > 1 && savedRoot !== '' && savedRoot != null) {
         const id = parseInt(savedRoot, 10);
-        if (!isNaN(id) && id < state.roots.length) {
+        // Only restore if the saved id still maps to an entry-point root.
+        if (!isNaN(id) && id < state.roots.length && state.roots[id]?.entry_point) {
             state.currentRootId = id;
         }
     }
-    await Promise.all([loadInfo(), loadTags(), loadFiles(initialPath)]);
+    try { await Promise.all([loadInfo(), loadTags()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }
+    // Attempt to restore the last-visited path. If that fails (e.g. because new
+    // databases changed the root index mapping, or the directory was removed),
+    // fall back to the root of the selected database so the page is never blank.
+    try {
+        await loadFiles(initialPath);
+    } catch (e) {
+        console.error('loadFiles failed for path', JSON.stringify(initialPath), e);
+        sessionStorage.removeItem('ft_path');
+        try {
+            await loadFiles('');
+        } catch (e2) { console.error('loadFiles fallback also failed:', e2); }
+    }
     render();
 
     // Media viewer stage events (wheel, drag, pinch)
