@@ -431,6 +431,55 @@ pub fn file_by_path(conn: &Connection, rel_path: &str) -> Result<Option<FileReco
 }
 
 // ---------------------------------------------------------------------------
+// Archive entry indexing
+// ---------------------------------------------------------------------------
+
+/// Resolve a user-provided archive-entry path (e.g. `"archive.cbz::entry.jpg"` or
+/// `"/abs/path/archive.cbz::entry.jpg"`) to a DB-relative virtual path
+/// (e.g. `"photos/archive.cbz::entry.jpg"`).
+///
+/// The archive file itself must exist on disk and must be under `root`.
+pub fn resolve_archive_entry(raw: &str, root: &Path) -> Result<String> {
+    let (zip_str, entry) = raw
+        .split_once("::")
+        .with_context(|| format!("not an archive entry path: {}", raw))?;
+    let zip_abs = std::fs::canonicalize(zip_str)
+        .with_context(|| format!("cannot find archive file: {}", zip_str))?;
+    let zip_rel = zip_abs.strip_prefix(root).with_context(|| {
+        format!(
+            "{} is not under database root {}",
+            zip_abs.display(),
+            root.display()
+        )
+    })?;
+    Ok(format!("{}::{}", zip_rel.to_string_lossy(), entry))
+}
+
+/// Ensure a `files` record exists for a virtual archive-entry path such as
+/// `"photos/archive.cbz::cover.jpg"`.  Does not touch the filesystem beyond
+/// the existence check already done in `resolve_archive_entry`.
+///
+/// Returns the file record (creating it with `size=0 / mtime_ns=0` when new).
+pub fn get_or_index_archive_entry(conn: &Connection, virtual_path: &str) -> Result<FileRecord> {
+    if let Some(existing) = file_by_path(conn, virtual_path)? {
+        return Ok(existing);
+    }
+    conn.execute(
+        "INSERT INTO files (path, file_id, size, mtime_ns, indexed_at) \
+         VALUES (?1, NULL, 0, 0, datetime('now'))",
+        params![virtual_path],
+    )?;
+    let id = conn.last_insert_rowid();
+    Ok(FileRecord {
+        id,
+        path: virtual_path.to_string(),
+        file_id: None,
+        size: 0,
+        mtime_ns: 0,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Child database management
 // ---------------------------------------------------------------------------
 

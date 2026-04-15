@@ -25,6 +25,27 @@
     --header-height: 56px;
     --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+    /* Syntax highlighting — light mode (GitHub-inspired) */
+    --hl-comment:  #6a737d;
+    --hl-str:      #032f62;
+    --hl-kw:       #d73a49;
+    --hl-num:      #005cc5;
+    --hl-type:     #6f42c1;
+    --hl-builtin:  #6f42c1;
+    --hl-preproc:  #e36209;
+    --hl-tag:      #22863a;
+    --hl-at:       #6f42c1;
+    --hl-var:      #e36209;
+    --hl-section:  #6f42c1;
+    --hl-lifetime: #d73a49;
+    --hl-macro:    #6f42c1;
+    --hl-add:      #22863a;
+    --hl-add-bg:   rgba(34, 134, 58, 0.12);
+    --hl-del:      #cb2431;
+    --hl-del-bg:   rgba(203, 36, 49, 0.10);
+    --hl-info:     #005cc5;
+    --hl-meta:     #6a737d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -42,7 +63,51 @@
         --primary-dark: #74c0fc;
         --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
         --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+
+        /* Syntax highlighting — dark mode */
+        --hl-comment:  #8b949e;
+        --hl-str:      #a5d6ff;
+        --hl-kw:       #ff7b72;
+        --hl-num:      #79c0ff;
+        --hl-type:     #7ee787;
+        --hl-builtin:  #d2a8ff;
+        --hl-preproc:  #ffa657;
+        --hl-tag:      #7ee787;
+        --hl-at:       #d2a8ff;
+        --hl-var:      #ffa657;
+        --hl-section:  #d2a8ff;
+        --hl-lifetime: #ff7b72;
+        --hl-macro:    #d2a8ff;
+        --hl-add:      #3fb950;
+        --hl-add-bg:   rgba(63, 185, 80, 0.12);
+        --hl-del:      #f85149;
+        --hl-del-bg:   rgba(248, 81, 73, 0.10);
+        --hl-info:     #79c0ff;
+        --hl-meta:     #8b949e;
     }
+}
+
+/* Always-dark context (lightbox always has a dark background) */
+.hl-dark {
+    --hl-comment:  #8b949e;
+    --hl-str:      #a5d6ff;
+    --hl-kw:       #ff7b72;
+    --hl-num:      #79c0ff;
+    --hl-type:     #7ee787;
+    --hl-builtin:  #d2a8ff;
+    --hl-preproc:  #ffa657;
+    --hl-tag:      #7ee787;
+    --hl-at:       #d2a8ff;
+    --hl-var:      #ffa657;
+    --hl-section:  #d2a8ff;
+    --hl-lifetime: #ff7b72;
+    --hl-macro:    #d2a8ff;
+    --hl-add:      #3fb950;
+    --hl-add-bg:   rgba(63, 185, 80, 0.12);
+    --hl-del:      #f85149;
+    --hl-del-bg:   rgba(248, 81, 73, 0.10);
+    --hl-info:     #79c0ff;
+    --hl-meta:     #8b949e;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1027,6 +1092,25 @@ h3, h4 { font-weight: 600; }
     text-align: left;
     color: var(--text);
 }
+
+/* Syntax highlighting token colours */
+.hl-comment  { color: var(--hl-comment); font-style: italic; }
+.hl-str      { color: var(--hl-str); }
+.hl-kw       { color: var(--hl-kw); font-weight: 500; }
+.hl-num      { color: var(--hl-num); }
+.hl-type_    { color: var(--hl-type); }
+.hl-builtin  { color: var(--hl-builtin); }
+.hl-macro_   { color: var(--hl-macro); }
+.hl-preproc  { color: var(--hl-preproc); }
+.hl-tag      { color: var(--hl-tag); }
+.hl-at       { color: var(--hl-at); }
+.hl-section  { color: var(--hl-section); font-weight: 600; }
+.hl-var      { color: var(--hl-var); }
+.hl-lifetime { color: var(--hl-lifetime); }
+.hl-add      { color: var(--hl-add); background: var(--hl-add-bg); }
+.hl-del      { color: var(--hl-del); background: var(--hl-del-bg); }
+.hl-info     { color: var(--hl-info); font-style: italic; }
+.hl-meta     { color: var(--hl-meta); }
 
 /* PDF embed */
 .detail-preview .preview-pdf {

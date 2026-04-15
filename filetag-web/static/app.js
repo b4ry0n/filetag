@@ -23,7 +23,7 @@ const ICONS = {
 const EXT_MAP = {
     image:    ['jpg','jpeg','png','gif','webp','svg','bmp','ico','tiff','tif','avif'],
     audio:    ['mp3','flac','wav','ogg','opus','aac','m4a','wma','aiff','alac'],
-    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg',
+    video:    ['mp4','webm','mkv','avi','mov','wmv','flv','m4v','3gp','f4v','mpg','mpeg',
                'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
                'mpe','m1v','mpv','qt'],
     pdf:      ['pdf'],
@@ -155,6 +155,218 @@ function escMd(s) {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+}
+
+// ---------------------------------------------------------------------------
+// Syntax highlighting (no external dependencies)
+// ---------------------------------------------------------------------------
+
+function hlLang(filename) {
+    const ext = (filename.includes('.') ? filename.split('.').pop() : '').toLowerCase();
+    return ({
+        js:'js', jsx:'js', mjs:'js', cjs:'js', ts:'js', tsx:'js',
+        py:'py', pyw:'py',
+        rb:'rb',
+        rs:'rs',
+        go:'go',
+        java:'java', kt:'java',
+        c:'c', h:'c', cpp:'c', cc:'c', cxx:'c', hpp:'c', hxx:'c',
+        sh:'sh', bash:'sh', zsh:'sh', fish:'sh', ksh:'sh',
+        sql:'sql',
+        json:'json',
+        yaml:'yaml', yml:'yaml',
+        toml:'toml',
+        xml:'xml', html:'xml', htm:'xml', svg:'xml',
+        css:'css', scss:'css', less:'css',
+        diff:'diff', patch:'diff',
+        ini:'ini', cfg:'ini', conf:'ini', env:'ini',
+    })[ext] || null;
+}
+
+function _hlKw(words) {
+    return ['kw', new RegExp('\\b(' + words.join('|') + ')\\b', 'y')];
+}
+
+function hlPatterns(lang) {
+    const dbl  = ['str', /"(?:[^"\\]|\\.)*"/y];
+    const sgl  = ['str', /'(?:[^'\\]|\\.)*'/y];
+    const tpl  = ['str', /`(?:[^`\\]|\\.)*`/y];
+    const blkC = ['comment', /\/\*[\s\S]*?\*\//y];
+    const num  = ['num', /\b0x[\da-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?\b/y];
+    const lineC = pfx => ['comment', new RegExp(pfx + '[^\\n]*', 'y')];
+
+    switch (lang) {
+        case 'json':
+            return [dbl, num, _hlKw(['true','false','null'])];
+
+        case 'yaml':
+            return [lineC('#'), dbl, sgl,
+                    _hlKw(['true','false','null','yes','no','on','off']), num];
+
+        case 'toml':
+            return [lineC('#'),
+                    ['str', /"""[\s\S]*?"""/y], ['str', /'''[\s\S]*?'''/y],
+                    dbl, sgl, num, _hlKw(['true','false']),
+                    ['section', /^\[+[^\]\n]+\]+/ym]];
+
+        case 'xml':
+            return [['comment', /<!--[\s\S]*?-->/y],
+                    ['tag', /<[!?\/]?[a-zA-Z][a-zA-Z0-9:._-]*(?:\s[^>]*)?\s*\/?>/y],
+                    dbl, sgl, num];
+
+        case 'css':
+            return [blkC, dbl, sgl, num,
+                    ['at', /@[a-zA-Z-]+/y],
+                    _hlKw(['important','inherit','initial','unset','none','auto','normal'])];
+
+        case 'diff':
+            return [
+                ['meta', /^(?:\+\+\+|---|\\ No newline at end of file|diff |index |new file|deleted file|rename |Binary |From |commit )[^\n]*/ym],
+                ['info', /^@@[^@\n]*@@[^\n]*/ym],
+                ['add',  /^\+[^\n]*/ym],
+                ['del',  /^-[^\n]*/ym],
+            ];
+
+        case 'sh':
+            return [lineC('#'), dbl, sgl,
+                    ['var', /\$\{?[a-zA-Z_][a-zA-Z0-9_]*\}?/y],
+                    _hlKw(['if','then','else','elif','fi','for','while','do','done',
+                            'case','esac','in','function','return','export','local',
+                            'source','readonly','true','false']),
+                    num];
+
+        case 'sql':
+            return [lineC('--'), blkC, sgl,
+                    _hlKw(['SELECT','INSERT','UPDATE','DELETE','FROM','WHERE','JOIN',
+                            'LEFT','RIGHT','INNER','OUTER','FULL','CROSS','ON','GROUP',
+                            'ORDER','BY','HAVING','LIMIT','OFFSET','AS','AND','OR','NOT',
+                            'IN','IS','NULL','LIKE','CREATE','DROP','ALTER','TABLE',
+                            'INDEX','VIEW','DATABASE','BEGIN','COMMIT','ROLLBACK',
+                            'WITH','DISTINCT','UNION','VALUES','SET','INTO','CASE',
+                            'WHEN','THEN','ELSE','END','COUNT','SUM','AVG','MIN','MAX',
+                            'select','insert','update','delete','from','where','join',
+                            'left','right','inner','outer','full','cross','on','group',
+                            'order','by','having','limit','offset','as','and','or','not',
+                            'in','is','null','like','create','drop','alter','table',
+                            'index','view','database','begin','commit','rollback',
+                            'with','distinct','union','values','set','into','case',
+                            'when','then','else','end','count','sum','avg','min','max']),
+                    num];
+
+        case 'js':
+            return [blkC, lineC('//'), dbl, sgl, tpl,
+                    _hlKw(['abstract','as','async','await','break','case','catch','class',
+                            'const','continue','debugger','default','delete','do','else',
+                            'enum','export','extends','false','finally','for','from',
+                            'function','get','if','implements','import','in','instanceof',
+                            'interface','let','new','null','of','package','private',
+                            'protected','public','return','set','static','super','switch',
+                            'this','throw','true','try','type','typeof','undefined','var',
+                            'void','while','with','yield']),
+                    num];
+
+        case 'py':
+            return [['str', /"""[\s\S]*?"""/y], ['str', /'''[\s\S]*?'''/y],
+                    lineC('#'), dbl, sgl,
+                    _hlKw(['False','None','True','and','as','assert','async','await',
+                            'break','class','continue','def','del','elif','else','except',
+                            'finally','for','from','global','if','import','in','is',
+                            'lambda','nonlocal','not','or','pass','raise','return','try',
+                            'while','with','yield']),
+                    ['builtin', /\b(print|len|range|enumerate|zip|map|filter|isinstance|type|open|super|property|staticmethod|classmethod|abs|all|any|bool|dict|float|int|list|set|str|tuple)\b/y],
+                    num];
+
+        case 'rb':
+            return [lineC('#'), dbl, sgl,
+                    _hlKw(['BEGIN','END','alias','and','begin','break','case','class',
+                            'def','defined','do','else','elsif','end','ensure','false',
+                            'for','if','in','module','next','nil','not','or','redo',
+                            'rescue','retry','return','self','super','then','true','undef',
+                            'unless','until','when','while','yield']),
+                    num];
+
+        case 'rs':
+            return [blkC, lineC('//'),
+                    ['str', /r#+"[^"]*"+#+/y], dbl,
+                    ['str', /'(?:[^'\\]|\\.)'/y],   // char literal before lifetime
+                    ['lifetime', /'[a-zA-Z_][a-zA-Z0-9_]*/y],
+                    _hlKw(['as','async','await','break','const','continue','crate','dyn',
+                            'else','enum','extern','false','fn','for','if','impl','in',
+                            'let','loop','match','mod','move','mut','pub','ref','return',
+                            'self','Self','static','struct','super','trait','true','type',
+                            'unsafe','use','where','while']),
+                    ['type_', /\b[A-Z][a-zA-Z0-9_]*\b/y],
+                    ['macro_', /\b[a-z_][a-z0-9_]*!/y],
+                    num];
+
+        case 'go':
+            return [blkC, lineC('//'), dbl,
+                    ['str', /`[^`]*`/y],
+                    _hlKw(['break','case','chan','const','continue','default','defer',
+                            'else','fallthrough','for','func','go','goto','if','import',
+                            'interface','map','package','range','return','select','struct',
+                            'switch','type','var','true','false','nil']),
+                    ['type_', /\b[A-Z][a-zA-Z0-9_]*\b/y],
+                    num];
+
+        case 'java':
+            return [blkC, lineC('//'), dbl, sgl,
+                    _hlKw(['abstract','assert','boolean','break','byte','case','catch',
+                            'char','class','const','continue','default','do','double',
+                            'else','enum','extends','false','final','finally','float','for',
+                            'goto','if','implements','import','instanceof','int','interface',
+                            'long','native','new','null','package','private','protected',
+                            'public','return','short','static','super','switch',
+                            'synchronized','this','throw','throws','transient','true','try',
+                            'var','void','volatile','while']),
+                    ['type_', /\b[A-Z][a-zA-Z0-9_]*\b/y],
+                    num];
+
+        case 'c':
+            return [blkC, lineC('//'),
+                    ['preproc', /#\s*(?:include|define|undef|if|ifdef|ifndef|elif|else|endif|error|pragma|warning)[^\n]*/y],
+                    dbl, sgl,
+                    _hlKw(['auto','break','case','char','const','continue','default','do',
+                            'double','else','enum','extern','float','for','goto','if',
+                            'inline','int','long','register','restrict','return','short',
+                            'signed','sizeof','static','struct','switch','typedef','union',
+                            'unsigned','void','volatile','while','NULL','true','false']),
+                    num];
+
+        case 'ini':
+            return [['comment', /[#;][^\n]*/y],
+                    ['section', /^\[[^\]\n]*\]/ym],
+                    dbl, sgl, num];
+
+        default:
+            return [num];
+    }
+}
+
+function highlightCode(text, filename) {
+    const lang = hlLang(filename);
+    if (!lang) return esc(text);
+    const patterns = hlPatterns(lang);
+    const html = [];
+    let pos = 0;
+    let plain = '';
+    while (pos < text.length) {
+        let matched = false;
+        for (const [type, rx] of patterns) {
+            rx.lastIndex = pos;
+            const m = rx.exec(text);
+            if (m && m.index === pos) {
+                if (plain) { html.push(esc(plain)); plain = ''; }
+                html.push(`<span class="hl-${type}">${esc(m[0])}</span>`);
+                pos += m[0].length;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) plain += text[pos++];
+    }
+    if (plain) html.push(esc(plain));
+    return html.join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -1522,7 +1734,8 @@ function renderDetail() {
                 if (!r.ok) throw new Error(r.statusText);
                 return r.text();
             }).then(txt => {
-                if (el) el.textContent = txt.length > 60000 ? txt.slice(0, 60000) + '\n…' : txt;
+                const clipped = txt.length > 60000 ? txt.slice(0, 60000) + '\n…' : txt;
+                if (el) el.innerHTML = highlightCode(clipped, name);
             }).catch(() => {
                 if (el) el.textContent = '(Could not load preview)';
             });
@@ -2214,7 +2427,7 @@ async function pregenSprites() {
     if (menu) menu.hidden = true;
 
     const VIDEO_EXTS = new Set([
-        'mp4','webm','mkv','avi','mov','wmv','flv','m4v','ts','3gp','f4v','mpg','mpeg',
+        'mp4','webm','mkv','avi','mov','wmv','flv','m4v','3gp','f4v','mpg','mpeg',
         'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
         'mpe','m1v','mpv','qt',
     ]);
@@ -2435,10 +2648,17 @@ async function aiAnalyseBatch() {
     const menu = document.getElementById('cache-menu');
     if (menu) menu.hidden = true;
 
-    const items = state.mode === 'search' ? state.searchResults : state.entries;
-    const imagePaths = (items || [])
-        .filter(e => !e.is_dir && isAiImage(e.path))
-        .map(e => e.path);
+    let imagePaths;
+    if (state.mode === 'zip') {
+        imagePaths = (state.zipEntries || [])
+            .filter(e => e.is_image)
+            .map(e => state.zipPath + '::' + e.name);
+    } else {
+        const items = state.mode === 'search' ? state.searchResults : state.entries;
+        imagePaths = (items || [])
+            .filter(e => !e.is_dir && isAiImage(e.path))
+            .map(e => e.path);
+    }
 
     if (imagePaths.length === 0) {
         showToast('Geen afbeeldingen in huidige weergave');
@@ -2653,7 +2873,7 @@ function openLightbox(path, type) {
     } else if (type === 'pdf') {
         html = `<iframe class="lightbox-pdf" src="${url}" title="${esc(path.split('/').pop())}"></iframe>`;
     } else if (type === 'text' || type === 'markdown') {
-        html = `<pre class="lightbox-text" id="lightbox-text-pre">Loading…</pre>`;
+        html = `<pre class="lightbox-text hl-dark" id="lightbox-text-pre">Loading…</pre>`;
     }
     content.innerHTML = html;
     lb.hidden = false;
@@ -2671,9 +2891,10 @@ function openLightbox(path, type) {
     document.addEventListener('keydown', _lightboxKeyHandler, { once: true });
 
     if (type === 'text') {
+        const filename = path.split('/').pop();
         fetch(url).then(r => r.text()).then(txt => {
             const el = document.getElementById('lightbox-text-pre');
-            if (el) el.textContent = txt;
+            if (el) el.innerHTML = highlightCode(txt, filename);
         }).catch(() => {
             const el = document.getElementById('lightbox-text-pre');
             if (el) el.textContent = '(Could not load file)';
