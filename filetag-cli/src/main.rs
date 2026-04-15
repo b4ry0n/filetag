@@ -459,6 +459,38 @@ fn expand_recursive(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(result)
 }
 
+/// If `path` is an archive entry path (contains `::`), return `(archive_part, entry_part)`.
+/// Works on both absolute and relative paths: `"archive.zip::entry.jpg"`.
+fn split_archive_path(path: &std::path::Path) -> Option<(String, String)> {
+    let s = path.to_string_lossy();
+    let (zip, entry) = s.split_once("::")?;
+    Some((zip.to_string(), entry.to_string()))
+}
+
+/// Resolve a path to its DB-relative path string, handling archive entries.
+/// For normal files: canonicalize + strip root prefix.
+/// For archive entries (`archive.zip::entry`): canonicalize archive, strip prefix, append entry.
+fn path_to_rel(path: &std::path::Path, root: &std::path::Path) -> Result<String> {
+    if let Some((zip_str, entry)) = split_archive_path(path) {
+        db::resolve_archive_entry(&format!("{}::{}", zip_str, entry), root)
+    } else {
+        db::relative_to_root(path, root).with_context(|| format!("resolving {}", path.display()))
+    }
+}
+
+/// Index a file or archive entry, returning its FileRecord.
+fn index_path(
+    conn: &rusqlite::Connection,
+    rel: &str,
+    root: &std::path::Path,
+) -> Result<db::FileRecord> {
+    if rel.contains("::") {
+        db::get_or_index_archive_entry(conn, rel)
+    } else {
+        db::get_or_index_file(conn, rel, root)
+    }
+}
+
 fn format_size(bytes: i64) -> String {
     let bytes = bytes as f64;
     if bytes < 1024.0 {
@@ -547,9 +579,8 @@ fn cmd_tag(
     let mut tagged_count = 0;
     let pb = make_progress(cli, file_paths.len() as u64, "Tagging");
     for file_path in &file_paths {
-        let rel = db::relative_to_root(file_path, &root)
-            .with_context(|| format!("resolving {}", file_path.display()))?;
-        let record = db::get_or_index_file(&tx, &rel, &root)?;
+        let rel = path_to_rel(file_path, &root)?;
+        let record = index_path(&tx, &rel, &root)?;
 
         for (tag_name, tag_value) in &parsed_tags {
             let tag_id = db::get_or_create_tag(&tx, tag_name)?;
@@ -583,7 +614,7 @@ fn cmd_untag(cli: &Cli, files: Vec<PathBuf>, tags: Vec<String>, null: bool) -> R
     let mut removed_count = 0;
     let pb = make_progress(cli, collected.len() as u64, "Untagging");
     for file_path in &collected {
-        let rel = db::relative_to_root(file_path, &root)?;
+        let rel = path_to_rel(file_path, &root)?;
         if let Some(record) = db::file_by_path(&tx, &rel)? {
             for (tag_name, tag_value) in &parsed_tags {
                 if let Ok(tag_id) = tx.query_row(
@@ -666,7 +697,8 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, isolated: bool, all_dbs: bool) -> Re
         }
     } else {
         for file_path in &files {
-            let rel = db::relative_to_root(file_path, &root)?;
+            let rel = path_to_rel(file_path, &root)
+                .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
             if let Some(record) = db::file_by_path(&conn, &rel)? {
                 let tags = db::tags_for_file(&conn, record.id)?;
                 if cli.json {
@@ -699,7 +731,7 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, isolated: bool, all_dbs: bool) -> Re
 
 fn cmd_show(cli: &Cli, file: PathBuf) -> Result<()> {
     let (conn, root) = open_db(cli)?;
-    let rel = db::relative_to_root(&file, &root)?;
+    let rel = path_to_rel(&file, &root)?;
 
     let record = db::file_by_path(&conn, &rel)?
         .with_context(|| format!("{} is not indexed", file.display()))?;

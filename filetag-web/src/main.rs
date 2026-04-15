@@ -329,7 +329,7 @@ async fn preview_handler(
         }
         "heic" | "heif" => preview_heic(&abs, &db_root.root).await,
         // Formats browsers cannot decode natively: transcode to mp4 via ffmpeg
-        "avi" | "wmv" | "mkv" | "flv" | "mpg" | "mpeg" | "ts" | "3gp" | "f4v" | "m4v" => {
+        "avi" | "wmv" | "mkv" | "flv" | "mpg" | "mpeg" | "3gp" | "f4v" | "m4v" => {
             serve_transcoded_mp4(&abs, &db_root.root, &headers).await
         }
         _ => serve_file_range(&abs, &headers).await,
@@ -375,7 +375,7 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "mkv" => "video/x-matroska",
         "wmv" => "video/x-ms-wmv",
         "flv" => "video/x-flv",
-        "ts" => "video/mp2t",
+        "ts" => "text/plain; charset=utf-8",
         "mpg" | "mpeg" => "video/mpeg",
         "mp3" => "audio/mpeg",
         "flac" => "audio/flac",
@@ -1360,6 +1360,44 @@ async fn ai_prepare_jpeg(abs_path: &Path, root: &Path) -> Option<Vec<u8>> {
     tokio::fs::read(&source_path).await.ok()
 }
 
+/// Prepare a JPEG from raw bytes (e.g. an archive entry) for AI analysis.
+/// Uses ImageMagick to resize to max 800px longest edge.
+async fn ai_prepare_jpeg_from_bytes(bytes: Vec<u8>, ext: &str) -> Option<Vec<u8>> {
+    // Try ImageMagick: pipe in raw bytes, get JPEG out.
+    let mut child = tokio::process::Command::new("magick")
+        .args([
+            "-",
+            "-auto-orient",
+            "-strip",
+            "-resize",
+            "800x800>",
+            "jpeg:-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    // Write bytes to stdin.
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(&bytes).await.ok()?;
+    }
+    let out = child.wait_with_output().await.ok()?;
+    if out.status.success() && !out.stdout.is_empty() {
+        return Some(out.stdout);
+    }
+
+    // Fallback: return bytes as-is for plain JPEG/PNG
+    let e = ext.to_lowercase();
+    if e == "jpg" || e == "jpeg" || e == "png" || e == "webp" || e == "gif" || e == "bmp" {
+        Some(bytes)
+    } else {
+        None
+    }
+}
+
 /// Strip `<think>...</think>` blocks that Qwen3 and similar reasoning models
 /// prepend their output with when thinking mode is active.
 fn strip_think_blocks(text: &str) -> &str {
@@ -1582,7 +1620,11 @@ fn apply_ai_tags(
     tags: &[String],
     prefix: &str,
 ) -> anyhow::Result<()> {
-    let file_rec = db::get_or_index_file(conn, rel_path, root)?;
+    let file_rec = if rel_path.contains("::") {
+        db::get_or_index_archive_entry(conn, rel_path)?
+    } else {
+        db::get_or_index_file(conn, rel_path, root)?
+    };
     let existing = db::tags_for_file(conn, file_rec.id)?;
 
     // Build a set of existing non-ai tag names (lowercase) for duplicate filtering.
@@ -1636,7 +1678,11 @@ fn remove_prefixed_tags(
     rel_path: &str,
     prefix: &str,
 ) -> anyhow::Result<()> {
-    let file_rec = db::get_or_index_file(conn, rel_path, root)?;
+    let file_rec = if rel_path.contains("::") {
+        db::get_or_index_archive_entry(conn, rel_path)?
+    } else {
+        db::get_or_index_file(conn, rel_path, root)?
+    };
     let existing = db::tags_for_file(conn, file_rec.id)?;
     for (name, value) in &existing {
         if name.starts_with(prefix)
@@ -1667,8 +1713,13 @@ async fn api_ai_clear_tags(
     let conn = Connection::open(&db_root.db_path).map_err(|e| AppError(e.into()))?;
     let mut cleared = 0usize;
     for path in &body.paths {
-        let abs = safe_path(&db_root.root, path)?;
-        let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
+        let rel = if path.contains("::") {
+            // Virtual archive-entry path (already DB-relative) — use as-is.
+            path.clone()
+        } else {
+            let abs = safe_path(&db_root.root, path)?;
+            db::relative_to_root(&abs, &db_root.root).map_err(AppError)?
+        };
         remove_prefixed_tags(&conn, &db_root.root, &rel, prefix).map_err(AppError)?;
         cleared += 1;
     }
@@ -1689,7 +1740,6 @@ async fn api_ai_analyse(
     Json(body): Json<AiAnalyseRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_at(&state, body.root_id)?;
-    let abs = safe_path(&db_root.root, &body.path)?;
     let conn = Connection::open(&db_root.db_path).map_err(|e| AppError(e.into()))?;
     let config = load_ai_config(&conn).ok_or_else(|| {
         AppError(anyhow::anyhow!(
@@ -1697,9 +1747,35 @@ async fn api_ai_analyse(
         ))
     })?;
 
-    let jpeg = ai_prepare_jpeg(&abs, &db_root.root)
-        .await
-        .ok_or_else(|| AppError(anyhow::anyhow!("Could not prepare image for analysis")))?;
+    let jpeg: Vec<u8>;
+    let rel: String;
+
+    if let Some(sep) = body.path.find("::") {
+        // Archive entry path — extract bytes from the archive.
+        let archive_rel = &body.path[..sep];
+        let entry_name = body.path[sep + 2..].to_string();
+        let archive_abs = safe_path(&db_root.root, archive_rel)?;
+        let ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+        let (bytes, _mime) = {
+            let arc = archive_abs.clone();
+            let ename = entry_name.clone();
+            tokio::task::spawn_blocking(move || archive_read_entry(&arc, &ename))
+                .await
+                .map_err(|e| AppError(anyhow::anyhow!("join: {e}")))?
+                .map_err(AppError)?
+        };
+        jpeg = ai_prepare_jpeg_from_bytes(bytes, &ext)
+            .await
+            .ok_or_else(|| AppError(anyhow::anyhow!("Could not prepare image for analysis")))?;
+        // body.path is already a DB-relative virtual path (archive_rel::entry).
+        rel = body.path.clone();
+    } else {
+        let abs = safe_path(&db_root.root, &body.path)?;
+        jpeg = ai_prepare_jpeg(&abs, &db_root.root)
+            .await
+            .ok_or_else(|| AppError(anyhow::anyhow!("Could not prepare image for analysis")))?;
+        rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
+    }
 
     let _permit = AI_LIMITER
         .acquire()
@@ -1708,8 +1784,12 @@ async fn api_ai_analyse(
 
     // Fetch existing non-ai/* tags to guide the model.
     let existing_tags: Vec<String> = {
-        let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
-        if let Ok(rec) = db::get_or_index_file(&conn, &rel, &db_root.root) {
+        let rec_result = if rel.contains("::") {
+            db::get_or_index_archive_entry(&conn, &rel)
+        } else {
+            db::get_or_index_file(&conn, &rel, &db_root.root)
+        };
+        if let Ok(rec) = rec_result {
             db::tags_for_file(&conn, rec.id)
                 .unwrap_or_default()
                 .into_iter()
@@ -1729,7 +1809,6 @@ async fn api_ai_analyse(
         .map_err(AppError)?;
 
     let applied = if !body.dry_run && !tags.is_empty() {
-        let rel = db::relative_to_root(&abs, &db_root.root).map_err(AppError)?;
         apply_ai_tags(&conn, &db_root.root, &rel, &tags, &config.tag_prefix).map_err(AppError)?;
         true
     } else {
@@ -1800,11 +1879,6 @@ async fn api_ai_analyse_batch(
                 prog.done = i;
             }
 
-            let abs = match preview_safe_path(&root, rel_path) {
-                Some(p) => p,
-                None => continue,
-            };
-
             // Open a fresh connection per file (background task, cannot hold
             // a Connection across .await).
             let conn = match Connection::open(&db_path) {
@@ -1817,60 +1891,135 @@ async fn api_ai_analyse_batch(
                 None => break,
             };
 
-            // Skip files that already have the analysis marker tag.
             let marker = format!("{}analysed", config.tag_prefix);
-            let rel = match db::relative_to_root(&abs, &root) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let existing_tags: Vec<String> =
-                if let Ok(rec) = db::get_or_index_file(&conn, &rel, &root) {
-                    if let Ok(all_tags) = db::tags_for_file(&conn, rec.id) {
-                        // Skip this file if it already has the marker tag.
-                        if all_tags.iter().any(|(n, _)| n == &marker) {
-                            continue;
+
+            if let Some(sep) = rel_path.find("::") {
+                // ---- Archive entry ----
+                let archive_rel = &rel_path[..sep];
+                let entry_name = rel_path[sep + 2..].to_string();
+                let archive_abs = match preview_safe_path(&root, archive_rel) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                let existing_tags: Vec<String> =
+                    if let Ok(rec) = db::get_or_index_archive_entry(&conn, rel_path) {
+                        if let Ok(all_tags) = db::tags_for_file(&conn, rec.id) {
+                            if all_tags.iter().any(|(n, _)| n == &marker) {
+                                continue;
+                            }
+                            all_tags
+                                .into_iter()
+                                .filter(|(name, _)| !name.starts_with(&config.tag_prefix))
+                                .map(|(name, value)| match value.as_deref().unwrap_or("") {
+                                    "" => name,
+                                    v => format!("{name}={v}"),
+                                })
+                                .collect()
+                        } else {
+                            vec![]
                         }
-                        all_tags
-                            .into_iter()
-                            .filter(|(name, _)| !name.starts_with(&config.tag_prefix))
-                            .map(|(name, value)| match value.as_deref().unwrap_or("") {
-                                "" => name,
-                                v => format!("{name}={v}"),
-                            })
-                            .collect()
                     } else {
                         vec![]
+                    };
+
+                let ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+                let bytes = {
+                    let arc = archive_abs.clone();
+                    let ename = entry_name.clone();
+                    match tokio::task::spawn_blocking(move || archive_read_entry(&arc, &ename))
+                        .await
+                    {
+                        Ok(Ok(b)) => b.0,
+                        _ => continue,
                     }
-                } else {
-                    vec![]
+                };
+                let jpeg = match ai_prepare_jpeg_from_bytes(bytes, &ext).await {
+                    Some(j) => j,
+                    None => continue,
                 };
 
-            let jpeg = match ai_prepare_jpeg(&abs, &root).await {
-                Some(j) => j,
-                None => continue,
-            };
+                let _permit = match AI_LIMITER.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
 
-            let _permit = match AI_LIMITER.acquire().await {
-                Ok(p) => p,
-                Err(_) => break,
-            };
+                let (_raw, tags) = match analyse_image(&config, &jpeg, &existing_tags).await {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
 
-            let (_raw, tags) = match analyse_image(&config, &jpeg, &existing_tags).await {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-
-            if !tags.is_empty() {
-                // Re-open connection for tagging (cannot hold across .await)
-                if let Ok(conn2) = Connection::open(&db_path) {
-                    let _ = apply_ai_tags(&conn2, &root, &rel, &tags, &config.tag_prefix);
-                    // Apply the marker tag
+                if !tags.is_empty()
+                    && let Ok(conn2) = Connection::open(&db_path)
+                {
+                    let _ = apply_ai_tags(&conn2, &root, rel_path, &tags, &config.tag_prefix);
                     let _ = (|| -> anyhow::Result<()> {
-                        let rec = db::get_or_index_file(&conn2, &rel, &root)?;
+                        let rec = db::get_or_index_archive_entry(&conn2, rel_path)?;
                         let tid = db::get_or_create_tag(&conn2, &marker)?;
                         db::apply_tag(&conn2, rec.id, tid, None)?;
                         Ok(())
                     })();
+                }
+            } else {
+                // ---- Regular file ----
+                let abs = match preview_safe_path(&root, rel_path) {
+                    Some(p) => p,
+                    None => continue,
+                };
+
+                // Skip files that already have the analysis marker tag.
+                let rel = match db::relative_to_root(&abs, &root) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                let existing_tags: Vec<String> =
+                    if let Ok(rec) = db::get_or_index_file(&conn, &rel, &root) {
+                        if let Ok(all_tags) = db::tags_for_file(&conn, rec.id) {
+                            // Skip this file if it already has the marker tag.
+                            if all_tags.iter().any(|(n, _)| n == &marker) {
+                                continue;
+                            }
+                            all_tags
+                                .into_iter()
+                                .filter(|(name, _)| !name.starts_with(&config.tag_prefix))
+                                .map(|(name, value)| match value.as_deref().unwrap_or("") {
+                                    "" => name,
+                                    v => format!("{name}={v}"),
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    };
+
+                let jpeg = match ai_prepare_jpeg(&abs, &root).await {
+                    Some(j) => j,
+                    None => continue,
+                };
+
+                let _permit = match AI_LIMITER.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
+                let (_raw, tags) = match analyse_image(&config, &jpeg, &existing_tags).await {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+
+                if !tags.is_empty() {
+                    // Re-open connection for tagging (cannot hold across .await)
+                    if let Ok(conn2) = Connection::open(&db_path) {
+                        let _ = apply_ai_tags(&conn2, &root, &rel, &tags, &config.tag_prefix);
+                        // Apply the marker tag
+                        let _ = (|| -> anyhow::Result<()> {
+                            let rec = db::get_or_index_file(&conn2, &rel, &root)?;
+                            let tid = db::get_or_create_tag(&conn2, &marker)?;
+                            db::apply_tag(&conn2, rec.id, tid, None)?;
+                            Ok(())
+                        })();
+                    }
                 }
             }
         }
