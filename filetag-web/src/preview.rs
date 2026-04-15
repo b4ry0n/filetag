@@ -1202,10 +1202,12 @@ fn hls_cache_dir(abs: &Path, root: &Path) -> Option<PathBuf> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // "hls2": bump the subdirectory name so pre-fix segments (which had no audio
+    // from segment 1 on) are not served from the old cache.
     let dir = root
         .join(".filetag")
         .join("cache")
-        .join("hls")
+        .join("hls2")
         .join(format!("{mtime}_{size}_{name}"));
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
@@ -1353,11 +1355,14 @@ async fn hls_segment(abs: &Path, root: &Path, seg_idx: u32) -> Response {
 
     let mut cmd = tokio::process::Command::new("nice");
     cmd.args(["-n", "10", "ffmpeg", "-y"])
-        // Input seeking before -i: fast for copy mode, seeks to nearest keyframe.
+        // Input seeking before -i: fast for copy mode (seeks to nearest keyframe).
         .args(["-ss", &format!("{start:.3}")])
         .arg("-i")
         .arg(abs)
         .args(["-t", &format!("{HLS_SEG_DURATION:.3}")])
+        // Explicit stream selection so the same streams are mapped after every
+        // seek.  The `?` makes the audio map optional for silent/no-audio files.
+        .args(["-map", "0:v:0", "-map", "0:a:0?"])
         .args(["-c:v", c_video]);
     if c_video != "copy" {
         cmd.args(["-preset", "fast", "-crf", "23"]);
@@ -1366,8 +1371,11 @@ async fn hls_segment(abs: &Path, root: &Path, seg_idx: u32) -> Response {
     if c_audio != "copy" {
         cmd.args(["-b:a", "128k"]);
     }
+    // -avoid_negative_ts make_zero: shift timestamps after a seek so no PTS/DTS
+    // value is negative.  Without this, the MPEG-TS muxer silently drops audio
+    // frames near the seek point, causing complete audio loss from segment 1 on.
     // -sn: drop subtitle streams (cannot mux into MPEG-TS without special handling)
-    cmd.args(["-sn", "-f", "mpegts"])
+    cmd.args(["-avoid_negative_ts", "make_zero", "-sn", "-f", "mpegts"])
         .arg(&tmp_seg)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
