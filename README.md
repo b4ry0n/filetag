@@ -142,7 +142,7 @@ filetag completions fish > ~/.config/fish/completions/filetag.fish
 
 ## Query language
 
-Queries support boolean logic and glob patterns:
+Queries support boolean logic, glob patterns, and file type filters:
 
 ```
 genre/rock                        # exact tag
@@ -151,7 +151,12 @@ year=2024                         # exact value
 year>=2020                        # comparison (>=, <=, >, <)
 genre/rock and not live           # boolean
 (genre/rock or genre/metal) and year>=2020
+type:image                        # file type filter
+type:video and year>=2020         # combine with other expressions
+type:audio and genre/*            # find tagged audio files
 ```
+
+**Supported type names:** `image` (aliases: `img`, `photo`, `pic`), `video` (aliases: `vid`, `movie`), `audio` (aliases: `aud`, `music`), `document` (alias: `doc`), `archive` (aliases: `arc`, `compressed`), `text`, `font`. Type filters match by file extension.
 
 ## Web interface
 
