@@ -10,6 +10,7 @@ pub enum Expr {
     Tag(String),                     // tag exists on file
     TagValue(String, CmpOp, String), // tag <op> value
     Glob(String),                    // genre/* style wildcard
+    FileType(String),                // type:image / type:video / …
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
@@ -127,10 +128,17 @@ fn tokenize(input: &str) -> Result<Vec<String>> {
             tokens.push("=".into());
             continue;
         }
-        // Word / identifier (allows /, *, -, _ and alphanumeric, and .)
+        // Word / identifier (allows /, *, -, _ and alphanumeric, . and :)
         let mut word = String::new();
         while let Some(&c) = chars.peek() {
-            if c.is_alphanumeric() || c == '/' || c == '*' || c == '-' || c == '_' || c == '.' {
+            if c.is_alphanumeric()
+                || c == '/'
+                || c == '*'
+                || c == '-'
+                || c == '_'
+                || c == '.'
+                || c == ':'
+            {
                 word.push(c);
                 chars.next();
             } else {
@@ -201,6 +209,26 @@ impl Parser {
             .ok_or_else(|| anyhow::anyhow!("unexpected end of query"))?
             .to_string();
         self.advance();
+
+        // type:xxx filter — must be checked before try-parse as comparison
+        if let Some(kind) = token.strip_prefix("type:") {
+            let kind = kind.to_ascii_lowercase();
+            if kind.is_empty() {
+                anyhow::bail!("expected a type name after 'type:'");
+            }
+            // Resolve aliases so the canonical name is stored in the AST.
+            let canonical = match kind.as_str() {
+                "img" | "photo" | "picture" | "pic" => "image".to_string(),
+                "vid" | "movie" | "film" => "video".to_string(),
+                "aud" | "music" | "sound" => "audio".to_string(),
+                "doc" | "document" => "document".to_string(),
+                "arc" | "archive" | "compressed" => "archive".to_string(),
+                "txt" => "text".to_string(),
+                "font" => "font".to_string(),
+                other => other.to_string(),
+            };
+            return Ok(Expr::FileType(canonical));
+        }
 
         // Check for comparison operator
         if let Some(op) = self.peek().and_then(parse_cmp_op) {
@@ -295,6 +323,26 @@ impl QueryBuilder {
                     pn, value_expr
                 )
             }
+            Expr::FileType(kind) => {
+                // Build a path LIKE condition for all known extensions of this type.
+                let exts = file_type_extensions(kind);
+                if exts.is_empty() {
+                    // Unknown type — match nothing.
+                    return "1=0".to_string();
+                }
+                let conditions: Vec<String> = exts
+                    .iter()
+                    .flat_map(|ext| {
+                        // Match both lower and upper case suffixes to be safe.
+                        let lower = format!("%.{}", ext.to_lowercase());
+                        let upper = format!("%.{}", ext.to_uppercase());
+                        let pl = self.param(&lower);
+                        let pu = self.param(&upper);
+                        [format!("f.path LIKE {}", pl), format!("f.path LIKE {}", pu)]
+                    })
+                    .collect();
+                format!("({})", conditions.join(" OR "))
+            }
             Expr::And(a, b) => {
                 let ca = self.build_condition(a);
                 let cb = self.build_condition(b);
@@ -345,6 +393,46 @@ pub fn execute_with_tags(conn: &Connection, expr: &Expr) -> Result<Vec<(String, 
         }
     }
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// File type → extension mapping
+// ---------------------------------------------------------------------------
+
+/// Return the list of file extensions (lowercase, without leading dot) that
+/// belong to the given logical file type name.  The caller folds both cases.
+fn file_type_extensions(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "image" => &[
+            "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "avif", "heic", "heif",
+            "ico", "svg", "psd", "xcf", "arw", "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf",
+            "pef", "srw", "raw", "3fr", "x3f", "rwl", "iiq", "mef", "mos",
+        ],
+        "video" => &[
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "f4v", "mpg", "mpeg",
+            "m2v", "m2ts", "mts", "mxf", "rm", "rmvb", "divx", "vob", "ogv", "ogg", "dv", "asf",
+            "amv", "mpe", "m1v", "mpv", "qt",
+        ],
+        "audio" => &[
+            "mp3", "flac", "aac", "ogg", "opus", "m4a", "wav", "aiff", "aif", "wma", "alac", "ape",
+            "mka", "wv", "tta", "dsf", "dff", "spx", "caf", "au",
+        ],
+        "document" => &[
+            "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "odp",
+            "pages", "numbers", "key", "epub", "mobi", "djvu", "tex", "md", "rst",
+        ],
+        "archive" => &[
+            "zip", "tar", "gz", "bz2", "xz", "zst", "7z", "rar", "cbz", "cbr", "cb7", "cbt", "tgz",
+            "tbz2", "txz", "iso", "dmg", "pkg", "deb", "rpm", "apk",
+        ],
+        "text" => &[
+            "txt", "log", "csv", "tsv", "nfo", "ini", "cfg", "conf", "toml", "yaml", "yml", "json",
+            "xml", "html", "htm", "css", "js", "ts", "rs", "py", "rb", "sh", "bash", "zsh", "fish",
+            "c", "h", "cpp", "hpp", "java", "go", "swift", "kt", "sql", "lua", "pl", "r",
+        ],
+        "font" => &["ttf", "otf", "woff", "woff2", "eot", "fon"],
+        _ => &[],
+    }
 }
 
 #[cfg(test)]
