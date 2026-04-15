@@ -750,12 +750,13 @@ function showTagMenu(e, tagName) {
     menu.id = 'tag-context-menu';
     menu.className = 'tag-context-menu';
     menu.innerHTML = `
-        <div class="tag-menu-header">${esc(tagName)}</div>
+        <div class="tag-menu-header" id="tag-menu-header">${esc(tagName)}</div>
         <div class="tag-menu-section">
             <div class="tag-menu-label">Color</div>
             <div class="tag-menu-swatches">${swatches}</div>
         </div>
         <div class="tag-menu-divider"></div>
+        <button class="tag-menu-action" onclick="startTagRename('${jesc(tagName)}')">Rename tag</button>
         <button class="tag-menu-action tag-menu-delete" onclick="deleteTag('${jesc(tagName)}')">Delete tag</button>
     `;
     document.body.appendChild(menu);
@@ -795,6 +796,47 @@ async function deleteTag(tagName) {
         return;
     }
     await apiPost('/api/delete-tag', { name: tagName, root_id: state.currentRootId });
+    await loadTags();
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    render();
+}
+
+function startTagRename(tagName) {
+    const header = document.getElementById('tag-menu-header');
+    if (!header) return;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = tagName;
+    input.className = 'tag-menu-rename-input';
+    input.onclick = e => e.stopPropagation();
+    input.onkeydown = async e => {
+        if (e.key === 'Enter') {
+            await renameTag(tagName, input.value.trim());
+        } else if (e.key === 'Escape') {
+            closeTagMenu();
+        }
+    };
+
+    header.replaceWith(input);
+    input.id = 'tag-menu-header';
+    input.select();
+
+    // Prevent the outside-click listener from closing the menu immediately
+    document.removeEventListener('click', closeTagMenu);
+    requestAnimationFrame(() => {
+        document.addEventListener('click', closeTagMenu, { once: true });
+    });
+}
+
+async function renameTag(oldName, newName) {
+    if (!newName || newName === oldName) { closeTagMenu(); return; }
+    closeTagMenu();
+    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, root_id: state.currentRootId });
+    if (res && res.ok === false) {
+        alert(`Could not rename tag "${oldName}".`);
+        return;
+    }
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();

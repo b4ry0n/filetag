@@ -147,6 +147,13 @@ pub struct TagColorRequest {
 }
 
 #[derive(Deserialize)]
+pub struct RenameTagRequest {
+    pub name: String,
+    pub new_name: String,
+    pub root_id: Option<usize>,
+}
+
+#[derive(Deserialize)]
 pub struct DeleteTagRequest {
     pub name: String,
     pub root_id: Option<usize>,

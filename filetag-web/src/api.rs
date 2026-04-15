@@ -606,6 +606,16 @@ pub async fn api_untag(
 // Tag color + delete
 // ---------------------------------------------------------------------------
 
+pub async fn api_rename_tag(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RenameTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, body.root_id)?;
+    let conn = open_conn(db_root)?;
+    let ok = db::rename_tag(&conn, &body.name, &body.new_name).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": ok })))
+}
+
 pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,

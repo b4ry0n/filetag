@@ -398,6 +398,23 @@ pub fn set_tag_color(conn: &Connection, name: &str, color: Option<&str>) -> Resu
     Ok(changed > 0)
 }
 
+/// Rename a tag. Returns `false` if the tag does not exist.
+/// Errors if a tag with `new_name` already exists.
+pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<bool> {
+    let exists: bool = conn
+        .prepare_cached("SELECT id FROM tags WHERE name = ?1")?
+        .query_row(params![new_name], |r| r.get::<_, i64>(0))
+        .is_ok();
+    if exists {
+        anyhow::bail!("tag '{}' already exists", new_name);
+    }
+    let changed = conn.execute(
+        "UPDATE tags SET name = ?1 WHERE name = ?2",
+        params![new_name, name],
+    )?;
+    Ok(changed > 0)
+}
+
 /// Delete a tag entirely: removes all file_tags rows and the tag itself.
 pub fn delete_tag(conn: &Connection, name: &str) -> Result<bool> {
     let tag_id: Option<i64> = conn
