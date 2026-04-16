@@ -809,6 +809,9 @@ pub struct VThumbsParams {
     /// Client-configured max sprites (default 16). Lower = faster generation.
     #[serde(default)]
     max_n: Option<usize>,
+    /// Client-configured min sprites (default 8).
+    #[serde(default)]
+    min_n: Option<usize>,
 }
 
 /// Return a horizontal sprite sheet (JPEG, N×1 grid) of evenly-spaced frames.
@@ -826,16 +829,17 @@ pub async fn api_vthumbs(
     };
 
     // When n is not explicit, video_info is needed to compute it from duration
-    // (1 sprite per 30 s, min 8, max configurable via max_n, default 16).
+    // (1 sprite per 30 s, min/max configurable, defaults 8/16).
     // Prefetch here so the cache filename is stable; the result is reused
     // below if the sprite needs to be built.
-    let max_n = params.max_n.unwrap_or(16).clamp(4, 64);
+    let min_n = params.min_n.unwrap_or(8).clamp(2, 64);
+    let max_n = params.max_n.unwrap_or(16).clamp(min_n, 64);
     let (n, prefetched_info) = if let Some(explicit) = params.n {
-        (explicit.clamp(2, max_n), None)
+        (explicit.clamp(min_n, max_n), None)
     } else {
         let info = video_info(&abs).await;
         let dur = info.as_ref().map(|i| i.duration).unwrap_or(0.0);
-        (sprites_for_duration(dur, max_n), info)
+        (sprites_for_duration(dur, min_n, max_n), info)
     };
 
     let cache_path =
@@ -924,11 +928,11 @@ pub async fn api_vthumbs(
     }
 }
 
-/// Number of trickplay sprites for a given video duration: 1 per 30 s, min 8,
-/// max `max_n` (default 16 when called from the client without a preference).
-fn sprites_for_duration(duration_secs: f64, max_n: usize) -> usize {
+/// Number of trickplay sprites for a given video duration: 1 per 30 s,
+/// clamped to [min_n, max_n].
+fn sprites_for_duration(duration_secs: f64, min_n: usize, max_n: usize) -> usize {
     let n = (duration_secs / 30.0).round() as usize;
-    n.clamp(8, max_n)
+    n.clamp(min_n, max_n)
 }
 
 // ---------------------------------------------------------------------------
@@ -971,7 +975,7 @@ pub async fn api_vthumbs_pregen(
                 Some(i) => i,
                 None => continue,
             };
-            let n = sprites_for_duration(info.duration, 16);
+            let n = sprites_for_duration(info.duration, 8, 16);
             let cache_path =
                 match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.jpg")) {
                     Some(p) => p,

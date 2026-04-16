@@ -202,8 +202,12 @@
             </nav>
             <div class="modal-body">
                 <div id="settings-tab-video" class="modal-tab-panel">
+                    <label>Min trickplay sprites
+                        <input type="number" id="sprite-min" value="8" min="2" max="64">
+                        <small>Minimum preview frames, even for short videos.</small>
+                    </label>
                     <label>Max trickplay sprites
-                        <input type="number" id="sprite-max" value="16" min="4" max="64">
+                        <input type="number" id="sprite-max" value="16" min="2" max="64">
                         <small>Maximum preview frames per video (lower = faster generation).</small>
                     </label>
                     <div class="modal-actions">
