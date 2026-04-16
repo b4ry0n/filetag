@@ -385,3 +385,34 @@
 
 @keyframes toast-in  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { to   { opacity: 0; transform: translateY(8px); } }
+
+/* Settings modal tabs */
+.modal-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+}
+.modal-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    margin-bottom: -1px;
+    transition: color .15s;
+}
+.modal-tab-btn:hover { color: var(--fg); }
+.modal-tab-btn.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent, #6ba3f7);
+}
+.modal-tab-panel[hidden] { display: none; }
+.modal-body small {
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-top: 2px;
+}

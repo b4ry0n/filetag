@@ -806,6 +806,9 @@ pub struct VThumbsParams {
     root: Option<usize>,
     #[serde(default)]
     n: Option<usize>,
+    /// Client-configured max sprites (default 16). Lower = faster generation.
+    #[serde(default)]
+    max_n: Option<usize>,
 }
 
 /// Return a horizontal sprite sheet (JPEG, N×1 grid) of evenly-spaced frames.
@@ -822,7 +825,18 @@ pub async fn api_vthumbs(
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
 
-    let n = params.n.unwrap_or(8).clamp(2, 16);
+    // When n is not explicit, video_info is needed to compute it from duration
+    // (1 sprite per 30 s, min 8, max configurable via max_n, default 16).
+    // Prefetch here so the cache filename is stable; the result is reused
+    // below if the sprite needs to be built.
+    let max_n = params.max_n.unwrap_or(16).clamp(4, 64);
+    let (n, prefetched_info) = if let Some(explicit) = params.n {
+        (explicit.clamp(2, max_n), None)
+    } else {
+        let info = video_info(&abs).await;
+        let dur = info.as_ref().map(|i| i.duration).unwrap_or(0.0);
+        (sprites_for_duration(dur, max_n), info)
+    };
 
     let cache_path =
         match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.jpg")) {
@@ -839,14 +853,18 @@ pub async fn api_vthumbs(
         };
 
         if !cache_path.exists() {
-            let info = match video_info(&abs).await {
-                Some(i) => i,
-                None => {
-                    return (
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "Cannot read video metadata",
-                    )
-                        .into_response();
+            let info = if let Some(i) = prefetched_info {
+                i
+            } else {
+                match video_info(&abs).await {
+                    Some(i) => i,
+                    None => {
+                        return (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "Cannot read video metadata",
+                        )
+                            .into_response();
+                    }
                 }
             };
 
@@ -906,6 +924,13 @@ pub async fn api_vthumbs(
     }
 }
 
+/// Number of trickplay sprites for a given video duration: 1 per 30 s, min 8,
+/// max `max_n` (default 16 when called from the client without a preference).
+fn sprites_for_duration(duration_secs: f64, max_n: usize) -> usize {
+    let n = (duration_secs / 30.0).round() as usize;
+    n.clamp(8, max_n)
+}
+
 // ---------------------------------------------------------------------------
 // Video trickplay pre-generation
 // ---------------------------------------------------------------------------
@@ -931,7 +956,6 @@ pub async fn api_vthumbs_pregen(
         Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
     };
     let root = db_root.root.clone();
-    let n = 8usize;
     let queued = body.paths.len();
     let state_clone = state.clone();
 
@@ -941,6 +965,13 @@ pub async fn api_vthumbs_pregen(
                 Some(t) => t,
                 None => continue,
             };
+            // Determine n from duration before checking the cache, because n
+            // determines the cache filename.
+            let info = match video_info(&abs).await {
+                Some(i) => i,
+                None => continue,
+            };
+            let n = sprites_for_duration(info.duration, 16);
             let cache_path =
                 match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.jpg")) {
                     Some(p) => p,
@@ -953,10 +984,6 @@ pub async fn api_vthumbs_pregen(
             if cache_path.exists() {
                 continue;
             }
-            let info = match video_info(&abs).await {
-                Some(i) => i,
-                None => continue,
-            };
             if let Some(parent) = cache_path.parent() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
