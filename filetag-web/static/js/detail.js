@@ -158,8 +158,9 @@ function _trickplayAttach(img, path) {
         if (cached) { cacheEntry = cached; return; }
 
         _trickplayCache.set(path, 'loading');
+        const minN = parseInt(localStorage.getItem('ft-sprite-min') || '8', 10);
         const maxN = parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
-        const src = '/api/vthumbs?' + new URLSearchParams({ path, max_n: maxN })
+        const src = '/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN })
             + rootParam('&');
         const preload = new Image();
         preload.onload = () => {

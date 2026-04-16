@@ -591,8 +591,9 @@ async function pregenSprites() {
     for (const path of videoPaths) {
         updateToast(toast, `Generating video sprites… (${done} / ${videoPaths.length})`);
         try {
+            const minN = parseInt(localStorage.getItem('ft-sprite-min') || '8', 10);
             const maxN = parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
-            await fetch('/api/vthumbs?' + new URLSearchParams({ path, max_n: maxN }) + rootParam('&'));
+            await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + rootParam('&'));
         } catch (_) { /* ignore */ }
         done++;
         _trickplayCache.delete(path);
@@ -637,6 +638,8 @@ async function openSettings(tab = 'video') {
     const menu = document.getElementById('cache-menu');
     if (menu) menu.hidden = true;
     // Video settings from localStorage
+    document.getElementById('sprite-min').value =
+        parseInt(localStorage.getItem('ft-sprite-min') || '8', 10);
     document.getElementById('sprite-max').value =
         parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
     // AI settings from server
@@ -663,10 +666,10 @@ function closeSettings() {
 }
 
 function saveVideoSettings() {
+    const min = parseInt(document.getElementById('sprite-min').value, 10);
     const max = parseInt(document.getElementById('sprite-max').value, 10);
-    if (max >= 4 && max <= 64) {
-        localStorage.setItem('ft-sprite-max', max);
-    }
+    if (min >= 2 && min <= 64) localStorage.setItem('ft-sprite-min', min);
+    if (max >= 2 && max <= 64) localStorage.setItem('ft-sprite-max', Math.max(max, min));
     closeSettings();
 }
 
