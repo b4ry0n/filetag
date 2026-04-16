@@ -127,8 +127,9 @@ function renderGrid(items) {
                     ondragover="_rootDragOver(event)"
                     ondragleave="_rootDragLeave(event)"
                     ondrop="_rootDrop(event,${entry.root_id})"
-                    ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
-                    <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
+                    onclick="selectRoot(${entry.root_id})"
+                    ondblclick="enterRoot(${entry.root_id})">
+                    <div class="card-preview"><div class="card-icon">${ICONS.root}</div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
             } else {

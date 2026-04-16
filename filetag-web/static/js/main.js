@@ -287,4 +287,158 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Media viewer stage events (wheel, drag, pinch)
     _cvInitStageEvents();
+
+    // Panel resize handles
+    initResizeHandles();
 });
+
+// ---------------------------------------------------------------------------
+// Panel resize (sidebar width, detail width, detail inner split)
+// ---------------------------------------------------------------------------
+
+function initResizeHandles() {
+    // Restore saved sizes from localStorage.
+    const sw  = localStorage.getItem('ft-sidebar-width');
+    const dw  = localStorage.getItem('ft-detail-width');
+    const root = document.documentElement;
+    if (sw)  root.style.setProperty('--sidebar-width',    sw);
+    if (dw)  root.style.setProperty('--detail-width',     dw);
+
+    _colResize(
+        document.getElementById('resize-sidebar'),
+        () => parseFloat(getComputedStyle(root).getPropertyValue('--sidebar-width')),
+        (w) => {
+            root.style.setProperty('--sidebar-width', w + 'px');
+            localStorage.setItem('ft-sidebar-width', w + 'px');
+        },
+        120, 600,
+        /* leftEdge */ true   // dragging right increases width
+    );
+
+    _colResize(
+        document.getElementById('resize-detail'),
+        () => parseFloat(getComputedStyle(root).getPropertyValue('--detail-width')),
+        (w) => {
+            root.style.setProperty('--detail-width', w + 'px');
+            localStorage.setItem('ft-detail-width', w + 'px');
+        },
+        180, 800,
+        /* leftEdge */ false  // dragging left increases width
+    );
+}
+
+/** Wire up col-resize drag on an element.
+ *  leftEdge=true  → dragging right increases the panel (sidebar on its right).
+ *  leftEdge=false → dragging left  increases the panel (detail on its left). */
+function _colResize(el, getWidth, setWidth, minW, maxW, leftEdge) {
+    if (!el) return;
+    el.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const startX = e.clientX;
+        const startW = getWidth();
+        el.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        function onMove(ev) {
+            const delta = leftEdge ? ev.clientX - startX : startX - ev.clientX;
+            setWidth(Math.max(minW, Math.min(maxW, startW + delta)));
+        }
+        function onUp() {
+            el.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    });
+}
+
+/** Wire up row-resize drag for the detail-panel inner splitter.
+ *  Exposed globally so detail.js can call it after rendering. */
+/** Wire up row-resize drag for the detail-panel inner splitter.
+ *  Controls --detail-top-height so the top section (header+preview+meta)
+ *  has a fixed height and the tags section fills the remaining space.
+ *  On first render (no saved value) the natural content height is snapshotted
+ *  so the divider starts exactly below the meta section. */
+function initDetailVHandle(el) {
+    if (!el) return;
+    const root      = document.documentElement;
+    const detailTop = document.querySelector('#detail .detail-top');
+    if (!detailTop) return;
+
+    // Measure natural (content) height by temporarily removing the forced value.
+    function naturalHeight() {
+        const was = root.style.getPropertyValue('--detail-top-height');
+        root.style.removeProperty('--detail-top-height');
+        const h = detailTop.getBoundingClientRect().height;
+        if (was) root.style.setProperty('--detail-top-height', was);
+        return h;
+    }
+
+    function snapOrSet(h) {
+        const nat = naturalHeight();
+        const snapped = Math.abs(h - nat) <= 20 ? nat : h;
+        const isNatural = snapped === nat;
+        if (isNatural) {
+            root.style.removeProperty('--detail-top-height');
+            localStorage.removeItem('ft-detail-top-height');
+        } else {
+            root.style.setProperty('--detail-top-height', snapped + 'px');
+            localStorage.setItem('ft-detail-top-height', snapped + 'px');
+        }
+    }
+
+    const saved = localStorage.getItem('ft-detail-top-height');
+    if (saved) {
+        root.style.setProperty('--detail-top-height', saved);
+    }
+    // If no saved value, leave the variable unset → height:auto → natural position.
+
+    // Double-click: snap back to natural height.
+    el.addEventListener('dblclick', () => {
+        root.style.removeProperty('--detail-top-height');
+        localStorage.removeItem('ft-detail-top-height');
+    });
+
+    el.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const startY = e.clientY;
+        const startH = detailTop.getBoundingClientRect().height;
+        el.classList.add('dragging');
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+
+        function onMove(ev) {
+            const detail = el.closest('.detail');
+            const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
+            const h = Math.max(60, Math.min(max, startH + (ev.clientY - startY)));
+            // Live snap preview within 20px of natural position.
+            const nat = naturalHeight();
+            const display = Math.abs(h - nat) <= 20 ? nat : h;
+            if (display === nat) {
+                root.style.removeProperty('--detail-top-height');
+            } else {
+                root.style.setProperty('--detail-top-height', display + 'px');
+            }
+        }
+        function onUp(ev) {
+            el.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            // Commit: snap or save final position.
+            const detail = el.closest('.detail');
+            const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
+            const h = Math.max(60, Math.min(max, startH + (ev.clientY - startY)));
+            snapOrSet(h);
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    });
+}

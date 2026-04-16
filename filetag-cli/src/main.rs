@@ -417,19 +417,8 @@ fn read_paths_from_stdin(null: bool) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-/// Parse tag arguments: "genre/rock" -> ("genre/rock", None), "year=2024" -> ("year", Some("2024"))
 fn parse_tag_args(tags: &[String]) -> Vec<(String, Option<String>)> {
-    tags.iter()
-        .map(|t| {
-            if let Some(eq_pos) = t.find('=') {
-                let name = t[..eq_pos].to_string();
-                let value = t[eq_pos + 1..].to_string();
-                (name, Some(value))
-            } else {
-                (t.clone(), None)
-            }
-        })
-        .collect()
+    tags.iter().map(|t| filetag_lib::parse_tag(t)).collect()
 }
 
 /// Expand directory arguments recursively into file lists.

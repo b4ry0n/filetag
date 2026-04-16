@@ -13,6 +13,8 @@ const state = {
     zipEntries: [],        // [{name, size, is_image, image_index, tag_count}]
     selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
+    selectedRoot: null,  // root id (number) when a root card is selected | null
+    selectedRootInfo: null, // ApiInfo fetched for the selected root | null
     selectedPaths: new Set(), // multi-select: Set of paths
     selectedFilesData: new Map(), // path → file detail (for tag aggregation)
     info: null,
