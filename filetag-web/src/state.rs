@@ -210,18 +210,36 @@ pub fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("invalid path '{}': escapes root or does not exist", rel))
 }
 
-/// Return the most specific (deepest) `DbRoot` that contains `abs`.
+/// Return the most specific (deepest) `DbRoot` whose root path contains `abs`.
 ///
-/// When a file belongs to a child database whose root is nested under a parent
-/// root, this returns the child so that cache files end up under the child's
-/// own `.filetag/cache/` directory rather than the parent's.
-pub fn cache_root_for_file<'a>(state: &'a AppState, abs: &Path) -> Option<&'a Path> {
+/// This is the single source of truth for determining which database root owns
+/// a given file.  All derived paths (cache, thumbnails, HLS segments, etc.)
+/// are relative to the root returned here.
+pub fn root_for_file<'a>(state: &'a AppState, abs: &Path) -> Option<&'a Path> {
     state
         .roots
         .iter()
         .filter(|r| abs.starts_with(&r.root))
         .max_by_key(|r| r.root.as_os_str().len())
         .map(|r| r.root.as_path())
+}
+
+/// Validate a relative path under a root and return both the absolute path
+/// and the correct owning root for cache/preview purposes.
+///
+/// Handlers that need to write or read cache artefacts MUST use this function
+/// (or `root_for_file` directly) so the correct `.filetag/cache/` directory is
+/// always selected.
+pub fn resolve_preview(
+    state: &AppState,
+    root: &Path,
+    rel_path: &str,
+) -> Option<(PathBuf, PathBuf)> {
+    let abs = preview_safe_path(root, rel_path)?;
+    let effective_root = root_for_file(state, &abs)
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| root.to_path_buf());
+    Some((abs, effective_root))
 }
 
 /// Sanitise a URL path component so it cannot escape `root`.

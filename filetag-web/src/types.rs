@@ -58,6 +58,9 @@ pub struct ApiFileDetail {
     pub tags: Vec<ApiFileTag>,
     /// False when the file is on a different filesystem than the database root.
     pub covered: bool,
+    /// Video duration in seconds (only set for video files).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
 }
 
 #[derive(Serialize)]
