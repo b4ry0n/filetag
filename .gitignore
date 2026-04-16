@@ -1,5 +1,6 @@
 /target
 /dist
+/scripts
 .filetag/
 .github/copilot-instructions.md
 *.swp

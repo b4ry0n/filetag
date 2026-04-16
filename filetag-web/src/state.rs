@@ -263,14 +263,7 @@ pub fn preview_safe_path(root: &Path, rel: &str) -> Option<PathBuf> {
     }
 }
 
-/// Parse "genre/rock" -> ("genre/rock", None), "year=2024" -> ("year", Some("2024"))
-pub fn parse_tag(s: &str) -> (String, Option<String>) {
-    if let Some(eq) = s.find('=') {
-        (s[..eq].to_string(), Some(s[eq + 1..].to_string()))
-    } else {
-        (s.to_string(), None)
-    }
-}
+pub use filetag_lib::parse_tag;
 
 /// Best-effort terminal column width.  Falls back to 80 when unavailable.
 /// Reads the `COLUMNS` environment variable (set by most interactive shells).

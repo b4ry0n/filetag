@@ -146,6 +146,9 @@ function _trickplayAttach(img, path) {
     const bar = document.createElement('div');
     bar.className = 'card-trickplay-bar';
     wrap.appendChild(bar);
+    // Use the enclosing .card as the hover target so the sprite stays visible
+    // when moving between the thumbnail area and the title/meta area below it.
+    const card = wrap.closest('.card') || wrap;
 
     let spriteEl = null;
     let cacheEntry = null;
@@ -163,7 +166,7 @@ function _trickplayAttach(img, path) {
             const entry = { src, n: TRICKPLAY_N, natW: preload.naturalWidth, natH: preload.naturalHeight };
             _trickplayCache.set(path, entry);
             cacheEntry = entry;
-            if (wrap.matches(':hover')) buildOverlay();
+            if (card.matches(':hover')) buildOverlay();
         };
         preload.onerror = () => {
             // Remove from cache so the next hover retries (server may have been busy).
@@ -221,7 +224,22 @@ function _trickplayAttach(img, path) {
             backgroundSize:  'auto 100%',
         });
         document.body.appendChild(spriteEl);
+        window.addEventListener('scroll', reposition, { passive: true, capture: true });
         showFrame(0);
+    }
+
+    /** Recompute spriteEl position from the card's current viewport rect. */
+    function reposition() {
+        if (!spriteEl) return;
+        const cardRect = wrap.getBoundingClientRect();
+        const popupW = parseFloat(spriteEl.style.width);
+        const popupH = parseFloat(spriteEl.style.height);
+        let left = cardRect.left + (cardRect.width  - popupW) / 2;
+        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+        spriteEl.style.left = left.toFixed(1) + 'px';
+        spriteEl.style.top  = top.toFixed(1)  + 'px';
     }
 
     /** Jump to a discrete frame; pixel-offset preserves native AR and centers. */
@@ -247,18 +265,22 @@ function _trickplayAttach(img, path) {
     }
 
     function teardown() {
-        if (spriteEl) { spriteEl.remove(); spriteEl = null; }
+        if (spriteEl) {
+            spriteEl.remove();
+            spriteEl = null;
+            window.removeEventListener('scroll', reposition, { capture: true });
+        }
         bar.style.width = '0';
     }
 
-    wrap.addEventListener('mouseenter', () => {
+    card.addEventListener('mouseenter', () => {
         ensureSprite();
         if (cacheEntry) buildOverlay();
     }, { passive: true });
 
-    wrap.addEventListener('mouseleave', teardown);
+    card.addEventListener('mouseleave', teardown);
 
-    wrap.addEventListener('mousemove', e => {
+    card.addEventListener('mousemove', e => {
         ensureSprite();
         if (!cacheEntry) return;
         if (!spriteEl) buildOverlay();
@@ -428,8 +450,37 @@ function renderDetail() {
         return;
     }
 
-    if (!state.selectedFile && !state.selectedDir) {
+    if (!state.selectedFile && !state.selectedDir && state.selectedRoot == null) {
         panel.innerHTML = '<div class="detail-empty">Select a file or folder to see details</div>';
+        return;
+    }
+
+    // Root card selected
+    if (state.selectedRoot != null) {
+        const rootMeta = state.roots.find(r => r.id === state.selectedRoot);
+        const info = state.selectedRootInfo;
+        const name = rootMeta ? rootMeta.name : `Root ${state.selectedRoot}`;
+        const path = rootMeta ? rootMeta.path : '';
+        const infoRows = info ? `
+            <div class="detail-meta-row"><span class="detail-meta-label">Files</span><span class="detail-meta-value">${info.files.toLocaleString()}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">Tags</span><span class="detail-meta-value">${info.tags.toLocaleString()}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">Assignments</span><span class="detail-meta-value">${info.assignments.toLocaleString()}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">Total size</span><span class="detail-meta-value">${formatSize(info.total_size)}</span></div>` : '<div class="detail-meta-row">Loading…</div>';
+        panel.innerHTML = `
+            <div class="detail-header">
+                <h3>${esc(name)}</h3>
+                <button class="detail-close" onclick="clearSelection()" title="Close">&times;</button>
+            </div>
+            <div class="detail-preview">
+                <div class="no-preview" style="color:var(--primary)">${ICONS.root}</div>
+            </div>
+            <div class="detail-meta">
+                <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value" style="word-break:break-all">${esc(path)}</span></div>
+                ${infoRows}
+            </div>
+            <div style="padding:8px 12px">
+                <button class="tag-action-btn" onclick="enterRoot(${state.selectedRoot})">Open database</button>
+            </div>`;
         return;
     }
 
@@ -535,6 +586,7 @@ function renderDetail() {
         : '';
 
     panel.innerHTML = `
+        <div class="detail-top">
         <div class="detail-header">
             <h3>${esc(name)}</h3>
             <button class="detail-close" onclick="closeDetail()" title="Close">&times;</button>
@@ -549,6 +601,8 @@ function renderDetail() {
                    ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}`
             }
         </div>
+        </div>
+        <div class="detail-v-handle" id="detail-v-handle"></div>
         <div class="detail-tags-section">
             <h4>Tags</h4>
             <div class="detail-tags">${tagChips}</div>
@@ -557,6 +611,7 @@ function renderDetail() {
         </div>`;
 
     if (covered) attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
+    initDetailVHandle(document.getElementById('detail-v-handle'));
 
     // Async-fetch text/markdown content after DOM is set
     if (type_ === 'text') {

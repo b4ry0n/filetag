@@ -17,6 +17,23 @@ async function navigateTo(path) {
     render();
 }
 
+// Select a root card (virtual root page) — shows info in the detail panel.
+async function selectRoot(id) {
+    state.selectedRoot = id;
+    state.selectedRootInfo = null;
+    state.selectedFile = null;
+    state.selectedDir = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    _lastClickedPath = null;
+    _armedBulkTag = null;
+    renderDetail();
+    try {
+        state.selectedRootInfo = await api('/api/info?root=' + id);
+        renderDetail();
+    } catch (_) { /* ignore */ }
+}
+
 // Enter a specific root database (from the virtual root listing).
 async function enterRoot(id) {
     _thumbClearCache();
@@ -454,6 +471,8 @@ function clearSelection() {
     state.selectedFilesData.clear();
     state.selectedFile = null;
     state.selectedDir = null;
+    state.selectedRoot = null;
+    state.selectedRootInfo = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
     _updateCardSelection();
@@ -895,6 +914,8 @@ function closeDetail() {
     const anchor = saveScrollAnchor(activePath);
     state.selectedFile = null;
     state.selectedDir = null;
+    state.selectedRoot = null;
+    state.selectedRootInfo = null;
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.detailOpen = false;

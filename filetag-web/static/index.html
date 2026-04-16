@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>filetag</title>
     <link rel="icon" href="/favicon.svg">
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/base.css">
+    <link rel="stylesheet" href="/css/layout.css">
+    <link rel="stylesheet" href="/css/toolbar.css">
+    <link rel="stylesheet" href="/css/cards.css">
+    <link rel="stylesheet" href="/css/detail.css">
+    <link rel="stylesheet" href="/css/viewer.css">
 </head>
 <body>
     <header class="header">
@@ -30,6 +35,7 @@
             </div>
             <div class="sidebar-content" id="tag-list"></div>
         </aside>
+        <div class="resize-handle resize-handle--col" id="resize-sidebar" title="Drag to resize"></div>
         <main class="main">
             <div class="toolbar">
                 <nav class="breadcrumb" id="breadcrumb"></nav>
@@ -88,6 +94,7 @@
             </div>
             <div id="content" class="file-grid"></div>
         </main>
+        <div class="resize-handle resize-handle--col" id="resize-detail" title="Drag to resize"></div>
         <aside class="detail" id="detail">
             <div class="detail-empty">Select a file or folder to see details</div>
         </aside>

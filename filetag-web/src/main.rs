@@ -167,7 +167,12 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(api::index_html))
-        .route("/style.css", get(api::style_css))
+        .route("/css/base.css", get(api::css_base))
+        .route("/css/layout.css", get(api::css_layout))
+        .route("/css/toolbar.css", get(api::css_toolbar))
+        .route("/css/cards.css", get(api::css_cards))
+        .route("/css/detail.css", get(api::css_detail))
+        .route("/css/viewer.css", get(api::css_viewer))
         .route("/js/utils.js", get(api::js_utils))
         .route("/js/state.js", get(api::js_state))
         .route("/js/tags.js", get(api::js_tags))

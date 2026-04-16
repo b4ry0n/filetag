@@ -31,15 +31,26 @@ pub async fn index_html() -> impl IntoResponse {
     )
 }
 
-pub async fn style_css() -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        include_str!("../static/style.css"),
-    )
+macro_rules! css_handler {
+    ($name:ident, $path:literal) => {
+        pub async fn $name() -> impl IntoResponse {
+            (
+                [
+                    (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+                    (header::CACHE_CONTROL, "no-store"),
+                ],
+                include_str!($path),
+            )
+        }
+    };
 }
+
+css_handler!(css_base, "../static/css/base.css");
+css_handler!(css_layout, "../static/css/layout.css");
+css_handler!(css_toolbar, "../static/css/toolbar.css");
+css_handler!(css_cards, "../static/css/cards.css");
+css_handler!(css_detail, "../static/css/detail.css");
+css_handler!(css_viewer, "../static/css/viewer.css");
 
 macro_rules! js_handler {
     ($name:ident, $path:literal) => {
