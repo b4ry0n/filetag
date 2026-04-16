@@ -129,7 +129,6 @@ function _previewVideoError(video) {
 // without any DOM or src changes (same technique as Jellyfin trickplay).
 
 const _trickplayCache = new Map(); // path → {src, n} | 'loading' | 'failed'
-const TRICKPLAY_N = 8;
 
 /**
  * Attach trickplay behaviour to the <img> that replaced a .card-thumb-pending
@@ -159,11 +158,15 @@ function _trickplayAttach(img, path) {
         if (cached) { cacheEntry = cached; return; }
 
         _trickplayCache.set(path, 'loading');
-        const src = '/api/vthumbs?' + new URLSearchParams({ path, n: TRICKPLAY_N })
+        const maxN = parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
+        const src = '/api/vthumbs?' + new URLSearchParams({ path, max_n: maxN })
             + rootParam('&');
         const preload = new Image();
         preload.onload = () => {
-            const entry = { src, n: TRICKPLAY_N, natW: preload.naturalWidth, natH: preload.naturalHeight };
+            // Each frame is scaled to 320 px wide by the server; derive n from
+            // sprite width so the client doesn't need to pass or receive n.
+            const n = Math.max(1, Math.round(preload.naturalWidth / 320));
+            const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
             _trickplayCache.set(path, entry);
             cacheEntry = entry;
             if (card.matches(':hover')) buildOverlay();

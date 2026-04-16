@@ -591,7 +591,8 @@ async function pregenSprites() {
     for (const path of videoPaths) {
         updateToast(toast, `Generating video sprites… (${done} / ${videoPaths.length})`);
         try {
-            await fetch('/api/vthumbs?' + new URLSearchParams({ path, n: 8 }) + rootParam('&'));
+            const maxN = parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
+            await fetch('/api/vthumbs?' + new URLSearchParams({ path, max_n: maxN }) + rootParam('&'));
         } catch (_) { /* ignore */ }
         done++;
         _trickplayCache.delete(path);
@@ -619,9 +620,26 @@ function isAiImage(path) {
     return AI_IMAGE_EXTS.has(ext) || AI_ARCHIVE_EXTS.has(ext);
 }
 
-async function openAiSettings() {
+// ---------------------------------------------------------------------------
+// Settings modal
+// ---------------------------------------------------------------------------
+
+function switchSettingsTab(tab) {
+    document.querySelectorAll('.modal-tab-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.tab === tab);
+    });
+    document.querySelectorAll('.modal-tab-panel').forEach(p => {
+        p.hidden = (p.id !== `settings-tab-${tab}`);
+    });
+}
+
+async function openSettings(tab = 'video') {
     const menu = document.getElementById('cache-menu');
     if (menu) menu.hidden = true;
+    // Video settings from localStorage
+    document.getElementById('sprite-max').value =
+        parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
+    // AI settings from server
     try {
         const res = await fetch('/api/ai/config?' + new URLSearchParams({ root_id: state.currentRootId }) + rootParam('&'));
         const cfg = await res.json();
@@ -636,12 +654,25 @@ async function openAiSettings() {
         document.getElementById('ai-format').value = cfg.format || 'openai';
     } catch (_) { /* defaults are fine */ }
     document.getElementById('ai-test-result').hidden = true;
-    document.getElementById('ai-settings-modal').hidden = false;
+    switchSettingsTab(tab);
+    document.getElementById('settings-modal').hidden = false;
 }
 
-function closeAiSettings() {
-    document.getElementById('ai-settings-modal').hidden = true;
+function closeSettings() {
+    document.getElementById('settings-modal').hidden = true;
 }
+
+function saveVideoSettings() {
+    const max = parseInt(document.getElementById('sprite-max').value, 10);
+    if (max >= 4 && max <= 64) {
+        localStorage.setItem('ft-sprite-max', max);
+    }
+    closeSettings();
+}
+
+// Backward-compat wrappers (called from cache-menu & ai-test flow)
+function openAiSettings() { openSettings('ai'); }
+function closeAiSettings() { closeSettings(); }
 
 function aiUseDefaultPrompt() {
     const el = document.getElementById('ai-prompt');
@@ -675,8 +706,9 @@ async function aiTestConnection() {
 
     // Save first so the server has the current config
     await aiSaveSettings();
-    // Re-open the modal (save closes it)
-    document.getElementById('ai-settings-modal').hidden = false;
+    // Re-open the modal on the AI tab (save closes it)
+    document.getElementById('settings-modal').hidden = false;
+    switchSettingsTab('ai');
     resultEl.hidden = false;
 
     // Find an image to test with: prefer the selected file, then the current view
