@@ -168,3 +168,17 @@ pub struct DeleteTagRequest {
 pub struct CacheClearBody {
     pub paths: Option<Vec<String>>,
 }
+
+/// Query params for `GET /api/settings`.
+#[derive(Deserialize)]
+pub struct SettingsParams {
+    pub root_id: Option<usize>,
+}
+
+/// Body for `POST /api/settings`.
+#[derive(Deserialize)]
+pub struct SettingsBody {
+    pub root_id: Option<usize>,
+    pub sprite_min: Option<u32>,
+    pub sprite_max: Option<u32>,
+}

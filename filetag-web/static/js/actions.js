@@ -46,7 +46,7 @@ async function enterRoot(id) {
     state.activeTags.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
-    await Promise.all([loadInfo(), loadTags(), loadFiles('')]);
+    await Promise.all([loadInfo(), loadTags(), loadFiles(''), loadSettings()]);
     render();
 }
 
@@ -591,8 +591,8 @@ async function pregenSprites() {
     for (const path of videoPaths) {
         updateToast(toast, `Generating video sprites… (${done} / ${videoPaths.length})`);
         try {
-            const minN = parseInt(localStorage.getItem('ft-sprite-min') || '8', 10);
-            const maxN = parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
+            const minN = state.settings.sprite_min ?? 8;
+            const maxN = state.settings.sprite_max ?? 16;
             await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + rootParam('&'));
         } catch (_) { /* ignore */ }
         done++;
@@ -637,11 +637,9 @@ function switchSettingsTab(tab) {
 async function openSettings(tab = 'video') {
     const menu = document.getElementById('cache-menu');
     if (menu) menu.hidden = true;
-    // Video settings from localStorage
-    document.getElementById('sprite-min').value =
-        parseInt(localStorage.getItem('ft-sprite-min') || '8', 10);
-    document.getElementById('sprite-max').value =
-        parseInt(localStorage.getItem('ft-sprite-max') || '16', 10);
+    // Video settings from per-root state
+    document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
+    document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
     // AI settings from server
     try {
         const res = await fetch('/api/ai/config?' + new URLSearchParams({ root_id: state.currentRootId }) + rootParam('&'));
@@ -665,11 +663,24 @@ function closeSettings() {
     document.getElementById('settings-modal').hidden = true;
 }
 
-function saveVideoSettings() {
+async function saveVideoSettings() {
     const min = parseInt(document.getElementById('sprite-min').value, 10);
     const max = parseInt(document.getElementById('sprite-max').value, 10);
-    if (min >= 2 && min <= 64) localStorage.setItem('ft-sprite-min', min);
-    if (max >= 2 && max <= 64) localStorage.setItem('ft-sprite-max', Math.max(max, min));
+    if (min >= 2 && min <= 64 && max >= 2 && max <= 64) {
+        const body = {
+            root_id: state.currentRootId,
+            sprite_min: min,
+            sprite_max: Math.max(max, min),
+        };
+        try {
+            await apiPost('/api/settings', body);
+            state.settings.sprite_min = body.sprite_min;
+            state.settings.sprite_max = body.sprite_max;
+        } catch (e) {
+            showToast('Failed to save settings: ' + e.message);
+            return;
+        }
+    }
     closeSettings();
 }
 
