@@ -687,3 +687,37 @@ pub async fn api_delete_tag(
     let deleted = db::delete_tag(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
+
+pub async fn api_settings_get(
+    Query(params): Query<SettingsParams>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, params.root_id)?;
+    let conn = open_conn(db_root)?;
+    let sprite_min: u32 = db::get_setting(&conn, "sprite_min")
+        .map_err(AppError)?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+    let sprite_max: u32 = db::get_setting(&conn, "sprite_max")
+        .map_err(AppError)?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+    Ok(Json(
+        serde_json::json!({ "sprite_min": sprite_min, "sprite_max": sprite_max }),
+    ))
+}
+
+pub async fn api_settings_set(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SettingsBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_at(&state, body.root_id)?;
+    let conn = open_conn(db_root)?;
+    if let Some(v) = body.sprite_min {
+        db::set_setting(&conn, "sprite_min", &v.to_string()).map_err(AppError)?;
+    }
+    if let Some(v) = body.sprite_max {
+        db::set_setting(&conn, "sprite_max", &v.to_string()).map_err(AppError)?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

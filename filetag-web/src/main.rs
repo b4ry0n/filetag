@@ -215,6 +215,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/ai/status", get(ai::api_ai_status))
         .route("/api/ai/config", get(ai::api_ai_config_get))
         .route("/api/ai/config", post(ai::api_ai_config_set))
+        .route("/api/settings", get(api::api_settings_get))
+        .route("/api/settings", post(api::api_settings_set))
         .with_state(state.clone());
 
     let addr = format!("{}:{}", args.bind, args.port);
