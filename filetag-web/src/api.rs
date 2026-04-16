@@ -10,10 +10,10 @@ use axum::{
 use filetag_lib::{db, query};
 
 use crate::archive::ensure_zip_entry_record;
-use crate::preview::{file_cache_path, raw_cache_path, thumb_cache_path};
+use crate::preview::{file_cache_path, raw_cache_path, thumb_cache_path, video_info};
 use crate::state::{
     AppError, AppState, DbRoot, file_is_covered, open_conn, open_for_file_op, parse_tag,
-    preview_safe_path, root_at, safe_path,
+    resolve_preview, root_at, safe_path,
 };
 use crate::types::*;
 
@@ -41,31 +41,32 @@ pub async fn style_css() -> impl IntoResponse {
     )
 }
 
-pub async fn app_js() -> impl IntoResponse {
-    (
-        [
+macro_rules! js_handler {
+    ($name:ident, $path:literal) => {
+        pub async fn $name() -> impl IntoResponse {
             (
-                header::CONTENT_TYPE,
-                "application/javascript; charset=utf-8",
-            ),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        include_str!("../static/app.js"),
-    )
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        "application/javascript; charset=utf-8",
+                    ),
+                    (header::CACHE_CONTROL, "no-store"),
+                ],
+                include_str!($path),
+            )
+        }
+    };
 }
 
-pub async fn hls_js() -> impl IntoResponse {
-    (
-        [
-            (
-                header::CONTENT_TYPE,
-                "application/javascript; charset=utf-8",
-            ),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        include_str!("../static/hls.min.js"),
-    )
-}
+js_handler!(js_utils, "../static/js/utils.js");
+js_handler!(js_state, "../static/js/state.js");
+js_handler!(js_tags, "../static/js/tags.js");
+js_handler!(js_render, "../static/js/render.js");
+js_handler!(js_detail, "../static/js/detail.js");
+js_handler!(js_actions, "../static/js/actions.js");
+js_handler!(js_lightbox, "../static/js/lightbox.js");
+js_handler!(js_viewer, "../static/js/viewer.js");
+js_handler!(js_main, "../static/js/main.js");
 
 pub async fn favicon() -> impl IntoResponse {
     (
@@ -207,8 +208,8 @@ fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
             }
         }
 
-        // hls: the segment directory is named "{prefix}" inside the hls subdir.
-        let hls_dir = cache_dir.join("hls").join(pfx);
+        // hls: the segment directory is named "{prefix}" inside the hls2 subdir.
+        let hls_dir = cache_dir.join("hls2").join(pfx);
         if hls_dir.exists() {
             if let Ok(rd) = std::fs::read_dir(&hls_dir) {
                 for entry in rd.flatten() {
@@ -250,8 +251,8 @@ pub async fn api_cache_clear(
     let removed = if let Some(rel_paths) = paths {
         let mut n = 0u64;
         for rel in rel_paths {
-            if let Some(abs) = preview_safe_path(&root, &rel) {
-                n += remove_cache_for_path(&abs, &root);
+            if let Some((abs, cr)) = resolve_preview(&state, &db_root.root, &rel) {
+                n += remove_cache_for_path(&abs, &cr);
             }
         }
         n
@@ -473,6 +474,43 @@ pub async fn api_file_detail(
         db_root.root.join(&params.path)
     };
 
+    // Probe video duration in the background while we do the DB lookup.
+    let is_video = !is_zip
+        && fs_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                matches!(
+                    e.to_ascii_lowercase().as_str(),
+                    "mp4"
+                        | "webm"
+                        | "mkv"
+                        | "avi"
+                        | "mov"
+                        | "wmv"
+                        | "flv"
+                        | "m4v"
+                        | "3gp"
+                        | "f4v"
+                        | "mpg"
+                        | "mpeg"
+                        | "m2v"
+                        | "m2ts"
+                        | "mts"
+                        | "ogv"
+                        | "vob"
+                        | "mxf"
+                        | "divx"
+                        | "qt"
+                )
+            })
+            .unwrap_or(false);
+    let duration = if is_video {
+        video_info(&fs_path).await.map(|i| i.duration)
+    } else {
+        None
+    };
+
     let start = fs_path.parent().unwrap_or(&fs_path);
 
     let db_lookup = db::find_and_open(start).ok().and_then(|(conn, eff_root)| {
@@ -507,6 +545,7 @@ pub async fn api_file_detail(
                 .into_iter()
                 .map(|(name, value)| ApiFileTag { name, value })
                 .collect(),
+            duration,
         }));
     }
 
@@ -519,6 +558,7 @@ pub async fn api_file_detail(
             indexed_at: String::new(),
             covered: true,
             tags: vec![],
+            duration: None,
         }));
     }
 
@@ -540,6 +580,7 @@ pub async fn api_file_detail(
         indexed_at: String::new(),
         covered: file_is_covered(&state, &meta, &fs_path),
         tags: vec![],
+        duration,
     }))
 }
 

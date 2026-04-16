@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::preview::{image_thumb_jpeg, mime_for_ext};
 use crate::state::{
-    AppState, THUMB_LIMITER, cache_root_for_file, open_conn, preview_safe_path, root_at,
+    AppState, THUMB_LIMITER, open_conn, preview_safe_path, resolve_preview, root_at,
 };
 
 // ---------------------------------------------------------------------------
@@ -549,14 +549,10 @@ pub async fn api_zip_thumb(
         Ok(r) => r,
         Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
     };
-    let root = db_root.root.clone();
-    let abs = match preview_safe_path(&root, &params.path) {
-        Some(p) => p,
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
+        Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
-    let cache_root = cache_root_for_file(&state, &abs)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| root.clone());
     let page_idx = params.page;
 
     if let Some(cache) = zip_page_thumb_cache_path(&abs, &cache_root, page_idx) {

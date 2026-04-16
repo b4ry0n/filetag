@@ -2,15 +2,59 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json, Response},
 };
 use serde::Deserialize;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::state::{AppState, THUMB_LIMITER, cache_root_for_file, preview_safe_path, root_at};
+use crate::state::{AppState, THUMB_LIMITER, resolve_preview, root_at};
 use crate::types::RootParam;
+
+// ---------------------------------------------------------------------------
+// Video cache eviction
+// ---------------------------------------------------------------------------
+
+/// Maximum total size (bytes) of the video transcode cache per database root.
+/// When exceeded, the oldest cached files are removed until below this limit.
+const VIDEO_CACHE_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024; // 10 GiB
+
+/// Evict oldest video cache files until total size is below `max_bytes`.
+async fn evict_video_cache(video_dir: PathBuf, max_bytes: u64) {
+    let Ok(mut rd) = tokio::fs::read_dir(&video_dir).await else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let p = entry.path();
+        // Only count fully written files; skip .tmp and .staging intermediates.
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "mp4" {
+            continue;
+        }
+        if let Ok(meta) = tokio::fs::metadata(&p).await {
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            files.push((mtime, meta.len(), p));
+        }
+    }
+    let total: u64 = files.iter().map(|(_, sz, _)| *sz).sum();
+    if total <= max_bytes {
+        return;
+    }
+    // Oldest access time first.
+    files.sort_unstable_by_key(|(mtime, _, _)| *mtime);
+    let mut remaining = total;
+    for (_, sz, path) in files {
+        if remaining <= max_bytes {
+            break;
+        }
+        if tokio::fs::remove_file(&path).await.is_ok() {
+            remaining = remaining.saturating_sub(sz);
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // File preview handler
@@ -27,13 +71,10 @@ pub async fn preview_handler(
         Ok(r) => r,
         Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
     };
-    let abs = match preview_safe_path(&db_root.root, &rel_path) {
-        Some(p) => p,
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
+        Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
-    let cache_root = cache_root_for_file(&state, &abs)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| db_root.root.clone());
 
     let ext = abs
         .extension()
@@ -210,101 +251,209 @@ fn parse_byte_range(s: &str, total: u64) -> Option<(u64, u64)> {
 // Video transcoding
 // ---------------------------------------------------------------------------
 
-/// Transcode a video file to H.264/AAC mp4 via ffmpeg and stream it immediately
-/// to the client as a fragmented mp4. The output is simultaneously written to a
-/// cache file under `<root>/.filetag/cache/video/` so subsequent requests are
-/// served instantly with full Range support.
+/// Transcode (or remux) a video to MP4 and stream it to the client.
+///
+/// When a cached copy already exists the response uses full Range support so
+/// the browser can seek freely. On the first play we spawn a single ffmpeg
+/// process that outputs fragmented MP4 (`frag_keyframe+empty_moov`) to stdout.
+/// The output is streamed directly to the browser via chunked transfer encoding
+/// while simultaneously being written to a cache file.  This means playback
+/// starts within seconds (no need to wait for the full transcode) and
+/// subsequent plays are served instantly from cache.
+///
+/// Fast path (H.264 source): container-only remux, completes in seconds.
+/// Slow path (HEVC/other): fMP4 streaming while writing to cache. Seeking
+/// is unavailable on the first play; from cache it works via Range requests.
 async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap) -> Response {
-    // Cache-key suffix "v4.mp4": regular (non-fragmented) MP4 with `-movflags
-    // +faststart`. The complete `moov` atom (including total duration) sits at the
-    // beginning of the file so browsers immediately know the total run-time and full
-    // byte-range seeking works from the first request.
-    //
-    // When the source video stream is already H.264 (the common case for MKV films)
-    // ffmpeg uses `-c:v copy` and only re-encodes the audio track if it is not AAC.
-    // Remuxing is near-instant even for feature-length films.
-    let cache_path = match file_cache_path(path, root, "video", "v4.mp4") {
+    let cache_path = match file_cache_path(path, root, "video", "v7.mp4") {
         Some(p) => p,
         None => return serve_file_range(path, headers).await,
     };
 
-    // If a cached transcode already exists, serve it directly with Range support.
+    // Cached copy exists: serve with full Range/seek support.
     if cache_path.exists() {
         return serve_file_range(&cache_path, headers).await;
     }
 
-    // Acquire the shared concurrency permit to avoid too many ffmpeg processes.
+    // Acquire concurrency permit.
     let permit = match THUMB_LIMITER.acquire().await {
         Ok(p) => p,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
     };
 
-    // Re-check after acquiring permit (another task may have finished it).
+    // Re-check after acquiring permit.
     if cache_path.exists() {
         drop(permit);
         return serve_file_range(&cache_path, headers).await;
     }
-
-    let tmp = cache_path.with_extension("tmp.mp4");
 
     // Probe codecs; fall back to full transcode if ffprobe fails.
     let info = video_info(path).await;
     let c_video = info.as_ref().map(|i| i.video_arg()).unwrap_or("libx264");
     let c_audio = info.as_ref().map(|i| i.audio_arg()).unwrap_or("aac");
 
-    // Build ffmpeg argument list. Extra quality flags are only added when
-    // transcoding (copy mode ignores them but they cause no harm if present).
-    let args: Vec<&str> = vec!["-n", "10", "ffmpeg", "-y", "-i"];
-    // path inserted at call site below
-    let mut extra: Vec<&str> = vec![
-        "-c:v",
-        c_video,
-        "-c:a",
-        c_audio,
-        "-movflags",
-        "+faststart",
-        "-f",
-        "mp4",
-    ];
-    if c_video != "copy" {
-        extra.splice(2..2, ["-preset", "fast", "-crf", "23"]);
+    let tmp = cache_path.with_extension("tmp.mp4");
+    if let Some(parent) = cache_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
     }
-    if c_audio != "copy" {
-        extra.splice(extra.len() - 4..extra.len() - 4, ["-b:a", "128k"]);
-    }
-    // Suppress incompatible subtitle streams that ffmpeg cannot mux into mp4
-    // (e.g. ASS/SSA from MKV). Using -sn is safe for all inputs.
-    extra.push("-sn");
-    let _ = &args; // consumed below via Command builder
 
-    let status = tokio::process::Command::new("nice")
-        .args(["-n", "10", "ffmpeg", "-y"])
+    if c_video == "copy" {
+        // Fast path: no video encoding, just repackage the container.
+        // ffmpeg finishes in a few seconds even for large files; we wait for
+        // it and then serve the seekable result with Range support.
+        let mut cmd = tokio::process::Command::new("nice");
+        cmd.args(["-n", "10", "ffmpeg", "-y"])
+            .arg("-i")
+            .arg(path)
+            .args([
+                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", c_audio,
+            ]);
+        if c_audio != "copy" {
+            cmd.args(["-b:a", "128k"]);
+        }
+        let ok = cmd
+            .args(["-sn", "-movflags", "+faststart"])
+            .arg(&tmp)
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        drop(permit);
+
+        if ok {
+            let _ = tokio::fs::rename(&tmp, &cache_path).await;
+            if let Some(dir) = cache_path.parent() {
+                let dir = dir.to_path_buf();
+                tokio::spawn(evict_video_cache(dir, VIDEO_CACHE_MAX_BYTES));
+            }
+            return serve_file_range(&cache_path, headers).await;
+        } else {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return serve_file_range(path, headers).await;
+        }
+    }
+
+    // Slow path: video re-encoding needed (e.g. HEVC → H.264).
+    // Stream fragmented MP4 to the browser while simultaneously writing to
+    // cache. Seeking is not available on the first play; subsequent plays
+    // are served from the seekable cache file.
+    let mut cmd = tokio::process::Command::new("nice");
+    cmd.args(["-n", "10", "ffmpeg", "-y"])
         .arg("-i")
         .arg(path)
-        .args(&extra)
-        .arg(&tmp)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await;
+        .args(["-map", "0:v:0", "-map", "0:a:0?"])
+        .args([
+            "-c:v", c_video, "-preset", "fast", "-crf", "23", "-threads", "2",
+        ])
+        .args(["-c:a", c_audio]);
+    if c_audio != "copy" {
+        cmd.args(["-b:a", "128k"]);
+    }
+    cmd.args([
+        "-sn",
+        "-movflags",
+        "frag_keyframe+empty_moov+default_base_moof",
+    ])
+    .args(["-f", "mp4", "pipe:1"])
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true);
 
-    drop(permit);
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => {
+            drop(permit);
+            return serve_file_range(path, headers).await;
+        }
+    };
 
-    match status {
-        Ok(s) if s.success() => {
-            if tokio::fs::rename(&tmp, &cache_path).await.is_ok() {
-                serve_file_range(&cache_path, headers).await
-            } else {
-                let _ = tokio::fs::remove_file(&tmp).await;
-                serve_file_range(path, headers).await
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => {
+            drop(permit);
+            return serve_file_range(path, headers).await;
+        }
+    };
+
+    let cache_final = cache_path.clone();
+    let tmp_clone = tmp.clone();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
+
+    tokio::spawn(async move {
+        let mut stdout = stdout;
+        let mut file = tokio::fs::File::create(&tmp_clone).await.ok();
+        let mut buf = vec![0u8; 64 * 1024];
+
+        loop {
+            match stdout.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let chunk = Bytes::copy_from_slice(&buf[..n]);
+                    if let Some(ref mut f) = file {
+                        let _ = f.write_all(&chunk).await;
+                    }
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    break;
+                }
             }
         }
-        _ => {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            serve_file_range(path, headers).await
+
+        if let Some(mut f) = file.take() {
+            let _ = f.flush().await;
         }
-    }
+
+        drop(stdout);
+        let ok = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        drop(permit);
+
+        if ok {
+            // Post-process the fragmented MP4 into a seekable file with
+            // faststart so that the second (and subsequent) plays have a
+            // full seekable timeline with correct duration.
+            let staging = tmp_clone.with_extension("staging.mp4");
+            if tokio::fs::rename(&tmp_clone, &staging).await.is_ok() {
+                let ok2 = tokio::process::Command::new("ffmpeg")
+                    .args(["-y", "-i"])
+                    .arg(&staging)
+                    .args(["-c", "copy", "-movflags", "+faststart"])
+                    .arg(&cache_final)
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true)
+                    .status()
+                    .await
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                let _ = tokio::fs::remove_file(&staging).await;
+                if ok2 {
+                    if let Some(dir) = cache_final.parent() {
+                        evict_video_cache(dir.to_path_buf(), VIDEO_CACHE_MAX_BYTES).await;
+                    }
+                } else {
+                    let _ = tokio::fs::remove_file(&cache_final).await;
+                }
+            } else {
+                let _ = tokio::fs::remove_file(&tmp_clone).await;
+            }
+        } else {
+            let _ = tokio::fs::remove_file(&tmp_clone).await;
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -668,14 +817,10 @@ pub async fn api_vthumbs(
         Ok(r) => r,
         Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
     };
-    let root = db_root.root.clone();
-    let abs = match preview_safe_path(&root, &params.path) {
-        Some(p) => p,
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
+        Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
-    let cache_root = cache_root_for_file(&state, &abs)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| root.clone());
 
     let n = params.n.unwrap_or(8).clamp(2, 16);
 
@@ -792,13 +937,10 @@ pub async fn api_vthumbs_pregen(
 
     tokio::spawn(async move {
         for rel_path in body.paths {
-            let abs = match preview_safe_path(&root, &rel_path) {
-                Some(p) => p,
+            let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
+                Some(t) => t,
                 None => continue,
             };
-            let cache_root = cache_root_for_file(&state_clone, &abs)
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| root.clone());
             let cache_path =
                 match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.jpg")) {
                     Some(p) => p,
@@ -867,13 +1009,12 @@ pub struct VideoInfo {
 }
 
 impl VideoInfo {
-    /// Returns the ffmpeg `-c:v` argument: "copy" when the video is already H.264,
-    /// otherwise a libx264 transcode is needed.
+    /// Returns the ffmpeg `-c:v` argument: "copy" when the codec can be placed
+    /// directly in an MP4 container (H.264, HEVC, MPEG-4, VP9).
     pub fn video_arg(&self) -> &'static str {
-        if self.video_codec == "h264" {
-            "copy"
-        } else {
-            "libx264"
+        match self.video_codec.as_str() {
+            "h264" | "hevc" | "mpeg4" | "vp9" | "av1" => "copy",
+            _ => "libx264",
         }
     }
 
@@ -910,8 +1051,12 @@ pub async fn video_info(path: &Path) -> Option<VideoInfo> {
     }
     let text = std::str::from_utf8(&out.stdout).ok()?;
 
-    // ffprobe csv output: one line per stream ("stream,<codec_type>,<codec_name>")
-    // followed by one line for the format ("<duration>").
+    // ffprobe csv output with p=0 (no section names).
+    // The column order depends on the ffprobe version and platform:
+    //   "h264,video"  or "video,h264"  — video stream line
+    //   "aac,audio"   or "audio,aac"   — audio stream line
+    //   "1234.567"                     — format duration line
+    // We determine which column is codec_type by checking for "video"/"audio".
     let mut video_codec = String::new();
     let mut audio_codec = String::new();
     let mut duration = 0f64;
@@ -920,19 +1065,26 @@ pub async fn video_info(path: &Path) -> Option<VideoInfo> {
         if line.is_empty() {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("stream,") {
-            let mut parts = rest.splitn(2, ',');
-            let kind = parts.next().unwrap_or("");
-            let codec = parts.next().unwrap_or("");
-            match kind {
-                "video" if video_codec.is_empty() => video_codec = codec.to_owned(),
-                "audio" if audio_codec.is_empty() => audio_codec = codec.to_owned(),
-                _ => {}
+        if let Ok(d) = line.parse::<f64>() {
+            if d > 0.0 {
+                duration = d;
             }
-        } else if let Ok(d) = line.parse::<f64>()
-            && d > 0.0
-        {
-            duration = d;
+        } else if let Some(comma) = line.find(',') {
+            let left = &line[..comma];
+            let right = &line[comma + 1..];
+            // Identify which field is codec_type and which is codec_name.
+            let (kind, codec) = if left == "video" || left == "audio" {
+                (left, right)
+            } else if right == "video" || right == "audio" {
+                (right, left)
+            } else {
+                continue;
+            };
+            if kind == "video" && video_codec.is_empty() {
+                video_codec = codec.to_owned();
+            } else if kind == "audio" && audio_codec.is_empty() {
+                audio_codec = codec.to_owned();
+            }
         }
     }
     if duration <= 0.0 {
@@ -1013,17 +1165,10 @@ pub async fn thumb_handler(
         Ok(r) => r,
         Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
     };
-    let root = db_root.root.clone();
-    let abs = match preview_safe_path(&root, &rel_path) {
-        Some(p) => p,
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
+        Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
-    // Use the most specific DB root that contains this file so cache files are
-    // written to the correct `.filetag/cache/` directory even when a child
-    // database root is nested under the requested root.
-    let cache_root = cache_root_for_file(&state, &abs)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| root.clone());
 
     let ext = abs
         .extension()
@@ -1172,243 +1317,4 @@ async fn thumb_from_raw_bytes(raw_bytes: &[u8], abs: &Path) -> Option<Vec<u8>> {
     }
     // Fallback: return the raw bytes unchanged
     Some(raw_bytes.to_vec())
-}
-
-// ---------------------------------------------------------------------------
-// HLS streaming (on-demand segmented transcoding)
-// ---------------------------------------------------------------------------
-
-/// Target duration for each HLS segment in seconds.
-const HLS_SEG_DURATION: f64 = 6.0;
-
-#[derive(Deserialize)]
-pub struct HlsParams {
-    pub root: Option<usize>,
-    pub seg: Option<u32>,
-}
-
-/// Return the cache directory for HLS segments, keyed by source file mtime + size.
-/// Stored under `<root>/.filetag/cache/hls/`.
-fn hls_cache_dir(abs: &Path, root: &Path) -> Option<PathBuf> {
-    let meta = std::fs::metadata(abs).ok()?;
-    let mtime = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let size = meta.len();
-    let name = abs
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    // "hls2": bump the subdirectory name so pre-fix segments (which had no audio
-    // from segment 1 on) are not served from the old cache.
-    let dir = root
-        .join(".filetag")
-        .join("cache")
-        .join("hls2")
-        .join(format!("{mtime}_{size}_{name}"));
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir)
-}
-
-/// Percent-encode a path string for use in an HLS playlist URL.
-/// Preserves '/' separators and unreserved characters; encodes everything else.
-fn percent_encode_path(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// HLS handler: returns either a media playlist (`seg` absent) or a single MPEG-TS
-/// segment (`seg=N`). Segments are transcoded on demand with per-file caching.
-pub async fn hls_handler(
-    AxumPath(rel_path): AxumPath<String>,
-    Query(params): Query<HlsParams>,
-    State(state): State<Arc<AppState>>,
-) -> Response {
-    let db_root = match root_at(&state, params.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
-    };
-    let abs = match preview_safe_path(&db_root.root, &rel_path) {
-        Some(p) => p,
-        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
-    };
-    if !abs.exists() {
-        return (StatusCode::NOT_FOUND, "File not found").into_response();
-    }
-
-    if let Some(seg_idx) = params.seg {
-        hls_segment(&abs, &db_root.root, seg_idx).await
-    } else {
-        hls_playlist(&abs, &rel_path, params.root).await
-    }
-}
-
-/// Build and return an HLS VOD media playlist (M3U8) for the given file.
-async fn hls_playlist(abs: &Path, rel_path: &str, root_idx: Option<usize>) -> Response {
-    let info = match video_info(abs).await {
-        Some(i) => i,
-        None => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "Cannot determine video duration",
-            )
-                .into_response();
-        }
-    };
-
-    let n_segs = (info.duration / HLS_SEG_DURATION).ceil() as u32;
-    // EXT-X-TARGETDURATION must be >= all EXTINF values (ceiling per HLS spec §4.3.3.1).
-    let target_dur = (HLS_SEG_DURATION.ceil() as u32) + 1;
-
-    let root_prefix = root_idx.map(|r| format!("root={r}&")).unwrap_or_default();
-    let seg_url_base = format!("/hls/{}?{}seg=", percent_encode_path(rel_path), root_prefix,);
-
-    let mut m3u8 = format!(
-        "#EXTM3U\n\
-         #EXT-X-VERSION:3\n\
-         #EXT-X-TARGETDURATION:{target_dur}\n\
-         #EXT-X-MEDIA-SEQUENCE:0\n\
-         #EXT-X-PLAYLIST-TYPE:VOD\n",
-    );
-
-    for i in 0..n_segs {
-        let start = i as f64 * HLS_SEG_DURATION;
-        let seg_dur = (info.duration - start).min(HLS_SEG_DURATION);
-        m3u8.push_str(&format!("#EXTINF:{seg_dur:.3},\n{seg_url_base}{i}\n"));
-    }
-    m3u8.push_str("#EXT-X-ENDLIST\n");
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(m3u8))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-/// Serve (and if necessary transcode) a single HLS MPEG-TS segment.
-///
-/// Video codec strategy for MPEG-TS:
-/// - H.264: stream-copy (fast, universally supported in hls.js/MSE)
-/// - Other: transcode to H.264 (MSE in Chrome/Firefox only supports H.264)
-///
-/// Audio: always AAC (copy if source is already AAC, else transcode).
-async fn hls_segment(abs: &Path, root: &Path, seg_idx: u32) -> Response {
-    let cache_dir = match hls_cache_dir(abs, root) {
-        Some(d) => d,
-        None => return (StatusCode::INTERNAL_SERVER_ERROR, "HLS cache error").into_response(),
-    };
-    let seg_path = cache_dir.join(format!("seg{seg_idx}.ts"));
-
-    // Fast path: segment already cached.
-    if seg_path.exists() {
-        return serve_ts_file(&seg_path).await;
-    }
-
-    let permit = match THUMB_LIMITER.acquire().await {
-        Ok(p) => p,
-        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
-    };
-
-    // Re-check after acquiring permit (another task may have finished it).
-    if seg_path.exists() {
-        drop(permit);
-        return serve_ts_file(&seg_path).await;
-    }
-
-    let start = seg_idx as f64 * HLS_SEG_DURATION;
-
-    let info = video_info(abs).await;
-    let c_video = info
-        .as_ref()
-        .map(|i| {
-            if i.video_codec == "h264" {
-                "copy"
-            } else {
-                "libx264"
-            }
-        })
-        .unwrap_or("libx264");
-    let c_audio = info
-        .as_ref()
-        .map(|i| {
-            if i.audio_codec == "aac" {
-                "copy"
-            } else {
-                "aac"
-            }
-        })
-        .unwrap_or("aac");
-
-    let tmp_seg = seg_path.with_extension("tmp.ts");
-
-    let mut cmd = tokio::process::Command::new("nice");
-    cmd.args(["-n", "10", "ffmpeg", "-y"])
-        // Input seeking before -i: fast for copy mode (seeks to nearest keyframe).
-        .args(["-ss", &format!("{start:.3}")])
-        .arg("-i")
-        .arg(abs)
-        .args(["-t", &format!("{HLS_SEG_DURATION:.3}")])
-        // Explicit stream selection so the same streams are mapped after every
-        // seek.  The `?` makes the audio map optional for silent/no-audio files.
-        .args(["-map", "0:v:0", "-map", "0:a:0?"])
-        .args(["-c:v", c_video]);
-    if c_video != "copy" {
-        cmd.args(["-preset", "fast", "-crf", "23"]);
-    }
-    cmd.args(["-c:a", c_audio]);
-    if c_audio != "copy" {
-        cmd.args(["-b:a", "128k"]);
-    }
-    // -avoid_negative_ts make_zero: shift timestamps after a seek so no PTS/DTS
-    // value is negative.  Without this, the MPEG-TS muxer silently drops audio
-    // frames near the seek point, causing complete audio loss from segment 1 on.
-    // -sn: drop subtitle streams (cannot mux into MPEG-TS without special handling)
-    cmd.args(["-avoid_negative_ts", "make_zero", "-sn", "-f", "mpegts"])
-        .arg(&tmp_seg)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-
-    let status = cmd.status().await;
-    drop(permit);
-
-    match status {
-        Ok(s) if s.success() => {
-            if tokio::fs::rename(&tmp_seg, &seg_path).await.is_err() {
-                let _ = tokio::fs::remove_file(&tmp_seg).await;
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Segment rename failed")
-                    .into_response();
-            }
-            serve_ts_file(&seg_path).await
-        }
-        _ => {
-            let _ = tokio::fs::remove_file(&tmp_seg).await;
-            (StatusCode::UNPROCESSABLE_ENTITY, "Segment transcode failed").into_response()
-        }
-    }
-}
-
-async fn serve_ts_file(path: &Path) -> Response {
-    match tokio::fs::read(path).await {
-        Ok(data) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "video/mp2t")
-            // Segments are immutable once written; cache aggressively.
-            .header(header::CACHE_CONTROL, "max-age=31536000, immutable")
-            .body(Body::from(data))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Segment read failed").into_response(),
-    }
 }

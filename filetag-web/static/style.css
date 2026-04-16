@@ -1196,6 +1196,7 @@ h3, h4 { font-weight: 600; }
 .lightbox-content video {
     max-width: 94vw;
     max-height: 92vh;
+    width: auto;
     outline: none;
     border-radius: 4px;
 }
