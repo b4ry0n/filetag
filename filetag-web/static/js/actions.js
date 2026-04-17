@@ -592,8 +592,12 @@ async function pregenSprites() {
 
     const items = state.mode === 'search' ? state.searchResults : state.entries;
     const videoPaths = (items || [])
-        .filter(e => !e.is_dir && e.path && VIDEO_EXTS.has(e.path.split('.').pop().toLowerCase()))
-        .map(e => e.path);
+        .filter(e => {
+            if (e.is_dir) return false;
+            const p = state.mode === 'search' ? e.path : fullPath(e);
+            return p && VIDEO_EXTS.has(p.split('.').pop().toLowerCase());
+        })
+        .map(e => state.mode === 'search' ? e.path : fullPath(e));
 
     if (videoPaths.length === 0) return;
 
