@@ -1,3 +1,8 @@
+//! ZIP, RAR, and 7-Zip archive handling for `filetag-web`.
+//!
+//! Provides handlers to list, read, and thumbnail pages within archives,
+//! as well as helpers used by the AI analysis module to sample archive contents.
+
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -305,6 +310,7 @@ fn sevenz_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
 // Format dispatchers
 // ---------------------------------------------------------------------------
 
+/// Extract the cover image (first image entry) from an archive as raw bytes.
 pub fn archive_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
     let ext = path
         .extension()
@@ -319,6 +325,7 @@ pub fn archive_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
     }
 }
 
+/// Return a sorted list of image-entry names inside an archive.
 pub fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
     let ext = path
         .extension()
@@ -333,6 +340,7 @@ pub fn archive_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
     }
 }
 
+/// Read a named entry from an archive and return its raw bytes and MIME type.
 pub fn archive_read_entry(
     path: &Path,
     entry_name: &str,
@@ -350,6 +358,7 @@ pub fn archive_read_entry(
     }
 }
 
+/// Return all entries in an archive as `(name, compressed_size, is_image)` tuples.
 pub fn archive_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
     let ext = path
         .extension()
@@ -380,6 +389,7 @@ fn is_dir_image(name: &str) -> bool {
     DIR_IMAGE_EXTS.contains(&ext.as_str())
 }
 
+/// Query params for `GET /api/dir-images`.
 #[derive(Deserialize)]
 pub struct DirImagesParams {
     path: String,
@@ -391,6 +401,7 @@ struct DirImagesResponse {
     images: Vec<String>,
 }
 
+/// `GET /api/dir-images` — return all image file paths under a directory.
 pub async fn api_dir_images(
     State(state): State<Arc<AppState>>,
     Query(params): Query<DirImagesParams>,
@@ -445,6 +456,7 @@ pub async fn api_dir_images(
 // Archive API handlers
 // ---------------------------------------------------------------------------
 
+/// Query params for `GET /api/zip/pages` and `GET /api/zip/entries`.
 #[derive(Deserialize)]
 pub struct ZipListParams {
     pub path: String,
@@ -457,6 +469,7 @@ struct ZipPagesResponse {
     count: usize,
 }
 
+/// `GET /api/zip/pages` — list the image-entry names in an archive.
 pub async fn api_zip_pages(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipListParams>,
@@ -478,6 +491,7 @@ pub async fn api_zip_pages(
     }
 }
 
+/// Query params for `GET /api/zip/page`.
 #[derive(Deserialize)]
 pub struct ZipPageParams {
     path: String,
@@ -485,6 +499,7 @@ pub struct ZipPageParams {
     root: Option<usize>,
 }
 
+/// `GET /api/zip/page` — serve a single page from an archive by index.
 pub async fn api_zip_page(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipPageParams>,
@@ -534,6 +549,7 @@ fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<Pat
     Some(dir.join(key))
 }
 
+/// Query params for `GET /api/zip/thumb`.
 #[derive(Deserialize)]
 pub struct ZipThumbParams {
     path: String,
@@ -541,6 +557,7 @@ pub struct ZipThumbParams {
     root: Option<usize>,
 }
 
+/// `GET /api/zip/thumb` — return a JPEG thumbnail for an archive page.
 pub async fn api_zip_thumb(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipThumbParams>,
@@ -634,6 +651,7 @@ struct ZipEntriesResponse {
     entries: Vec<ZipEntry>,
 }
 
+/// `GET /api/zip/entries` — list all entries in an archive with tag counts.
 pub async fn api_zip_entries(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipListParams>,

@@ -18,7 +18,8 @@ use filetag_lib::db;
 use rusqlite::Connection;
 
 use ai::AiProgress;
-use state::{AppState, DbRoot, resolve_names, terminal_width};
+use filetag_lib::db::TagRoot;
+use state::{AppState, resolve_names, terminal_width};
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -121,28 +122,20 @@ async fn main() -> anyhow::Result<()> {
         .collect();
     let names = resolve_names(raw_names);
 
-    let roots: Vec<DbRoot> = all_dbs
+    let roots: Vec<TagRoot> = all_dbs
         .into_iter()
         .zip(names)
-        .map(|(open_db, name)| {
-            #[cfg(unix)]
-            let dev = {
-                use std::os::unix::fs::MetadataExt;
-                std::fs::metadata(&open_db.root).ok().map(|m| m.dev())
-            };
-            DbRoot {
-                name,
-                db_path: open_db.root.join(".filetag").join("db.sqlite3"),
-                #[cfg(unix)]
-                dev,
-                entry_point: true,
-                root: open_db.root,
-            }
+        .map(|(open_db, name)| TagRoot {
+            name,
+            db_path: open_db.root.join(".filetag").join("db.sqlite3"),
+            dev: db::volume_id(&open_db.root),
+            entry_point: true,
+            root: open_db.root,
         })
         .collect();
 
     // Mark entry points.
-    let roots: Vec<DbRoot> = {
+    let roots: Vec<TagRoot> = {
         let paths: Vec<PathBuf> = roots.iter().map(|r| r.root.clone()).collect();
         roots
             .into_iter()
@@ -209,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/vthumbs/pregenerate",
             post(preview::api_vthumbs_pregen),
         )
+        .route("/api/dir-thumbs", get(preview::api_dir_thumbs))
         .route("/api/ai/analyse", post(ai::api_ai_analyse))
         .route("/api/ai/analyse-batch", post(ai::api_ai_analyse_batch))
         .route("/api/ai/clear-tags", post(ai::api_ai_clear_tags))

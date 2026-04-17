@@ -1,3 +1,8 @@
+//! File preview, thumbnail generation, video transcoding, and trickplay sprites.
+//!
+//! All cache artefacts are written under `<root>/.filetag/cache/` so the
+//! data-isolation invariant is maintained.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,7 +15,7 @@ use axum::{
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::state::{AppState, THUMB_LIMITER, resolve_preview, root_at};
+use crate::state::{AppState, THUMB_LIMITER, VTHUMB_LIMITER, resolve_preview, root_at};
 use crate::types::RootParam;
 
 // ---------------------------------------------------------------------------
@@ -100,6 +105,7 @@ pub async fn preview_handler(
 // MIME type mapping
 // ---------------------------------------------------------------------------
 
+/// Return the MIME type string for a given (lowercase) file extension.
 pub fn mime_for_ext(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" => "image/jpeg",
@@ -139,6 +145,7 @@ pub fn mime_for_ext(ext: &str) -> &'static str {
 // File serving
 // ---------------------------------------------------------------------------
 
+/// Serve the raw bytes of a file, setting appropriate `Content-Type` headers.
 pub async fn serve_file_bytes(path: &Path) -> Response {
     match tokio::fs::read(path).await {
         Ok(data) => {
@@ -499,7 +506,7 @@ pub fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
 
 /// Try to extract a JPEG preview from a RAW file using available tools.
 /// Attempt order: dcraw -e -c → exiftool → ffmpeg → ImageMagick.
-/// Result is cached in <root>/.filetag/cache/raw/ keyed by mtime+size.
+/// Result is cached in `<root>/.filetag/cache/raw/` keyed by mtime+size.
 async fn preview_raw(path: &Path, root: &Path) -> Response {
     if let Some(cache) = raw_cache_path(path, root) {
         if let Ok(data) = tokio::fs::read(&cache).await {
@@ -800,6 +807,7 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
 // Video trickplay thumbnails
 // ---------------------------------------------------------------------------
 
+/// Query params for `GET /api/vthumbs`.
 #[derive(Deserialize)]
 pub struct VThumbsParams {
     path: String,
@@ -849,10 +857,12 @@ pub async fn api_vthumbs(
         };
 
     if !cache_path.exists() {
-        let _permit = match THUMB_LIMITER.try_acquire() {
+        // Use the dedicated vthumb semaphore (4 permits) so sprite generation
+        // does not block the shared thumbnail queue (1 permit).
+        let _permit = match VTHUMB_LIMITER.try_acquire() {
             Ok(p) => p,
             Err(_) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+                return (StatusCode::SERVICE_UNAVAILABLE, "vthumb queue full").into_response();
             }
         };
 
@@ -939,11 +949,13 @@ fn sprites_for_duration(duration_secs: f64, min_n: usize, max_n: usize) -> usize
 // Video trickplay pre-generation
 // ---------------------------------------------------------------------------
 
+/// Query params for `POST /api/vthumbs-pregen`.
 #[derive(Deserialize)]
 pub struct PregenParams {
     root: Option<usize>,
 }
 
+/// Request body for `POST /api/vthumbs-pregen`.
 #[derive(Deserialize)]
 pub struct PregenBody {
     paths: Vec<String>,
@@ -984,7 +996,7 @@ pub async fn api_vthumbs_pregen(
             if cache_path.exists() {
                 continue;
             }
-            let _permit = THUMB_LIMITER.acquire().await;
+            let _permit = VTHUMB_LIMITER.acquire().await;
             if cache_path.exists() {
                 continue;
             }
@@ -1031,7 +1043,9 @@ pub async fn api_vthumbs_pregen(
 // Video info + contact-sheet thumbnail
 // ---------------------------------------------------------------------------
 
+/// Codec and duration information for a video file.
 pub struct VideoInfo {
+    /// Total duration in seconds.
     pub duration: f64,
     /// Codec name of the first video stream as reported by ffprobe (e.g. "h264", "hevc").
     pub video_codec: String,
@@ -1348,4 +1362,429 @@ async fn thumb_from_raw_bytes(raw_bytes: &[u8], abs: &Path) -> Option<Vec<u8>> {
     }
     // Fallback: return the raw bytes unchanged
     Some(raw_bytes.to_vec())
+}
+
+// ---------------------------------------------------------------------------
+// Directory trickplay thumbnails
+// ---------------------------------------------------------------------------
+
+/// Extensions that can yield a preview image for a directory collage frame.
+const DIR_IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "avif", "heic", "heif", "arw",
+    "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf", "pef", "srw", "raw", "psd", "psb",
+];
+const DIR_VIDEO_EXTS: &[&str] = &[
+    "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
+    "3gp",
+];
+
+/// List previewable files (flat, no recursion) in `dir`, sorted by name.
+fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            DIR_IMAGE_EXTS.contains(&ext.as_str()) || DIR_VIDEO_EXTS.contains(&ext.as_str())
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// Pick `n` items evenly spread across `items`.
+fn pick_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
+    if n == 0 || items.is_empty() {
+        return Vec::new();
+    }
+    if items.len() <= n {
+        return items.to_vec();
+    }
+    (0..n)
+        .map(|i| {
+            let idx = (i * items.len()) / n;
+            items[idx].clone()
+        })
+        .collect()
+}
+
+/// Generate a small JPEG for a single directory item (image or video first frame).
+/// Target dimensions: 120 × 120 px, square-cropped.
+async fn dir_item_jpeg(path: &Path) -> Option<Vec<u8>> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if DIR_VIDEO_EXTS.contains(&ext.as_str()) {
+        // Extract the first decodable video frame, square-cropped to 120×120.
+        let out = tokio::process::Command::new("ffmpeg")
+            .arg("-i")
+            .arg(path)
+            .args([
+                "-vf",
+                "scale=120:120:force_original_aspect_ratio=increase,crop=120:120",
+                "-vframes",
+                "1",
+                "-q:v",
+                "6",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-map_metadata",
+                "-1",
+                "pipe:1",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .ok()?;
+        if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+            return Some(out.stdout);
+        }
+        return None;
+    }
+
+    // Images: delegate to the shared thumbnail function (handles RAW, HEIC, etc.).
+    image_thumb_jpeg(path).await
+}
+
+/// Assemble a 2 × 2 JPEG collage (240 × 240 px) from four input images.
+///
+/// Assembles a 2 × 2 corkboard-style collage (240 × 240 px, white background,
+/// tiles slightly rotated and irregularly offset) from four input images.
+///
+/// Tries ImageMagick `magick` (v7) or `convert` (v6) first, then falls back
+/// to an ffmpeg filter graph.
+async fn build_2x2_montage(inputs: &[PathBuf; 4], output: &Path) -> bool {
+    // Each slot: (rotation_degrees, x_offset, y_offset).
+    // Tiles are scaled/cropped to 100×100 before rotation; the rotation
+    // enlarges the bounding box by ~4–9 px per side depending on angle.
+    // Offsets position the NW corner of each rotated bounding box on the
+    // 240×240 canvas, leaving ~10–15 px of breathing room between tiles.
+    const SLOTS: [(i32, i64, i64); 4] = [
+        (-4, 8, 10),    // top-left,     −4°
+        (5, 125, 3),    // top-right,    +5°
+        (3, 11, 128),   // bottom-left,  +3°
+        (-5, 122, 122), // bottom-right, −5°
+    ];
+
+    // ImageMagick compositing: v7 uses `magick`, v6 uses `convert`.
+    for cmd_name in &["magick", "convert"] {
+        let mut cmd = tokio::process::Command::new(cmd_name);
+        // Start with a white canvas.
+        cmd.args(["-size", "240x240", "xc:#fefefe"]);
+        for (i, (angle, x, y)) in SLOTS.iter().enumerate() {
+            cmd.arg("(");
+            cmd.arg(&inputs[i]);
+            cmd.args([
+                "-resize",
+                "100x100^",
+                "-gravity",
+                "Center",
+                "-extent",
+                "100x100",
+                "-background",
+                "white",
+                "-rotate",
+                &angle.to_string(),
+            ]);
+            cmd.arg(")");
+            cmd.args([
+                "-gravity",
+                "NorthWest",
+                "-geometry",
+                &format!("+{}+{}", x, y),
+                "-composite",
+            ]);
+        }
+        cmd.args(["-quality", "85"]);
+        cmd.arg(output);
+        let ok = cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok && output.exists() {
+            return true;
+        }
+    }
+
+    // ffmpeg fallback: white canvas, rotated tiles, same positions.
+    // Angles in radians; ffmpeg rotate filter uses radians.
+    let angle_rads = ["-0.0698", "0.0873", "0.0524", "-0.0873"];
+    let offsets = [(8i32, 10i32), (125, 3), (11, 128), (122, 122)];
+    let tile_parts: String = (0..4usize)
+        .map(|i| {
+            let a = angle_rads[i];
+            format!(
+                "[{i}]scale=100:100:force_original_aspect_ratio=increase,\
+                 crop=100:100,rotate={a}:ow=rotw({a}):oh=roth({a}):c=white[f{i}]"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    let overlay_parts: String = (0..4usize)
+        .map(|i| {
+            let (x, y) = offsets[i];
+            let src = if i == 0 {
+                "bg".to_string()
+            } else {
+                format!("l{}", i - 1)
+            };
+            let dst = if i == 3 {
+                "out".to_string()
+            } else {
+                format!("l{i}")
+            };
+            format!("[{src}][f{i}]overlay={x}:{y}[{dst}]")
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    let filter = format!("color=white:size=240x240[bg];{tile_parts};{overlay_parts}");
+    let ok = tokio::process::Command::new("ffmpeg")
+        .args(["-i", inputs[0].to_str().unwrap_or("")])
+        .args(["-i", inputs[1].to_str().unwrap_or("")])
+        .args(["-i", inputs[2].to_str().unwrap_or("")])
+        .args(["-i", inputs[3].to_str().unwrap_or("")])
+        .args(["-filter_complex", &filter])
+        .args(["-map", "[out]", "-frames:v", "1", "-q:v", "5", "-y"])
+        .arg(output)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    ok && output.exists()
+}
+
+/// Stitch `frames` side by side into a single JPEG sprite sheet.
+///
+/// Returns the JPEG bytes of the combined image, or `None` if all tools fail.
+async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
+    if frames.is_empty() {
+        return None;
+    }
+    if frames.len() == 1 {
+        return tokio::fs::read(&frames[0]).await.ok();
+    }
+    let n = frames.len();
+    let inputs: String = (0..n).map(|i| format!("[{i}]")).collect();
+    let filter = format!("{inputs}hstack={n}[out]");
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    for f in frames {
+        cmd.arg("-i").arg(f);
+    }
+    let out = cmd
+        .args([
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[out]",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "4",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .ok()?;
+    if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+        Some(out.stdout)
+    } else {
+        None
+    }
+}
+
+/// Cache path for a directory sprite sheet, keyed on the directory's mtime.
+///
+/// Stored under `<root>/.filetag/cache/dir-thumbs/`.  The key includes a path
+/// hash so two directories with the same basename and mtime do not collide.
+fn dir_thumb_cache_path(dir_abs: &Path, root: &Path) -> Option<PathBuf> {
+    let mtime = std::fs::metadata(dir_abs)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let stem = dir_abs
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // Short path hash to disambiguate same-name directories.
+    let hash = {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        dir_abs.hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+    let key = format!("{mtime}_{hash}_{stem}.sprite.jpg");
+    let dir = root.join(".filetag").join("cache").join("dir-thumbs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(key))
+}
+
+/// Query parameters for `GET /api/dir-thumbs`.
+#[derive(Deserialize)]
+pub struct DirThumbsParams {
+    path: String,
+    root: Option<usize>,
+}
+
+/// `GET /api/dir-thumbs` — return a horizontal JPEG sprite sheet of 240 × 240
+/// collage frames for a directory.
+///
+/// Each frame is a 2 × 2 grid of file thumbnails from the directory.  The
+/// sprite sheet contains between 1 and 6 frames depending on how many
+/// previewable files are found.  The client animates through frames on hover
+/// (same technique as video trickplay).
+///
+/// Returns 204 when the directory contains fewer than 4 previewable files.
+pub async fn api_dir_thumbs(
+    Query(params): Query<DirThumbsParams>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let db_root = match root_at(&state, params.root) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    };
+
+    let abs_dir = match crate::state::preview_safe_path(&db_root.root, &params.path) {
+        Some(p) => p,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    if !abs_dir.is_dir() {
+        return (StatusCode::NOT_FOUND, "Not a directory").into_response();
+    }
+
+    // Determine the correct cache root for this directory (may be a child DB).
+    let cache_root = crate::state::root_for_file(&state, &abs_dir)
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| db_root.root.clone());
+
+    // Check cache before acquiring the permit.
+    if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root) {
+        if let Ok(data) = tokio::fs::read(&cache_path).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+
+        // --- Build the sprite sheet ---
+        let files = list_previewable_files(&abs_dir);
+        if files.len() < 4 {
+            return StatusCode::NO_CONTENT.into_response();
+        }
+
+        let _permit = match THUMB_LIMITER.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+            }
+        };
+
+        // Double-check after acquiring the permit.
+        if let Ok(data) = tokio::fs::read(&cache_path).await {
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+
+        const IMAGES_PER_FRAME: usize = 4;
+        const MAX_FRAMES: usize = 6;
+        let selected = pick_evenly(&files, (MAX_FRAMES * IMAGES_PER_FRAME).min(files.len()));
+
+        // Temp directory for intermediate thumbnail + frame files.
+        let tmp_dir = cache_root
+            .join(".filetag")
+            .join("tmp")
+            .join(format!("dpt_{}", rand_hex()));
+        if tokio::fs::create_dir_all(&tmp_dir).await.is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "tmp dir failed").into_response();
+        }
+
+        let mut frame_paths: Vec<PathBuf> = Vec::new();
+        for (frame_idx, group) in selected.chunks(IMAGES_PER_FRAME).enumerate() {
+            if group.len() < IMAGES_PER_FRAME {
+                break; // skip the last incomplete group
+            }
+            // Generate per-item thumbnails in parallel (bounded by outer permit).
+            let mut thumb_paths: Vec<PathBuf> = Vec::new();
+            for (item_idx, item_path) in group.iter().enumerate() {
+                if let Some(jpeg) = dir_item_jpeg(item_path).await {
+                    let tp = tmp_dir.join(format!("t{frame_idx}_{item_idx}.jpg"));
+                    if tokio::fs::write(&tp, &jpeg).await.is_ok() {
+                        thumb_paths.push(tp);
+                    }
+                }
+            }
+            if thumb_paths.len() < IMAGES_PER_FRAME {
+                continue; // not enough thumbs for a full frame
+            }
+            let frame_path = tmp_dir.join(format!("frame{frame_idx}.jpg"));
+            let inputs: [PathBuf; 4] = [
+                thumb_paths[0].clone(),
+                thumb_paths[1].clone(),
+                thumb_paths[2].clone(),
+                thumb_paths[3].clone(),
+            ];
+            if build_2x2_montage(&inputs, &frame_path).await {
+                frame_paths.push(frame_path);
+            }
+        }
+
+        let result = if frame_paths.is_empty() {
+            None
+        } else {
+            stitch_dir_frames(&frame_paths).await
+        };
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+
+        if let Some(data) = result {
+            if let Some(parent) = cache_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let _ = tokio::fs::write(&cache_path, &data).await;
+            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        }
+
+        return (StatusCode::UNPROCESSABLE_ENTITY, "No previewable files").into_response();
+    }
+
+    (StatusCode::INTERNAL_SERVER_ERROR, "cache path unavailable").into_response()
+}
+
+/// Return a short hex string based on the current time, used to make temp
+/// directory names unique enough to avoid collisions between concurrent requests.
+fn rand_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    format!("{t:08x}")
 }

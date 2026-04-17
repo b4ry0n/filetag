@@ -1,3 +1,8 @@
+//! Database layer: initialisation, schema migration, and all CRUD operations.
+//!
+//! Each filetag database lives at `<root>/.filetag/db.sqlite3`. The current
+//! schema version is 6.
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -6,6 +11,43 @@ use rusqlite::{Connection, params};
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
 const SCHEMA_VERSION: i32 = 6;
+
+// ---------------------------------------------------------------------------
+// Filesystem boundary detection
+// ---------------------------------------------------------------------------
+
+/// Return an opaque volume identifier for `path`, or `None` if it cannot be
+/// determined.
+///
+/// On Unix this is the `st_dev` device number from `stat(2)`.  On Windows it
+/// is the volume serial number exposed by
+/// [`MetadataExt::volume_serial_number`][std::os::windows::fs::MetadataExt::volume_serial_number]
+/// (stable since Rust 1.58), which reliably distinguishes drive letters and
+/// mount points without any unsafe code or extra crates.  When the identifier
+/// cannot be obtained the check is skipped and `None` is returned, which is a
+/// safe fallback (the walk continues; worst case the user receives a
+/// "not found" error rather than a spurious boundary error).
+pub fn volume_id(path: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).ok().map(|m| m.dev())
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.volume_serial_number())
+            .map(|s| s as u64)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
+}
 
 /// Open (or create) the database inside the given root directory.
 /// Creates `.filetag/db.sqlite3` under `root`.
@@ -18,51 +60,42 @@ pub fn init(root: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Walk parent directories to find an existing `.filetag/db.sqlite3`.
-/// Returns (connection, root_dir) where root_dir is the parent of `.filetag/`.
+/// Walk parent directories to find the Root that governs `start`.
 ///
-/// Never crosses a filesystem boundary: if the parent directory resides on a
-/// different device than the starting path, the search stops.  A database from
+/// Returns the absolute, canonicalised path of the Root directory (the
+/// directory that directly contains `.filetag/`), or an error if no Root
+/// exists on the same filesystem as `start`.
+///
+/// Never crosses a filesystem boundary: walking stops when the parent
+/// directory resides on a different device than `start`.  A database from
 /// another filesystem must not be used as the authority for files on this one.
-pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
+pub fn find_root(start: &Path) -> Result<PathBuf> {
     let start = std::fs::canonicalize(start)
         .with_context(|| format!("canonicalizing {}", start.display()))?;
 
-    // Record the device of the starting path once so we can detect a mount-
-    // point crossing without an extra stat(2) on every ancestor directory.
-    #[cfg(unix)]
-    let start_dev: Option<u64> = {
-        use std::os::unix::fs::MetadataExt;
-        std::fs::metadata(&start).ok().map(|m| m.dev())
-    };
+    let start_vol = volume_id(&start);
 
     let mut dir = start.as_path();
     loop {
         let candidate = dir.join(DB_DIR).join(DB_FILE);
         if candidate.is_file() {
-            let conn = open_at(&candidate)?;
-            migrate(&conn)?;
-            return Ok((conn, dir.to_path_buf()));
+            return Ok(dir.to_path_buf());
         }
         match dir.parent() {
             Some(parent) => {
-                // On Unix: stop if the parent is on a different device.
+                // Stop if the parent is on a different filesystem.
                 // Tags on files without a database on the same filesystem
                 // must be refused — storing them in a database on another
                 // device would break portability and file-identity tracking.
-                #[cfg(unix)]
-                if let Some(start_d) = start_dev {
-                    use std::os::unix::fs::MetadataExt;
-                    if let Ok(meta) = std::fs::metadata(parent)
-                        && meta.dev() != start_d
-                    {
-                        bail!(
-                            "no filetag database found on this filesystem \
-                                 (stopped at filesystem boundary at {})\n\
-                                 Run `filetag init` inside this filesystem to create one.",
-                            parent.display()
-                        );
-                    }
+                if let (Some(sv), Some(pv)) = (start_vol, volume_id(parent))
+                    && sv != pv
+                {
+                    bail!(
+                        "no filetag database found on this filesystem \
+                         (stopped at filesystem boundary at {})\n\
+                         Run `filetag init` inside this filesystem to create one.",
+                        parent.display()
+                    );
                 }
                 dir = parent;
             }
@@ -73,6 +106,29 @@ pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
             ),
         }
     }
+}
+
+/// Open the database for the Root at `root` and run any pending migrations.
+///
+/// This is the second half of Root resolution: call [`find_root`] first to
+/// locate the Root, then call this function to obtain a connection.
+///
+/// Returns `(connection, root)` where `root` is the canonicalised path passed
+/// in, echoed back for ergonomic chaining.
+pub fn open_root_db(root: &Path) -> Result<(Connection, PathBuf)> {
+    let db_path = root.join(DB_DIR).join(DB_FILE);
+    let conn = open_at(&db_path)?;
+    migrate(&conn)?;
+    Ok((conn, root.to_path_buf()))
+}
+
+/// Convenience wrapper: resolve the Root for `start`, then open its database.
+///
+/// Equivalent to `open_root_db(&find_root(start)?)`.  Use the individual
+/// functions when you need the Root path before opening a connection.
+pub fn find_and_open(start: &Path) -> Result<(Connection, PathBuf)> {
+    let root = find_root(start)?;
+    open_root_db(&root)
 }
 
 fn open_at(path: &Path) -> Result<Connection> {
@@ -185,11 +241,16 @@ pub fn relative_to_root(path: &Path, root: &Path) -> Result<String> {
 
 /// Metadata stored per file in the database.
 pub struct FileRecord {
+    /// Primary key.
     pub id: i64,
+    /// Path relative to the database root.
     #[allow(dead_code)]
     pub path: String,
+    /// Platform file identity string (`"dev:ino"` on Unix, `None` on Windows).
     pub file_id: Option<String>,
+    /// File size in bytes at the time of last indexing.
     pub size: i64,
+    /// Last-modified time as nanoseconds since the Unix epoch.
     pub mtime_ns: i64,
 }
 
@@ -629,22 +690,47 @@ pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
     Ok(results)
 }
 
-/// An opened database with its root directory.
+/// An opened database paired with its root directory.
 pub struct OpenDb {
+    /// Active SQLite connection.
     pub conn: Connection,
+    /// Absolute path to the directory that contains `.filetag/`.
     pub root: PathBuf,
 }
 
+/// A loaded database root, combining the Root path with the metadata needed to
+/// serve it over a session (web server, long-running tool, etc.).
+///
+/// Construct a `TagRoot` after locating a Root with [`find_root`] or
+/// [`find_and_open`].  The struct itself carries no open connection; open one
+/// on demand with [`crate::db`]'s connection helpers.
+pub struct TagRoot {
+    /// Display name for this root (user-facing, e.g. in the browser sidebar).
+    pub name: String,
+    /// Absolute path to the SQLite database file (`<root>/.filetag/db.sqlite3`).
+    pub db_path: PathBuf,
+    /// Absolute path to the directory that contains `.filetag/`.
+    pub root: PathBuf,
+    /// Volume/device identifier of the root directory. Used to detect
+    /// filesystem boundary crossings when resolving which root covers a file.
+    /// On Unix this is `st_dev`; on Windows the volume serial number.
+    pub dev: Option<u64>,
+    /// `true` when no other loaded root is a strict ancestor of this one.
+    /// Entry-point roots are shown as top-level navigation items.
+    pub entry_point: bool,
+}
+
 /// Collect this database and all reachable linked databases recursively.
+///
 /// Gracefully skips missing or broken databases. Uses cycle detection on
 /// canonical root paths.
 ///
 /// Linked paths may be relative (child, under current root) or absolute
 /// (partner/parent, outside current root). `PathBuf::join` handles both:
 /// joining with an absolute path replaces the base entirely.
-/// Collect this database and all reachable linked databases recursively.
+///
 /// When `include_ancestors` is `false`, automatic ancestor-database discovery
-/// is skipped and only explicit links are followed.
+/// via parent directories is skipped; only explicit links are followed.
 pub fn collect_all_databases(
     conn: Connection,
     root: PathBuf,
@@ -724,19 +810,18 @@ pub fn collect_all_databases(
     Ok(result)
 }
 
-/// Recursively scan `root` for nested `.filetag/db.sqlite3` databases up to
-/// `max_depth` levels deep. Returns one `OpenDb` per database found, skipping
-/// any path already in `visited` (canonical paths).
+/// Recursively scan `root` for nested `.filetag/db.sqlite3` databases.
 ///
-/// This is used by filetag-web to discover all databases under the served
-/// root(s) at startup, so that browsing, tagging, and searching are always
-/// consistent: every directory that has its own database is included in the
-/// session, whether or not it was explicitly registered via `filetag db add`.
-/// Recursively scan the filesystem under `root` for nested `.filetag/db.sqlite3` databases.
+/// Returns one [`OpenDb`] per database found, skipping any path already in
+/// `visited` (canonical paths, used for cycle detection).
 ///
-/// `visited` is the set of already-known canonical roots (used for cycle detection).
-/// `max_depth` limits how deep the scan descends (10 is a sensible default).
-/// `on_dir` is called for every directory entered (depth >= 1) so callers can show progress.
+/// - `max_depth` limits how deep the scan descends (10 is a sensible default).
+/// - `on_dir` is called for every directory entered at depth ≥ 1, so callers
+///   can show progress to the user.
+///
+/// Used by `filetag-web` at startup to discover all databases under the served
+/// root, so every directory with its own database is included in the session
+/// without requiring explicit `filetag db add` registration.
 pub fn scan_for_databases(
     root: &Path,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,

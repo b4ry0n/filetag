@@ -1,3 +1,12 @@
+//! Core library for **filetag**: a SQLite-backed file-tagging tool.
+//!
+//! The library is organised into four modules:
+//!
+//! - [`db`] — database initialisation, schema migration, and all CRUD operations.
+//! - [`query`] — recursive-descent query parser and SQL generator.
+//! - [`registry`] — global database registry (`~/.config/filetag/databases.json`).
+//! - [`view`] — symlink-based directory views (Unix only).
+
 pub mod db;
 pub mod query;
 pub mod registry;

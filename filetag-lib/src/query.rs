@@ -1,3 +1,21 @@
+//! Query parser and SQL code-generator for the filetag query language.
+//!
+//! # Grammar
+//!
+//! ```text
+//! expr     = or_expr
+//! or_expr  = and_expr ("or"  and_expr)*
+//! and_expr = not_expr ("and" not_expr)*
+//! not_expr = "not" not_expr | primary
+//! primary  = "(" expr ")" | tag_value | tag_or_glob
+//! tag_value = IDENT op VALUE
+//! op       = "=" | "!=" | "<" | "<=" | ">" | ">=" | "eq" | "ne" | "lt" | "le" | "gt" | "ge"
+//! ```
+//!
+//! Tag names may contain `/` (e.g. `genre/rock`). Glob patterns use `*`
+//! (e.g. `genre/*`). Quoted strings (double-quoted) are supported for names
+//! that contain spaces.
+
 use anyhow::{Result, bail};
 use rusqlite::{Connection, params_from_iter};
 
@@ -5,24 +23,39 @@ use rusqlite::{Connection, params_from_iter};
 // AST
 // ---------------------------------------------------------------------------
 
+/// A node in the query abstract syntax tree.
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Tag(String),                     // tag exists on file
-    TagValue(String, CmpOp, String), // tag <op> value
-    Glob(String),                    // genre/* style wildcard
-    FileType(String),                // type:image / type:video / …
+    /// Tag must be present on the file (any value is accepted).
+    Tag(String),
+    /// Tag must have a value satisfying the given comparison, e.g. `year>=2020`.
+    TagValue(String, CmpOp, String),
+    /// Wildcard match against tag names, e.g. `genre/*`.
+    Glob(String),
+    /// Logical file-type filter, e.g. `type:image`.
+    FileType(String),
+    /// Both child expressions must match.
     And(Box<Expr>, Box<Expr>),
+    /// At least one child expression must match.
     Or(Box<Expr>, Box<Expr>),
+    /// The child expression must not match.
     Not(Box<Expr>),
 }
 
+/// Comparison operator used in [`Expr::TagValue`].
 #[derive(Debug, Clone, Copy)]
 pub enum CmpOp {
+    /// Equal (`=` or `eq`).
     Eq,
+    /// Not equal (`!=` or `ne`).
     Ne,
+    /// Less than (`<` or `lt`).
     Lt,
+    /// Less than or equal (`<=` or `le`).
     Le,
+    /// Greater than (`>` or `gt`).
     Gt,
+    /// Greater than or equal (`>=` or `ge`).
     Ge,
 }
 
@@ -44,6 +77,9 @@ struct Parser {
     pos: usize,
 }
 
+/// Parse a query string into an [`Expr`] AST.
+///
+/// Returns an error if the input is empty or syntactically invalid.
 pub fn parse(input: &str) -> Result<Expr> {
     let tokens = tokenize(input)?;
     if tokens.is_empty() {

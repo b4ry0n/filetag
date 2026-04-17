@@ -1,3 +1,9 @@
+//! AI/VLM image and archive analysis for `filetag-web`.
+//!
+//! Handlers accept a file path, send it to a configured OpenAI-compatible or
+//! Ollama endpoint, and apply the returned tags to the database.  All AI
+//! configuration is stored per-root in the `settings` table.
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -30,12 +36,14 @@ Good: [\"dog\", \"beach\", \"sunny\", \"color=blue\", \"year=2023\"]\n\
 Bad: any text outside the JSON array\n\n\
 /no_think";
 
+/// File extensions recognised as still images for AI analysis.
 pub const AI_IMAGE_EXTS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "tiff", "tif", "heic", "heif", "arw",
     "cr2", "cr3", "nef", "orf", "rw2", "dng", "raf", "pef", "srw", "raw", "3fr", "x3f", "rwl",
     "iiq", "mef", "mos",
 ];
 
+/// Archive extensions that can be analysed by sampling their image entries.
 pub const ARCHIVE_EXTS: &[&str] = &["zip", "cbz", "rar", "cbr", "7z", "cb7"];
 
 const AI_ARCHIVE_PROMPT: &str = "\
@@ -54,11 +62,16 @@ Bad: any text outside the JSON array\n\
 // Progress tracking
 // ---------------------------------------------------------------------------
 
+/// Progress snapshot for the running (or most recently completed) AI batch job.
 #[derive(Default, Clone, Serialize)]
 pub struct AiProgress {
+    /// `true` while a batch is actively running.
     pub running: bool,
+    /// Number of files processed so far.
     pub done: usize,
+    /// Total number of files in the batch.
     pub total: usize,
+    /// Relative path of the file currently being analysed.
     pub current: Option<String>,
 }
 
@@ -759,6 +772,8 @@ pub(crate) struct AiClearTagsRequest {
     prefix: Option<String>,
 }
 
+/// Remove all tags whose name starts with `prefix` from the listed files.
+/// Used to clear previously applied AI tags before re-analysing.
 pub async fn api_ai_clear_tags(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiClearTagsRequest>,
@@ -1002,6 +1017,7 @@ pub async fn api_ai_analyse_batch(
 }
 
 /// Return current AI batch progress.
+/// Return current AI batch progress as a JSON snapshot of [`AiProgress`].
 pub async fn api_ai_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let prog = state.ai_progress.lock().unwrap().clone();
     Json(serde_json::json!(prog))
@@ -1057,7 +1073,8 @@ pub(crate) struct AiConfigQuery {
     root_id: Option<usize>,
 }
 
-/// Read AI configuration (api_key is masked).
+/// Read AI configuration from the database settings table.
+/// The `api_key` value is masked before returning.
 pub async fn api_ai_config_get(
     Query(params): Query<AiConfigQuery>,
     State(state): State<Arc<AppState>>,
