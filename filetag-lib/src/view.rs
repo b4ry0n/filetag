@@ -1,3 +1,10 @@
+//! Symlink-based directory views (Unix only).
+//!
+//! A view is a flat directory of symbolic links, one per matched file, where
+//! each link name encodes the original relative path (slashes replaced by
+//! `__`).  Views are created with [`generate`] and cleaned up automatically
+//! when re-generated.
+
 use std::collections::HashSet;
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
@@ -37,10 +44,14 @@ pub fn generate(root: &Path, paths: &[String], output_dir: &Path) -> Result<View
     Ok(stats)
 }
 
+/// Statistics returned by [`generate`].
 #[derive(Default)]
 pub struct ViewStats {
+    /// Number of new symlinks created.
     pub created: usize,
+    /// Number of symlinks skipped because they already existed.
     pub skipped: usize,
+    /// Number of source files that no longer exist.
     pub missing: usize,
     #[allow(dead_code)]
     pub broken_removed: usize,

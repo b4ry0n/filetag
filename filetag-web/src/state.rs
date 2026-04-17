@@ -1,3 +1,10 @@
+//! Shared application state and helpers for `filetag-web`.
+//!
+//! [`AppState`] is the Axum extractor state, holding one [`TagRoot`] per
+//! loaded database.  All database opens for file operations go through
+//! [`open_for_file_op`] — the one sanctioned entry point that routes to the
+//! correct child database.
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -6,6 +13,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use filetag_lib::db;
+use filetag_lib::db::TagRoot;
 use rusqlite::Connection;
 
 use crate::ai::AiProgress;
@@ -19,29 +27,30 @@ use crate::ai::AiProgress;
 /// with many large media files.
 pub static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
+/// Separate semaphore for video sprite generation.  Sprite builds can run up
+/// to 4 in parallel without saturating the CPU, and must not block the
+/// thumbnail queue (which has only 1 permit).
+pub static VTHUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
 // ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
 
-pub struct DbRoot {
-    pub name: String,
-    pub db_path: PathBuf,
-    pub root: PathBuf,
-    /// Device ID of the root directory (Unix only). Used to detect filesystem
-    /// boundary crossings when showing/tagging files.
-    #[cfg(unix)]
-    pub dev: Option<u64>,
-    /// True when no other loaded root is a strict ancestor of this one.
-    /// Entry-point roots are shown as top-level navigation tiles.
-    pub entry_point: bool,
-}
-
+/// Global Axum application state.
 pub struct AppState {
-    pub roots: Vec<DbRoot>,
+    /// All database roots loaded at startup, indexed by their position.
+    pub roots: Vec<TagRoot>,
+    /// Progress information for the current AI batch job (if any).
     pub ai_progress: std::sync::Mutex<AiProgress>,
 }
 
-pub fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&DbRoot> {
+/// Return the [`TagRoot`] at index `id`, or the only loaded root when `id` is
+/// `None` and exactly one root is loaded.
+///
+/// Errors when `id` is `None` and multiple roots are loaded (the caller must
+/// supply an explicit index to prevent silent cross-database operations), or
+/// when `id` is out of range.
+pub fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&TagRoot> {
     let idx = match id {
         Some(i) => i,
         None => {
@@ -66,28 +75,27 @@ pub fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&DbRoot> {
 
 /// Returns true when `abs_path` is covered by any loaded database root.
 ///
-/// A file is covered when there is a loaded `DbRoot` that:
-///   1. resides on the same filesystem as the file (`st_dev` match), AND
+/// A file is covered when there is a loaded `TagRoot` that:
+///   1. resides on the same filesystem as the file (volume/device match), AND
 ///   2. whose root directory is an ancestor of `abs_path`.
 ///
 /// This correctly handles mounted volumes that have their own database: even if
 /// the file appears inside the directory tree of a parent root, the mount's own
-/// DbRoot makes it covered. On non-Unix platforms all files are considered covered.
-#[cfg(unix)]
-pub fn file_is_covered(state: &AppState, meta: &std::fs::Metadata, abs_path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let file_dev = meta.dev();
-    state
-        .roots
-        .iter()
-        .any(|root| root.dev.is_none_or(|d| d == file_dev) && abs_path.starts_with(&root.root))
+/// `TagRoot` makes it covered. When volume information is unavailable the volume
+/// check is skipped and the path-ancestor check alone decides.
+pub fn file_is_covered(state: &AppState, abs_path: &Path) -> bool {
+    let file_vol = db::volume_id(abs_path);
+    state.roots.iter().any(|root| {
+        let vol_match = match (file_vol, root.dev) {
+            (Some(fv), Some(rv)) => fv == rv,
+            _ => true, // volume unknown → skip volume check
+        };
+        vol_match && abs_path.starts_with(&root.root)
+    })
 }
 
-#[cfg(not(unix))]
-pub fn file_is_covered(_state: &AppState, _meta: &std::fs::Metadata, _abs_path: &Path) -> bool {
-    true
-}
-
+/// Wraps any roots that share the same display name by appending ` 1`, ` 2`,
+/// … to disambiguate them.  Unique names are returned unchanged.
 pub fn resolve_names(names: Vec<String>) -> Vec<String> {
     use std::collections::HashMap;
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -113,6 +121,7 @@ pub fn resolve_names(names: Vec<String>) -> Vec<String> {
 // Error handling
 // ---------------------------------------------------------------------------
 
+/// [`anyhow::Error`] wrapper that converts to an HTTP 500 JSON response.
 pub struct AppError(pub anyhow::Error);
 
 impl IntoResponse for AppError {
@@ -141,7 +150,7 @@ impl From<rusqlite::Error> for AppError {
 /// Open a connection to a known database root. Sets WAL mode, foreign keys,
 /// and a generous busy timeout. Suitable for settings/config reads and any
 /// operation that targets the root DB itself.
-pub fn open_conn(db_root: &DbRoot) -> anyhow::Result<Connection> {
+pub fn open_conn(db_root: &TagRoot) -> anyhow::Result<Connection> {
     let conn = Connection::open(&db_root.db_path).context("opening database")?;
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
@@ -166,14 +175,14 @@ pub fn open_conn(db_root: &DbRoot) -> anyhow::Result<Connection> {
 /// Never call `Connection::open` or `open_conn` directly for file operations —
 /// use this function instead.
 pub fn open_for_file_op(
-    db_root: &DbRoot,
+    db_root: &TagRoot,
     path: &str,
 ) -> anyhow::Result<(Connection, PathBuf, String)> {
     open_for_file_op_under(&db_root.root, path)
 }
 
 /// Same as `open_for_file_op` but takes a raw root path.  Used by background
-/// worker tasks that capture root by value rather than holding a `&DbRoot`.
+/// worker tasks that capture root by value rather than holding a `&TagRoot`.
 pub fn open_for_file_op_under(
     root: &Path,
     path: &str,
@@ -210,7 +219,7 @@ pub fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("invalid path '{}': escapes root or does not exist", rel))
 }
 
-/// Return the most specific (deepest) `DbRoot` whose root path contains `abs`.
+/// Return the most specific (deepest) `TagRoot` whose root path contains `abs`.
 ///
 /// This is the single source of truth for determining which database root owns
 /// a given file.  All derived paths (cache, thumbnails, HLS segments, etc.)

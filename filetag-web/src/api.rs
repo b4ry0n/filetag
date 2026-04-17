@@ -1,3 +1,10 @@
+//! Core CRUD API handlers and embedded static-file serving for `filetag-web`.
+//!
+//! All JSON-returning handlers follow the pattern:
+//! - Resolve the `root` / `root_id` parameter via [`root_at`].
+//! - For file operations, open the correct child database via [`open_for_file_op`].
+//! - Return `Result<Json<…>, AppError>` so errors become HTTP 500 responses.
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -10,17 +17,19 @@ use axum::{
 use filetag_lib::{db, query};
 
 use crate::archive::ensure_zip_entry_record;
-use crate::preview::{file_cache_path, raw_cache_path, thumb_cache_path, video_info};
+use crate::preview::video_info;
 use crate::state::{
-    AppError, AppState, DbRoot, file_is_covered, open_conn, open_for_file_op, parse_tag,
-    resolve_preview, root_at, safe_path,
+    AppError, AppState, file_is_covered, open_conn, open_for_file_op, parse_tag, resolve_preview,
+    root_at, safe_path,
 };
 use crate::types::*;
+use filetag_lib::db::TagRoot;
 
 // ---------------------------------------------------------------------------
 // Static file handlers (embedded)
 // ---------------------------------------------------------------------------
 
+/// Serve the single-page app entry point (embedded `index.html`).
 pub async fn index_html() -> impl IntoResponse {
     (
         [
@@ -79,6 +88,7 @@ js_handler!(js_lightbox, "../static/js/lightbox.js");
 js_handler!(js_viewer, "../static/js/viewer.js");
 js_handler!(js_main, "../static/js/main.js");
 
+/// Serve the embedded `favicon.ico`.
 pub async fn favicon() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "image/svg+xml")],
@@ -90,6 +100,7 @@ pub async fn favicon() -> impl IntoResponse {
 // Roots
 // ---------------------------------------------------------------------------
 
+/// `GET /api/roots` — list all loaded database roots.
 pub async fn api_roots(State(state): State<Arc<AppState>>) -> Json<Vec<ApiRoot>> {
     let mut entries: Vec<ApiRoot> = state
         .roots
@@ -114,6 +125,7 @@ pub async fn api_roots(State(state): State<Arc<AppState>>) -> Json<Vec<ApiRoot>>
     Json(entries)
 }
 
+/// `POST /api/reorder-roots` — persist a new sort order for the root tiles.
 pub async fn api_reorder_roots(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ReorderRootsRequest>,
@@ -126,6 +138,7 @@ pub async fn api_reorder_roots(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// `POST /api/rename-db` — update the display name of a database root.
 pub async fn api_rename_db(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameDbRequest>,
@@ -140,6 +153,7 @@ pub async fn api_rename_db(
 // Info
 // ---------------------------------------------------------------------------
 
+/// `GET /api/info` — database statistics (file count, tag count, total size).
 pub async fn api_info(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<RootParam>,
@@ -169,110 +183,157 @@ pub async fn api_info(
 fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
     let mut removed = 0u64;
 
-    // thumbs, raw preview
-    for p in [thumb_cache_path(abs, root), raw_cache_path(abs, root)]
-        .into_iter()
-        .flatten()
-    {
-        if std::fs::remove_file(&p).is_ok() {
-            removed += 1;
-        }
-    }
-
-    // transcoded video (v4.mp4)
-    if let Some(p) = file_cache_path(abs, root, "video", "v4.mp4")
-        && std::fs::remove_file(&p).is_ok()
-    {
-        removed += 1;
-    }
-
-    // Build the cache key prefix "{mtime}_{size}_{stem}" used by all file_cache_path entries.
-    let prefix: Option<String> = (|| {
-        let meta = std::fs::metadata(abs).ok()?;
-        let mtime = meta
-            .modified()
-            .ok()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_secs();
-        let size = meta.len();
-        let stem = abs.file_name()?.to_string_lossy().into_owned();
-        Some(format!("{mtime}_{size}_{stem}"))
-    })();
+    let meta = match std::fs::metadata(abs) {
+        Ok(m) => m,
+        Err(_) => return 0,
+    };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let size = meta.len();
+    let stem = abs
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let pfx = format!("{mtime}_{size}_{stem}");
 
     let cache_dir = root.join(".filetag").join("cache");
 
-    if let Some(ref pfx) = prefix {
-        // vthumbs: sprite files named "{prefix}.sprite{n}x1.jpg" for various n values.
-        // Scan the subdir for files that start with the key prefix so we catch all n values.
-        for subdir in &["vthumbs"] {
-            let dir = cache_dir.join(subdir);
-            if let Ok(rd) = std::fs::read_dir(&dir) {
-                for entry in rd.flatten() {
-                    let name = entry.file_name();
-                    if name.to_string_lossy().starts_with(pfx.as_str())
-                        && std::fs::remove_file(entry.path()).is_ok()
-                    {
-                        removed += 1;
+    // Walk every subdirectory of the cache dir and remove any file whose name
+    // starts with the key prefix. This covers thumbs, raw, vthumbs, video, and
+    // any future subdirectory without maintaining a hardcoded list.
+    if let Ok(subdirs) = std::fs::read_dir(&cache_dir) {
+        for sd in subdirs.flatten() {
+            if sd.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let sd_name = sd.file_name();
+                if sd_name == "hls2" {
+                    // hls2 stores a subdirectory per file (named by prefix), not flat files.
+                    let hls_dir = sd.path().join(&pfx);
+                    if hls_dir.exists() {
+                        if let Ok(rd) = std::fs::read_dir(&hls_dir) {
+                            for entry in rd.flatten() {
+                                if std::fs::remove_file(entry.path()).is_ok() {
+                                    removed += 1;
+                                }
+                            }
+                        }
+                        let _ = std::fs::remove_dir(&hls_dir);
+                    }
+                } else if let Ok(rd) = std::fs::read_dir(sd.path()) {
+                    for entry in rd.flatten() {
+                        if entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(pfx.as_str())
+                            && std::fs::remove_file(entry.path()).is_ok()
+                        {
+                            removed += 1;
+                        }
                     }
                 }
             }
-        }
-
-        // hls: the segment directory is named "{prefix}" inside the hls2 subdir.
-        let hls_dir = cache_dir.join("hls2").join(pfx);
-        if hls_dir.exists() {
-            if let Ok(rd) = std::fs::read_dir(&hls_dir) {
-                for entry in rd.flatten() {
-                    if std::fs::remove_file(entry.path()).is_ok() {
-                        removed += 1;
-                    }
-                }
-            }
-            let _ = std::fs::remove_dir(&hls_dir);
-        }
-
-        // HEIC preview: named "heic_{stem}_{mtime}.jpg" (legacy flat layout, no size).
-        let stem = abs
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let mtime = pfx.split('_').next().unwrap_or("0");
-        let heic_path = cache_dir.join(format!("heic_{}_{}.jpg", stem, mtime));
-        if std::fs::remove_file(&heic_path).is_ok() {
-            removed += 1;
         }
     }
 
     removed
 }
 
+/// `POST /api/cache/clear` — delete cached thumbnails and preview files.
+///
+/// Clears the entire cache for the root when `paths` is absent; otherwise
+/// removes only the cache entries for the listed files.
 pub async fn api_cache_clear(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<RootParam>,
     body: Option<axum::extract::Json<CacheClearBody>>,
 ) -> Response {
-    let db_root = match root_at(&state, rp.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
-    };
-    let root = db_root.root.clone();
-    let paths = body.and_then(|b| b.paths.clone());
+    let (paths, dir) = body
+        .map(|b| (b.paths.clone(), b.dir.clone()))
+        .unwrap_or_default();
 
-    let removed = if let Some(rel_paths) = paths {
+    // When clearing specific paths we need a concrete root.
+    // When wiping the full cache we clear every loaded root if none is specified.
+    let removed = if dir.is_some() || paths.is_some() {
+        // Determine which files to clear:
+        //  - dir: enumerate all real files in that directory on disk
+        //  - paths: use the explicitly provided list
+        let anchor_root = if let Some(idx) = rp.root {
+            match root_at(&state, Some(idx)) {
+                Ok(r) => r.root.clone(),
+                Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+            }
+        } else {
+            state
+                .roots
+                .first()
+                .map(|r| r.root.clone())
+                .unwrap_or_default()
+        };
+        let rel_paths: Vec<String> = if let Some(d) = dir {
+            // Build paths from all non-directory entries in the real directory.
+            let abs_dir = anchor_root.join(&d);
+            match std::fs::read_dir(&abs_dir) {
+                Ok(rd) => rd
+                    .flatten()
+                    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                    .filter_map(|e| {
+                        let rel = e
+                            .path()
+                            .strip_prefix(&anchor_root)
+                            .ok()?
+                            .to_string_lossy()
+                            .into_owned();
+                        Some(rel)
+                    })
+                    .collect(),
+                Err(_) => vec![],
+            }
+        } else {
+            paths.unwrap_or_default()
+        };
         let mut n = 0u64;
         for rel in rel_paths {
-            if let Some((abs, cr)) = resolve_preview(&state, &db_root.root, &rel) {
+            if let Some((abs, cr)) = resolve_preview(&state, &anchor_root, &rel) {
                 n += remove_cache_for_path(&abs, &cr);
             }
         }
         n
+    } else if let Some(idx) = rp.root {
+        // Explicit root: clear just that root's cache.
+        let db_root = match root_at(&state, Some(idx)) {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+        };
+        let cache_dir = db_root.root.join(".filetag").join("cache");
+        if cache_dir.exists() {
+            if let Err(e) = tokio::fs::remove_dir_all(&cache_dir).await {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to clear cache: {e}"),
+                )
+                    .into_response();
+            }
+            1
+        } else {
+            0
+        }
     } else {
-        // Drop the entire cache directory — the simplest and most complete approach.
-        let cache_dir = root.join(".filetag").join("cache");
-        let existed = cache_dir.exists();
-        let _ = tokio::fs::remove_dir_all(&cache_dir).await;
-        if existed { 1 } else { 0 }
+        // No root specified: clear every root's cache directory.
+        let mut n = 0u64;
+        for root in &state.roots {
+            let cache_dir = root.root.join(".filetag").join("cache");
+            if cache_dir.exists() {
+                if let Err(e) = tokio::fs::remove_dir_all(&cache_dir).await {
+                    eprintln!("cache clear error for {}: {e}", cache_dir.display());
+                } else {
+                    n += 1;
+                }
+            }
+        }
+        n
     };
 
     (
@@ -286,6 +347,7 @@ pub async fn api_cache_clear(
 // Tags list
 // ---------------------------------------------------------------------------
 
+/// `GET /api/tags` — list all known tags with usage counts and colours.
 pub async fn api_tags(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<RootParam>,
@@ -304,20 +366,21 @@ pub async fn api_tags(
 // File listing
 // ---------------------------------------------------------------------------
 
+/// `GET /api/files` — list directory contents with per-entry metadata.
 pub async fn api_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileListParams>,
 ) -> Result<Json<ApiDirListing>, AppError> {
     // Virtual root: only when there are multiple entry-point roots and no root
     // has been explicitly selected yet.
-    let entry_point_roots: Vec<(usize, &DbRoot)> = state
+    let entry_point_roots: Vec<(usize, &TagRoot)> = state
         .roots
         .iter()
         .enumerate()
         .filter(|(_, r)| r.entry_point)
         .collect();
     if params.root.is_none() && params.path.is_empty() && entry_point_roots.len() > 1 {
-        let mut ordered: Vec<(usize, &DbRoot, i64)> = entry_point_roots
+        let mut ordered: Vec<(usize, &TagRoot, i64)> = entry_point_roots
             .iter()
             .map(|&(id, r)| {
                 let order = open_conn(r)
@@ -423,7 +486,7 @@ pub async fn api_files(
                 file_count: None,
                 tag_count: Some(tag_count),
                 root_id: None,
-                covered: Some(file_is_covered(&state, &meta, &entry.path())),
+                covered: Some(file_is_covered(&state, &entry.path())),
             });
         }
     }
@@ -442,6 +505,7 @@ pub async fn api_files(
 // Search
 // ---------------------------------------------------------------------------
 
+/// `GET /api/search` — execute a tag query and return matching file paths.
 pub async fn api_search(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchParams>,
@@ -470,6 +534,7 @@ pub async fn api_search(
 // File detail
 // ---------------------------------------------------------------------------
 
+/// `GET /api/file` — return full metadata and tags for a single file.
 pub async fn api_file_detail(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileDetailParams>,
@@ -589,7 +654,7 @@ pub async fn api_file_detail(
         file_id: None,
         mtime,
         indexed_at: String::new(),
-        covered: file_is_covered(&state, &meta, &fs_path),
+        covered: file_is_covered(&state, &fs_path),
         tags: vec![],
         duration,
     }))
@@ -599,6 +664,10 @@ pub async fn api_file_detail(
 // Tag / Untag (now using open_for_file_op)
 // ---------------------------------------------------------------------------
 
+/// `POST /api/tag` — apply one or more tags to a file.
+///
+/// Routes through [`open_for_file_op`] so the tag is written to the correct
+/// child database when nested databases are loaded.
 pub async fn api_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
@@ -626,6 +695,7 @@ pub async fn api_tag(
     Ok(Json(serde_json::json!({ "added": added })))
 }
 
+/// `POST /api/untag` — remove one or more tags from a file.
 pub async fn api_untag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
@@ -658,6 +728,7 @@ pub async fn api_untag(
 // Tag color + delete
 // ---------------------------------------------------------------------------
 
+/// `POST /api/rename-tag` — rename a tag across all files in the database.
 pub async fn api_rename_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameTagRequest>,
@@ -668,6 +739,7 @@ pub async fn api_rename_tag(
     Ok(Json(serde_json::json!({ "ok": ok })))
 }
 
+/// `POST /api/tag-color` — set or clear the display colour for a tag.
 pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,
@@ -678,6 +750,7 @@ pub async fn api_tag_color(
     Ok(Json(serde_json::json!({ "ok": ok })))
 }
 
+/// `POST /api/delete-tag` — permanently delete a tag and all its assignments.
 pub async fn api_delete_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteTagRequest>,
@@ -688,11 +761,12 @@ pub async fn api_delete_tag(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
+/// `GET /api/settings` — read per-root settings (currently trickplay sprite counts).
 pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, params.root_id)?;
+    let db_root = root_at(&state, params.root)?;
     let conn = open_conn(db_root)?;
     let sprite_min: u32 = db::get_setting(&conn, "sprite_min")
         .map_err(AppError)?
@@ -707,6 +781,7 @@ pub async fn api_settings_get(
     ))
 }
 
+/// `POST /api/settings` — persist per-root settings.
 pub async fn api_settings_set(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SettingsBody>,

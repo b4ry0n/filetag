@@ -499,6 +499,7 @@ async function doBulkAddTag() {
     renderTags();
     renderContent();
     _thumbInit();
+    _dirThumbInit();
     _kbRestoreFocus();
     const el = document.getElementById('bulk-tag-chips');
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
@@ -513,6 +514,7 @@ async function toggleShowHidden() {
         await loadFiles(state.currentPath);
         renderContent();
         _thumbInit();
+        _dirThumbInit();
     }
 }
 
@@ -535,32 +537,46 @@ async function clearCache(all = false) {
     const btn = document.getElementById('cache-clear-page-btn');
     btn.disabled = true;
     const toast = showToast(all ? 'Clearing cache…' : 'Clearing page cache…', 0);
+    let success = false;
+    let errorMsg = 'Cache clear failed';
     try {
         let body = null;
         if (!all) {
-            const items = state.mode === 'search' ? state.searchResults : state.entries;
-            const paths = (items || [])
-                .filter(e => !e.is_dir && e.path)
-                .map(e => e.path);
-            body = JSON.stringify({ paths });
+            if (state.mode === 'search') {
+                const paths = (state.searchResults || [])
+                    .filter(e => !e.is_dir)
+                    .map(e => e.path)
+                    .filter(Boolean);
+                body = JSON.stringify({ paths });
+            } else {
+                body = JSON.stringify({ dir: state.currentPath || '' });
+            }
         }
-        await fetch('/api/cache/clear' + rootParam('?'), {
+        const resp = await fetch('/api/cache/clear' + rootParam('?'), {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : {},
             body: body ?? undefined,
         });
-        updateToast(toast, all ? 'Cache cleared' : 'Page cache cleared');
-    } catch (_) {
-        updateToast(toast, 'Cache clear failed');
+        if (!resp.ok) {
+            errorMsg = 'Cache clear failed: ' + (await resp.text()).trim();
+            throw new Error(errorMsg);
+        }
+        // Invalidate the in-memory blob URL cache so thumbnails reload from
+        // the server rather than being served from the old cached blobs.
+        _thumbClearCache();
+        success = true;
+    } catch (e) {
+        errorMsg = e.message || errorMsg;
     } finally {
         btn.disabled = false;
         dismissToast(toast);
-        showToast(all ? 'Cache cleared' : 'Page cache cleared');
+        showToast(success ? (all ? 'Cache cleared' : 'Page cache cleared') : errorMsg);
         if (state.mode === 'search') {
             await doSearch();
         } else {
             await loadFiles(state.currentPath);
         }
+        render();
     }
 }
 
@@ -916,6 +932,7 @@ function setViewMode(mode) {
     document.getElementById('zoom-slider').style.display = mode === 'grid' ? '' : 'none';
     renderContent();
     _thumbInit();
+    _dirThumbInit();
     _kbRestoreFocus();
 }
 

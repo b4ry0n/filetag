@@ -99,7 +99,12 @@ function renderGrid(items) {
 
         let preview = '';
         if (isDir) {
-            preview = `<div class="card-icon">${ICONS.folder}</div>`;
+            // Add data-dir-path so the trickplay logic can request the sprite.
+            // Root cards (entry.root_id != null) keep the plain icon.
+            const dirPath = entry.root_id == null ? fullPath(entry) : null;
+            preview = dirPath
+                ? `<div class="card-icon dir-thumb-anchor" data-dir-path="${esc(dirPath)}">${ICONS.folder}</div>`
+                : `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
@@ -335,6 +340,11 @@ function _updateCardTagBadges() {
 // ---------------------------------------------------------------------------
 
 function renderContent() {
+    // Remove any floating directory trickplay overlays left over from the
+    // previous render (e.g. when the user double-clicks into a directory
+    // before the mouse-leave event fires).
+    document.querySelectorAll('.card-trickplay-sprite').forEach(s => s.remove());
+
     const el = document.getElementById('content');
 
     // --- Zip directory mode ---

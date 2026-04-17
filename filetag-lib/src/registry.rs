@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 const CONFIG_DIR: &str = "filetag";
 const REGISTRY_FILE: &str = "databases.json";
 
+/// Serialised form of `~/.config/filetag/databases.json`.
 #[derive(Serialize, Deserialize, Default)]
 pub struct Registry {
+    /// Absolute, canonicalised paths to registered database roots.
     pub databases: Vec<String>,
 }
 
