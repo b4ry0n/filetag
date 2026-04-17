@@ -41,6 +41,8 @@ async function enterRoot(id) {
     state.currentRootId = id;
     state.selectedFile = null;
     state.selectedDir = null;
+    state.selectedRoot = null;
+    state.selectedRootInfo = null;
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.activeTags.clear();
