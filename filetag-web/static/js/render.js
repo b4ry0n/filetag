@@ -18,7 +18,7 @@ function renderBreadcrumb() {
     if (isMultiRoot) {
         html = `<button class="breadcrumb-item${state.currentRootId == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
         if (state.currentRootId != null) {
-            const root = state.roots[state.currentRootId];
+            const root = state.roots.find(r => r.id === state.currentRootId);
             const rootName = root ? root.name : String(state.currentRootId);
             if (rootIsCurrent) {
                 html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename(${state.currentRootId}, this)">${esc(rootName)}</span>`;
@@ -56,7 +56,7 @@ function renderBreadcrumb() {
 
 // Inline rename of a root database name.
 function startRootRename(rootId, el) {
-    const root = state.roots[rootId];
+    const root = state.roots.find(r => r.id === rootId);
     if (!root) return;
     const currentName = root.name;
     const input = document.createElement('input');
@@ -73,7 +73,8 @@ function startRootRename(rootId, el) {
         if (newName && newName !== currentName) {
             await apiPost('/api/db/rename', { root_id: rootId, name: newName });
             // Update local state
-            state.roots[rootId] = { ...root, name: newName };
+            const idx = state.roots.findIndex(r => r.id === rootId);
+            if (idx !== -1) state.roots[idx] = { ...root, name: newName };
         }
         renderBreadcrumb();
     }

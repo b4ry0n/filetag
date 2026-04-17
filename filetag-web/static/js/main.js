@@ -266,7 +266,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.roots.filter(r => r.entry_point).length > 1 && savedRoot !== '' && savedRoot != null) {
         const id = parseInt(savedRoot, 10);
         // Only restore if the saved id still maps to an entry-point root.
-        if (!isNaN(id) && id < state.roots.length && state.roots[id]?.entry_point) {
+        if (!isNaN(id) && state.roots.find(r => r.id === id)?.entry_point) {
             state.currentRootId = id;
         }
     }
