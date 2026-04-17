@@ -36,11 +36,11 @@ pub fn volume_id(path: &Path) -> Option<u64> {
 
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        std::fs::metadata(path)
-            .ok()
-            .and_then(|m| m.volume_serial_number())
-            .map(|s| s as u64)
+        // `volume_serial_number()` is not yet stable on Windows. Volume-id is
+        // used only for filesystem-boundary detection; returning None disables
+        // the check, which is acceptable on Windows.
+        let _ = path;
+        None
     }
 
     #[cfg(not(any(unix, windows)))]
