@@ -375,6 +375,30 @@ async fn vlm_call_multi(
 // Tag parsing + application
 // ---------------------------------------------------------------------------
 
+/// Remove any tags that are bare kv keys (i.e. equal to a known key without a
+/// `=value` part).  Models sometimes emit just `name` instead of `name=alice`
+/// even when instructed otherwise; this is a safety net.
+fn filter_bare_kv_keys(tags: Vec<String>, kv_keys: &[String], prefix: &str) -> Vec<String> {
+    if kv_keys.is_empty() {
+        return tags;
+    }
+    tags.into_iter()
+        .filter(|t| {
+            // Strip prefix to get the raw tag part.
+            let raw = if prefix.is_empty() {
+                t.as_str()
+            } else {
+                t.strip_prefix(prefix).unwrap_or(t.as_str())
+            };
+            // A bare kv key has no `=` and matches a known key name.
+            if raw.contains('=') {
+                return true; // has a value, keep it
+            }
+            !kv_keys.iter().any(|k| k == raw)
+        })
+        .collect()
+}
+
 fn build_ai_prompt(base_prompt: &str, existing_tags: &[String], kv_keys: &[String]) -> String {
     let mut prefix_lines: Vec<String> = Vec::new();
 
@@ -397,7 +421,9 @@ fn build_ai_prompt(base_prompt: &str, existing_tags: &[String], kv_keys: &[Strin
             .join(", ");
         prefix_lines.push(format!(
             "The following key=value tag keys are already in use in this collection: [{keys_list}]. \
-For each key where you can determine a value for this file, include it as a \"key=value\" entry in your output."
+For each key where you can determine a specific value for this file, include it as a \"key=value\" entry in your output. \
+Do NOT output a bare key without a value (e.g. output \"name=alice\", never just \"name\"). \
+If you cannot determine a value for a key, omit that key entirely."
         ));
     }
 
@@ -421,6 +447,7 @@ async fn analyse_image(
     let prompt = build_ai_prompt(base, existing_tags, kv_keys);
     let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
+    let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
     Ok((raw, tags))
 }
 
@@ -487,6 +514,7 @@ async fn analyse_archive(
     let b64_refs: Vec<&str> = sample_b64.iter().map(|s| s.as_str()).collect();
     let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
+    let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
     Ok((raw, tags))
 }
 
@@ -572,7 +600,17 @@ fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
     let tags: Vec<String> = raw_tags
         .into_iter()
         .map(|t| {
-            let clean = t.trim().to_lowercase();
+            // Strip leading/trailing punctuation that the model sometimes appends
+            // (e.g. trailing dot, comma, exclamation mark).  Characters that are
+            // legitimate *inside* a tag (hyphen, underscore, slash, equals sign,
+            // period as a decimal separator like "5.1") are left intact when they
+            // occur in the middle of the string.
+            let clean = t
+                .trim()
+                .trim_matches(|c: char| {
+                    c.is_ascii_punctuation() && c != '/' && c != '=' && c != '-' && c != '_'
+                })
+                .to_lowercase();
             if prefix.is_empty() {
                 clean
             } else {
@@ -598,6 +636,19 @@ fn tag_candidate_ok(s: &str) -> bool {
         return false;
     }
     if s.contains(':') || s.contains('*') || s.contains('(') || s.contains(')') {
+        return false;
+    }
+    // Reject tags that still contain sentence-level punctuation that has no
+    // business being inside a tag name.
+    if s.contains('.')
+        || s.contains('!')
+        || s.contains('?')
+        || s.contains(';')
+        || s.contains(',')
+        || s.contains('"')
+        || s.contains('\'')
+        || s.contains('`')
+    {
         return false;
     }
     let first = s.chars().next().unwrap_or(' ');

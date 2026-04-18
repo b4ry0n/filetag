@@ -36,6 +36,9 @@ pub struct ApiTag {
     /// Optional CSS colour string (e.g. `#ff0000`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Registered synonyms (aliases) for this tag.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub synonyms: Vec<String>,
 }
 
 /// A directory listing as returned by `GET /api/files`.
@@ -250,4 +253,28 @@ pub struct SettingsBody {
     pub feature_imagemagick: Option<bool>,
     /// Enable PDF thumbnail generation.
     pub feature_pdf: Option<bool>,
+}
+
+// ---------------------------------------------------------------------------
+// Synonym API
+// ---------------------------------------------------------------------------
+
+/// Body for `POST /api/synonym/add`.
+#[derive(Deserialize)]
+pub struct AddSynonymRequest {
+    /// The alias to register.
+    pub alias: String,
+    /// The canonical tag name the alias maps to.
+    pub canonical: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/synonym/remove`.
+#[derive(Deserialize)]
+pub struct RemoveSynonymRequest {
+    /// The alias to remove.
+    pub alias: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
 }

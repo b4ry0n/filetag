@@ -342,7 +342,7 @@ pub async fn api_cache_clear(
 // Tags list
 // ---------------------------------------------------------------------------
 
-/// `GET /api/tags` — list all known tags with usage counts and colours.
+/// `GET /api/tags` — list all known tags with usage counts, colours and synonyms.
 pub async fn api_tags(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
@@ -350,11 +350,45 @@ pub async fn api_tags(
     let db_root = root_from_dir(&state, rp.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let tags = db::all_tags(&conn).map_err(AppError)?;
-    Ok(Json(
-        tags.into_iter()
-            .map(|(name, count, color)| ApiTag { name, count, color })
-            .collect(),
-    ))
+    let result: Result<Vec<ApiTag>, AppError> = tags
+        .into_iter()
+        .map(|(name, count, color)| {
+            let synonyms = db::synonyms_for_tag(&conn, &name).map_err(AppError)?;
+            Ok(ApiTag {
+                name,
+                count,
+                color,
+                synonyms,
+            })
+        })
+        .collect();
+    Ok(Json(result?))
+}
+
+// ---------------------------------------------------------------------------
+// Synonym management
+// ---------------------------------------------------------------------------
+
+/// `POST /api/synonym/add` — register an alias as a synonym for a tag.
+pub async fn api_add_synonym(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AddSynonymRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    db::add_synonym(&conn, &body.alias, &body.canonical).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/synonym/remove` — remove a registered synonym alias.
+pub async fn api_remove_synonym(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RemoveSynonymRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let removed = db::remove_synonym(&conn, &body.alias).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": removed })))
 }
 
 // ---------------------------------------------------------------------------
@@ -741,8 +775,10 @@ pub async fn api_rename_tag(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
-    let ok = db::rename_tag(&conn, &body.name, &body.new_name).map_err(AppError)?;
-    Ok(Json(serde_json::json!({ "ok": ok })))
+    let outcome = db::rename_tag(&conn, &body.name, &body.new_name).map_err(AppError)?;
+    let ok = !matches!(outcome, db::RenameOutcome::NotFound);
+    let merged = matches!(outcome, db::RenameOutcome::Merged { .. });
+    Ok(Json(serde_json::json!({ "ok": ok, "merged": merged })))
 }
 
 /// `POST /api/tag-color` — set or clear the display colour for a tag.

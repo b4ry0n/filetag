@@ -153,8 +153,11 @@ function renderGrid(items) {
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const checkmark = state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
+            const isArchiveEntry = path.includes('::');
             const gotoDirBtn = state.mode === 'search'
-                ? `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
+                ? isArchiveEntry
+                    ? `<button class="card-goto" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}')" title="Go to archive">${ICONS.gotoDir}</button>`
+                    : `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const uncoveredBadge = entry.covered === false ? '<span class="card-uncovered" title="No filetag database on this filesystem">&#128274;</span>' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
@@ -216,8 +219,11 @@ function renderList(items) {
             }
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
+            const isArchiveEntry = path.includes('::');
             const gotoDirBtn = state.mode === 'search'
-                ? `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
+                ? isArchiveEntry
+                    ? `<button class="goto-dir-btn" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}')" title="Go to archive">${ICONS.gotoDir}</button>`
+                    : `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
