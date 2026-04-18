@@ -99,18 +99,26 @@ Every subsystem (CLI, web server, library consumers) that needs to operate on a 
 
 **The only permitted exception** is the web server's startup phase. At startup, filetag-web reads a set of entry-point paths from the command line or a registry, opens those databases by direct path, and holds them in memory as the session's Root set. This is configuration-time loading, not per-item resolution. Once the session is initialised, all per-item operations go through `find_and_open`.
 
-### 2.3 Selection by Index (Web Session Only)
+### 2.3 Path-based Resolution in the Web Layer
 
-The web server additionally provides a secondary mechanism for its HTTP API:
+The web server holds a pre-loaded set of `TagRoot` values in `AppState`. Every HTTP request that involves a file or directory carries an absolute filesystem path as its `dir` parameter (query string or JSON body). The web layer resolves the active Root from that path using the single function:
 
 ```rust
-/// In filetag-web/src/state.rs
-pub fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&TagRoot>
+/// Return the deepest TagRoot whose root path contains `abs`.
+///
+/// This is the single source of truth for determining which database root owns
+/// a given path. All API handlers that need to access .filetag/ data call
+/// this function. No other root-resolution functions exist.
+pub fn root_for_dir<'a>(state: &'a AppState, abs: &Path) -> Option<&'a TagRoot>
 ```
 
-This is not a resolution function. It selects a Root from the already-loaded session set by the numeric index that the browser supplies as a query parameter (`?root=N`). It answers the question "which Root is the user currently browsing?" rather than "which Root governs this file?"
+This function is not a replacement for `find_and_open`. It answers the question "which already-loaded Root covers this absolute path?" by selecting the `TagRoot` with the longest root path that is a prefix of `abs`. For any subsequent write operation on a specific file, the API still calls `open_for_file_op`, which internally calls `find_and_open` and may route to a nested child database.
 
-For any operation that writes or reads file records, `root_at` is only the starting point. The actual resolution is then done by `open_for_file_op`, which calls `find_and_open` internally and may land on a different (nested child) database.
+There is no numeric root index in the HTTP API. The frontend always supplies absolute filesystem paths. Numeric root IDs are never exchanged between the browser and the server.
+
+#### The `api_files` response
+
+Every response from `GET /api/files` includes a `root_path` field — the absolute filesystem path of the deepest `TagRoot` that covers the listed directory. The frontend stores this as `state.currentBasePath` and sends it back in subsequent file-operation requests. This ensures that all file paths in those requests are relative to the correct (deepest) Root, so `open_for_file_op` always receives consistent input.
 
 ---
 
@@ -156,15 +164,17 @@ Linking does not alter Root Resolution. Each file still belongs to exactly the R
 
 The table below maps domain concepts to their current code names.
 
-| Domain concept                | Code name                                  | Notes                                                        |
-| :---------------------------- | :----------------------------------------- | :----------------------------------------------------------- |
-| An initialised Root directory | `TagRoot` (`filetag-lib::db`)              | Stores root path, db path, volume id, entry-point flag, display name |
-| Resolve Root for a file       | `find_root` (lib)                          | Returns Root path; does not open a connection                |
-| Open DB at a known Root       | `open_root_db` (lib)                       | Opens connection; does not perform resolution                |
-| Resolve Root and open DB      | `find_and_open` (lib)                      | Convenience wrapper around the two above                     |
-| Open DB for a file operation  | `open_for_file_op` (web)                   | Calls `find_and_open` internally; routes to child DB if applicable |
-| Select Root by session index  | `root_at` (web)                            | Selects from loaded session set; distinct from resolution    |
-| Path relative to Root         | `rel_path`, `rel`                          | Consistent across lib and web; keep as-is                    |
+| Domain concept                          | Code name                                  | Notes                                                                         |
+| :-------------------------------------- | :----------------------------------------- | :---------------------------------------------------------------------------- |
+| An initialised Root directory           | `TagRoot` (`filetag-lib::db`)              | Stores root path, db path, volume id, entry-point flag, display name          |
+| Resolve Root for a file                 | `find_root` (lib)                          | Returns Root path; does not open a connection                                 |
+| Open DB at a known Root                 | `open_root_db` (lib)                       | Opens connection; does not perform resolution                                 |
+| Resolve Root and open DB                | `find_and_open` (lib)                      | Convenience wrapper around the two above                                      |
+| Resolve Root from absolute path (web)   | `root_for_dir` (web `state.rs`)            | The one root-resolution function in the web layer; selects deepest Root       |
+| Open DB for a file operation            | `open_for_file_op` (web `state.rs`)        | Calls `find_and_open` internally; routes to child DB if applicable            |
+| Active Root path communicated to JS     | `root_path` in `ApiDirListing`             | Absolute path; frontend stores as `state.currentBasePath`                     |
+| Root tile identity in virtual root view | `root_path` in `ApiDirEntry`               | Absolute path; replaces any numeric index                                     |
+| Path relative to Root                   | `rel_path`, `rel`                          | Consistent across lib and web; keep as-is                                     |
 
 ---
 

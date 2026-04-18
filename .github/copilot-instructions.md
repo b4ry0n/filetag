@@ -57,20 +57,28 @@ clap = { version = "4", features = ["derive"] }
 ### filetag-lib/src/lib.rs
 Library entry point. Re-exports modules and defines `TagList` type alias.
 
-### filetag-lib/src/db.rs (~500 lines)
+### filetag-lib/src/db.rs (~930 lines)
 Database module. Key functions:
+- `volume_id(path)` - returns platform device/volume id for filesystem boundary detection
 - `init(root)` - creates `.filetag/db.sqlite3`
-- `find_and_open(start)` - walks parents until DB found
+- `find_root(start)` - walks parent directories until a `.filetag/db.sqlite3` is found; returns root path
+- `open_root_db(root)` - opens connection at a known root path; runs migrations
+- `find_and_open(start)` - convenience wrapper: `open_root_db(&find_root(start)?)`
 - `migrate(conn)` - schema creation + migration (v1→v2: child_databases, v2→v3: file_id, v3→v4: color, v4→v5: rename to linked_databases, v5→v6: settings)
 - `get_or_index_file(conn, rel_path, root)` - indexes file with metadata + file_id
 - `get_or_create_tag(conn, name)` - tag CRUD
 - `apply_tag()`, `remove_tag()`, `tags_for_file()`, `all_tags()`, `file_by_path()`
+- `set_tag_color()`, `rename_tag()`, `delete_tag()` - tag metadata
 - `relative_to_root(path, root)` - resolves abs path to relative path
-- `add_child()`, `remove_child()`, `list_children()` - linked database registration
-- `collect_all_databases(conn, root, include_parents)` - recursively opens all linked DBs (cycle detection)
+- `resolve_archive_entry(raw, root)` - normalises a virtual archive path (`zip::entry`)
+- `get_or_index_archive_entry(conn, virtual_path)` - indexes an archive entry
+- `link_database()`, `unlink_database()`, `list_linked()` - linked database registration
+- `collect_all_databases(conn, root, include_ancestors)` - recursively opens all linked DBs (cycle detection)
+- `scan_for_databases(root, visited, max_depth, on_dir)` - filesystem scan for nested roots
 - `files_under_prefix(conn, prefix)` - file records + tags under a path prefix (for push)
 - `all_files_with_tags(conn)` - all file records + tags (for pull)
 - `delete_file_by_path(conn, rel_path)` - deletes file record from DB (cascade)
+- `get_setting()`, `set_setting()` - key/value settings table
 - `FileWithTags` struct: rel_path, file_id, size, mtime_ns, tags
 - `OpenDb` struct: conn + root for multi-database operations
 - `DirEntry` struct + `list_directory(conn, prefix)` - directory listing for web UI
@@ -104,7 +112,7 @@ Symlink view generation.
 
 ### filetag-cli/src/main.rs
 CLI entry point with clap derive. Subcommands: init, tag, untag, tags, show, find, view, status, repair, mv, merge, info, db, completions.
-Global options: `--json`, `--color`, `-q`/`--quiet`, `-v`/`--verbose`, `--db`.
+Global options: `--json`, `--color`, `-q`/`--quiet`, `-v`/`--verbose`, `--db`, `--no-parents`.
 Aliases: tag=t, untag=u, tags=ls, show=s, find=f.
 Features: stdin pipe support (auto-detect), NUL-delimited I/O (`-0`), JSON Lines output, confirmation prompts for destructive ops.
 `--isolated`/`-i` flag on `tags` and `find`: query only the current database (no children, no ancestors). `--all-dbs` flag: query all globally registered databases. Default queries current DB + linked children + ancestor databases.
@@ -119,19 +127,21 @@ Static files embedded via `include_str!` from `filetag-web/static/`.
 
 ### filetag-web/src/state.rs (~265 lines)
 Core application state and helpers.
-- `DbRoot` struct (name, root, db_path, dev, entry_point)
+- `TagRoot` struct (name, root, db_path, dev, entry_point)
 - `AppState` (roots, ai_progress)
 - `AppError` (anyhow → 500)
 - `open_conn(db_root)` — open DB with WAL + busy_timeout PRAGMAs
 - `open_for_file_op(db_root, rel_path)` — **mandatory** gateway for file operations; finds correct DB (child or root) for a given path
 - `open_for_file_op_under(root, rel_path)` — same but takes raw `Path` (for background tasks)
-- `cache_root_for_file(state, abs)` — returns the deepest `DbRoot` whose root path contains a given absolute file path; used by all cache-writing handlers so thumbnails go to the correct child-DB cache
+- `root_for_dir(state, abs)` — **the one function** that resolves the correct `TagRoot` from an absolute filesystem path. Returns the deepest root whose directory contains `abs`. All API handlers that need to access `.filetag/` data call this function. No other root-resolution functions exist.
 - `safe_path()`, `preview_safe_path()` — path traversal protection
-- `parse_tag()`, `root_at()`, `file_is_covered()`, `resolve_names()`, `terminal_width()`
+- `parse_tag()`, `file_is_covered()`, `resolve_names()`, `terminal_width()`
 - `THUMB_LIMITER` — semaphore for concurrent thumbnail generation
 
 ### filetag-web/src/types.rs (~158 lines)
 All API request/response structs (~20 structs). No logic.
+
+**Root resolution convention:** All request types use `dir: Option<String>` (absolute filesystem path of the currently browsed directory). The backend calls `root_for_dir(state, abs)` to find the correct root. Numeric root IDs are never sent between frontend and backend. `ApiDirEntry` uses `root_path: Option<String>` instead of `root_id` for virtual-root tile entries. `RenameDbRequest` uses `dir: String`. `ReorderRootsRequest` uses `order: Vec<String>` (root paths).
 
 ### filetag-web/src/preview.rs (~1406 lines)
 File preview/serving, RAW/HEIC conversion, thumbnailing, video transcoding, trickplay.
@@ -140,6 +150,7 @@ File preview/serving, RAW/HEIC conversion, thumbnailing, video transcoding, tric
 - `serve_file_bytes`, `serve_file_range`, `serve_transcoded_mp4`
 - `raw_extract_jpeg`, `image_thumb_jpeg`, `pdf_thumb_jpeg`
 - `video_info`, `video_thumb_strip`, `api_vthumbs`, `api_vthumbs_pregen`
+- `api_dir_thumbs` — batch thumbnail generation for a directory listing
 
 ### filetag-web/src/archive.rs (~713 lines)
 ZIP/RAR/7z archive handling (via `zip`, `unrar`, `sevenz_rust`).
@@ -155,13 +166,16 @@ AI/VLM image analysis (OpenAI-compatible + Ollama).
 - `api_ai_config_get`, `api_ai_config_set`
 - Archive analysis: lists entries, picks sample images, sends entry listing + images to VLM
 
-### filetag-web/src/api.rs (~627 lines)
+### filetag-web/src/api.rs (~800 lines)
 Core CRUD API handlers + static file serving.
 - `api_roots`, `api_reorder_roots`, `api_rename_db`, `api_info`, `api_cache_clear`
 - `api_tags`, `api_files`, `api_search`, `api_file_detail`
 - `api_tag`, `api_untag` — use `open_for_file_op` for correct child-DB routing
-- `api_tag_color`, `api_delete_tag`
-- `index_html`, `style_css`, `app_js`, `favicon` — embedded static assets
+- `api_tag_color`, `api_rename_tag`, `api_delete_tag`
+- `api_settings_get`, `api_settings_set`
+- `index_html`, `favicon` — embedded HTML/icon; CSS and JS served via individual handlers (one per file in `filetag-web/static/`)
+- Private helper `fn root_from_dir(state, dir)` calls `root_for_dir` — used by all handlers that need a DB root
+- `api_files` response includes `root_path: String` (absolute path of the deepest root for the listed directory)
 
 ## Database Schema
 
@@ -218,4 +232,5 @@ filetag find QUERY --all-dbs            # All globally registered DBs
 -q, --quiet                             # Suppress informational messages
 -v, --verbose                           # Extra detail
 --db PATH                               # Override database location
+--no-parents                            # Do not include ancestor databases in queries
 ```

@@ -28,14 +28,14 @@ async function openZipDir(zipPath) {
     el.className = '';
     el.innerHTML = `<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Loading archive…</span></div>`;
     document.getElementById('entry-count').textContent = '…';
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }) + rootParam('&'));
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }) + dirParam('&'));
     state.zipEntries = data.entries || [];
     render();
 }
 
 async function refreshZipEntries() {
     if (!state.zipPath) return;
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }) + rootParam('&'));
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }) + dirParam('&'));
     state.zipEntries = data.entries || [];
     renderContent();
     _thumbInit();
@@ -52,7 +52,7 @@ function renderZipGrid(entries) {
 
         let preview;
         if (entry.is_image) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + rootParam('&');
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + dirParam('&');
             preview = `<div class="card-thumb-pending" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}"></div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
@@ -162,7 +162,7 @@ function _trickplayAttach(img, path) {
         const minN = state.settings.sprite_min ?? 8;
         const maxN = state.settings.sprite_max ?? 16;
         const src = '/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN })
-            + rootParam('&');
+            + dirParam('&');
         const preload = new Image();
         preload.onload = () => {
             // Each frame is scaled to 320 px wide by the server; derive n from
@@ -332,7 +332,7 @@ function _dirTrickplayAttach(anchor, dirPath) {
         if (cached) { cacheEntry = cached; return; }
 
         _dirTrickplayCache.set(dirPath, 'loading');
-        const src = '/api/dir-thumbs?' + new URLSearchParams({ path: dirPath }) + rootParam('&');
+        const src = '/api/dir-thumbs?' + new URLSearchParams({ path: dirPath }) + dirParam('&');
         const preload = new Image();
         preload.onload = () => {
             const n = Math.max(1, Math.round(preload.naturalWidth / DIR_FRAME_W));
@@ -627,10 +627,10 @@ function renderDetail() {
 
     // Root card selected
     if (state.selectedRoot != null) {
-        const rootMeta = state.roots.find(r => r.id === state.selectedRoot);
+        const rootMeta = state.roots.find(r => r.path === state.selectedRoot);
         const info = state.selectedRootInfo;
-        const name = rootMeta ? rootMeta.name : `Root ${state.selectedRoot}`;
-        const path = rootMeta ? rootMeta.path : '';
+        const name = rootMeta ? rootMeta.name : state.selectedRoot.split('/').pop();
+        const path = state.selectedRoot;
         const infoRows = info ? `
             <div class="detail-meta-row"><span class="detail-meta-label">Files</span><span class="detail-meta-value">${info.files.toLocaleString()}</span></div>
             <div class="detail-meta-row"><span class="detail-meta-label">Tags</span><span class="detail-meta-value">${info.tags.toLocaleString()}</span></div>
@@ -649,7 +649,7 @@ function renderDetail() {
                 ${infoRows}
             </div>
             <div style="padding:8px 12px">
-                <button class="tag-action-btn" onclick="enterRoot(${state.selectedRoot})">Open database</button>
+                <button class="tag-action-btn" onclick="enterRoot('${jesc(state.selectedRoot)}')">Open database</button>
             </div>`;
         return;
     }
@@ -676,14 +676,14 @@ function renderDetail() {
     const zipEntry = parseZipEntryPath(f.path);
     const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
     const type_ = zipEntry ? fileType(zipEntry.entryName) : fileType(name);
-    const previewUrl = '/preview/' + encodeURI(f.path) + rootParam('?');
+    const previewUrl = '/preview/' + encodeURI(f.path) + dirParam('?');
 
     let preview;
     if (zipEntry) {
         // Entry inside a zip archive
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index }) + rootParam('&');
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index }) + dirParam('&');
             preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
@@ -713,7 +713,7 @@ function renderDetail() {
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
         preview = `<div class="zip-cover-wrap">
-            <img src="/thumb/${encodeURI(f.path)}${rootParam('?')}" alt="${esc(name)}" class="zip-cover"
+            <img src="/thumb/${encodeURI(f.path)}${dirParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
             <button class="tag-action-btn" onclick="openMediaViewer('${jesc(f.path)}')">Open in viewer</button>
         </div>`;
@@ -891,7 +891,7 @@ async function doBulkRemoveTagChip(tagStr) {
         const data = state.selectedFilesData.get(p);
         return data && data.tags.some(t => formatTag(t) === tagStr);
     });
-    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], root_id: state.currentRootId })));
+    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
     // Update cache locally
     for (const p of paths) {
         const d = state.selectedFilesData.get(p);

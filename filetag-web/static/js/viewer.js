@@ -54,14 +54,14 @@ function _cvPrefetch(idx) {
 
 // Return the URL for a single page image.
 function cvPageUrl(i) {
-    if (_cv.mode === 'dir') return '/preview/' + encodeURI(_cv.filePaths[i]) + rootParam('?');
-    return `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}` + rootParam('&');
+    if (_cv.mode === 'dir') return '/preview/' + encodeURI(_cv.filePaths[i]) + dirParam('?');
+    return `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}` + dirParam('&');
 }
 
 // Return the URL for a thumbnail of a single page.
 function cvThumbUrl(i) {
-    if (_cv.mode === 'dir') return '/thumb/' + encodeURI(_cv.filePaths[i]) + rootParam('?');
-    return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}` + rootParam('&');
+    if (_cv.mode === 'dir') return '/thumb/' + encodeURI(_cv.filePaths[i]) + dirParam('?');
+    return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}` + dirParam('&');
 }
 
 async function openMediaViewer(path, startPage = 0) {
@@ -75,7 +75,7 @@ async function openMediaViewer(path, startPage = 0) {
     document.getElementById('cv-status').textContent = 'Loading…';
     document.getElementById('cv-pages').innerHTML = '';
 
-    const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }) + rootParam('&'));
+    const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }) + dirParam('&'));
     if (!res.ok) {
         document.getElementById('cv-status').textContent = 'Cannot read ZIP';
         return;
@@ -130,7 +130,7 @@ async function openFileInDirViewer(filePath) {
     let images = [filePath];
     let startIdx = 0;
     try {
-        const res = await fetch('/api/dir/images?' + new URLSearchParams({ path: dirPath || '.' }) + rootParam('&'));
+        const res = await fetch('/api/dir/images?' + new URLSearchParams({ path: dirPath || '.' }) + dirParam('&'));
         if (res.ok) {
             const data = await res.json();
             if (data.images && data.images.length > 0) {

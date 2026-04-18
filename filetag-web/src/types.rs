@@ -1,8 +1,9 @@
 //! Request and response types for the `filetag-web` HTTP API.
 //!
 //! All response types derive [`serde::Serialize`]; all request types derive
-//! [`serde::Deserialize`].  Query-parameter structs use `pub root: Option<usize>`;
-//! JSON body structs use `pub root_id: Option<usize>`.
+//! [`serde::Deserialize`].  No numeric root IDs are exchanged between the
+//! frontend and backend — all requests carry `dir: Option<String>` (absolute
+//! filesystem path) and the backend resolves the root via `root_for_dir`.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,8 @@ pub struct ApiTag {
 pub struct ApiDirListing {
     /// The path that was listed (relative to the database root).
     pub path: String,
+    /// Absolute filesystem path of the deepest database root for this directory.
+    pub root_path: String,
     pub entries: Vec<ApiDirEntry>,
 }
 
@@ -58,9 +61,9 @@ pub struct ApiDirEntry {
     pub file_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag_count: Option<i64>,
-    /// Set for virtual-root entries; identifies which database root to enter.
+    /// Set for virtual-root tile entries; absolute filesystem path of the database root.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_id: Option<usize>,
+    pub root_path: Option<String>,
     /// False when the file is on a different filesystem than the database root.
     /// Tagging is not allowed in that case.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,11 +127,13 @@ pub struct ApiRoot {
 // ---------------------------------------------------------------------------
 
 /// Query params for `GET /api/files`.
+///
+/// `dir` is the absolute filesystem path of the directory to list.  When
+/// absent the server returns the virtual root (entry-point tiles).
 #[derive(Deserialize)]
 pub struct FileListParams {
-    pub root: Option<usize>,
-    #[serde(default)]
-    pub path: String,
+    /// Absolute filesystem path of the directory to list.
+    pub dir: Option<String>,
     #[serde(default)]
     pub show_hidden: bool,
 }
@@ -137,14 +142,17 @@ pub struct FileListParams {
 #[derive(Deserialize)]
 pub struct SearchParams {
     pub q: String,
-    pub root: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    /// The backend resolves the active root from this path.
+    pub dir: Option<String>,
 }
 
 /// Query params for `GET /api/file`.
 #[derive(Deserialize)]
 pub struct FileDetailParams {
     pub path: String,
-    pub root: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
 }
 
 /// Body for `POST /api/tag` and `POST /api/untag`.
@@ -152,27 +160,32 @@ pub struct FileDetailParams {
 pub struct TagRequest {
     pub path: String,
     pub tags: Vec<String>,
-    pub root_id: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    /// The backend resolves the entry-point root from this path.
+    pub dir: Option<String>,
 }
 
-/// Generic query param carrying only a `root` index.
+/// Generic query param carrying the current browsing directory.
+/// The backend resolves the active (deepest) root from this path.
 #[derive(Deserialize, Default)]
-pub struct RootParam {
-    pub root: Option<usize>,
+pub struct DirParam {
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
 }
 
 /// Body for `POST /api/rename-db`.
 #[derive(Deserialize)]
 pub struct RenameDbRequest {
-    pub root_id: usize,
+    /// Absolute filesystem path of the database root directory to rename.
+    pub dir: String,
     pub name: String,
 }
 
 /// Body for `POST /api/reorder-roots`.
 #[derive(Deserialize)]
 pub struct ReorderRootsRequest {
-    /// Root IDs in the desired new order (first element = sort position 0).
-    pub order: Vec<usize>,
+    /// Root directory paths in the desired new order (first element = sort position 0).
+    pub order: Vec<String>,
 }
 
 /// Body for `POST /api/tag-color`.
@@ -181,7 +194,8 @@ pub struct TagColorRequest {
     pub name: String,
     /// `None` clears the colour.
     pub color: Option<String>,
-    pub root_id: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
 }
 
 /// Body for `POST /api/rename-tag`.
@@ -189,34 +203,43 @@ pub struct TagColorRequest {
 pub struct RenameTagRequest {
     pub name: String,
     pub new_name: String,
-    pub root_id: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
 }
 
 /// Body for `POST /api/delete-tag`.
 #[derive(Deserialize)]
 pub struct DeleteTagRequest {
     pub name: String,
-    pub root_id: Option<usize>,
-}
-
-/// Body for `POST /api/cache/clear`. If `paths` is `Some`, only those files'
-/// cache entries are removed. If `None` (or missing), the entire cache is cleared.
-#[derive(Deserialize, Default)]
-pub struct CacheClearBody {
-    pub paths: Option<Vec<String>>,
+    /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/cache/clear`.
+///
+/// The active root is always determined from the `dir` query parameter.
+/// - `paths` present: clear cache for exactly those file paths.  
+/// - `all` = true: wipe the entire cache directory of the active root.  
+/// - Neither: enumerate the directory named by `dir` and clear its entries.
+#[derive(Deserialize, Default)]
+pub struct CacheClearBody {
+    pub paths: Option<Vec<String>>,
+    /// When `true`, wipe the entire `.filetag/cache/` directory of the active root.
+    pub all: Option<bool>,
+}
+
 /// Query params for `GET /api/settings`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct SettingsParams {
-    pub root: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
 }
 
 /// Body for `POST /api/settings`.
 #[derive(Deserialize)]
 pub struct SettingsBody {
-    pub root_id: Option<usize>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
     /// Minimum number of trickplay sprites for a video.
     pub sprite_min: Option<u32>,
     /// Maximum number of trickplay sprites for a video.

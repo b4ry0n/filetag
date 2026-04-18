@@ -44,35 +44,6 @@ pub struct AppState {
     pub ai_progress: std::sync::Mutex<AiProgress>,
 }
 
-/// Return the [`TagRoot`] at index `id`, or the only loaded root when `id` is
-/// `None` and exactly one root is loaded.
-///
-/// Errors when `id` is `None` and multiple roots are loaded (the caller must
-/// supply an explicit index to prevent silent cross-database operations), or
-/// when `id` is out of range.
-pub fn root_at(state: &AppState, id: Option<usize>) -> anyhow::Result<&TagRoot> {
-    let idx = match id {
-        Some(i) => i,
-        None => {
-            // With a single root loaded the caller may omit the root parameter;
-            // the only valid choice is index 0. With multiple roots the caller
-            // MUST supply an explicit index to prevent silent cross-database
-            // operations.
-            if state.roots.len() == 1 {
-                0
-            } else {
-                return Err(anyhow::anyhow!(
-                    "root parameter is required when multiple databases are loaded"
-                ));
-            }
-        }
-    };
-    state
-        .roots
-        .get(idx)
-        .ok_or_else(|| anyhow::anyhow!("root {} not found", idx))
-}
-
 /// Returns true when `abs_path` is covered by any loaded database root.
 ///
 /// A file is covered when there is a loaded `TagRoot` that:
@@ -213,31 +184,30 @@ pub fn open_for_file_op_under(
 // Path helpers
 // ---------------------------------------------------------------------------
 
+/// Return the deepest `TagRoot` whose root path contains `abs`.
+///
+/// This is the single source of truth for determining which database root owns
+/// a given path. All API handlers that need to access `.filetag/` data call
+/// this function. No other root-resolution functions exist.
+pub fn root_for_dir<'a>(state: &'a AppState, abs: &Path) -> Option<&'a TagRoot> {
+    state
+        .roots
+        .iter()
+        .filter(|r| abs.starts_with(&r.root))
+        .max_by_key(|r| r.root.as_os_str().len())
+}
+
 /// Resolve a relative path under `root`, rejecting directory traversal.
 pub fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
     preview_safe_path(root, rel)
         .ok_or_else(|| anyhow::anyhow!("invalid path '{}': escapes root or does not exist", rel))
 }
 
-/// Return the most specific (deepest) `TagRoot` whose root path contains `abs`.
-///
-/// This is the single source of truth for determining which database root owns
-/// a given file.  All derived paths (cache, thumbnails, HLS segments, etc.)
-/// are relative to the root returned here.
-pub fn root_for_file<'a>(state: &'a AppState, abs: &Path) -> Option<&'a Path> {
-    state
-        .roots
-        .iter()
-        .filter(|r| abs.starts_with(&r.root))
-        .max_by_key(|r| r.root.as_os_str().len())
-        .map(|r| r.root.as_path())
-}
-
 /// Validate a relative path under a root and return both the absolute path
 /// and the correct owning root for cache/preview purposes.
 ///
 /// Handlers that need to write or read cache artefacts MUST use this function
-/// (or `root_for_file` directly) so the correct `.filetag/cache/` directory is
+/// (or `root_for_dir` directly) so the correct `.filetag/cache/` directory is
 /// always selected.
 pub fn resolve_preview(
     state: &AppState,
@@ -245,8 +215,8 @@ pub fn resolve_preview(
     rel_path: &str,
 ) -> Option<(PathBuf, PathBuf)> {
     let abs = preview_safe_path(root, rel_path)?;
-    let effective_root = root_for_file(state, &abs)
-        .map(|p| p.to_path_buf())
+    let effective_root = root_for_dir(state, &abs)
+        .map(|r| r.root.clone())
         .unwrap_or_else(|| root.to_path_buf());
     Some((abs, effective_root))
 }

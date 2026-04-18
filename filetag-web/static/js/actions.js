@@ -18,8 +18,8 @@ async function navigateTo(path) {
 }
 
 // Select a root card (virtual root page) — shows info in the detail panel.
-async function selectRoot(id) {
-    state.selectedRoot = id;
+async function selectRoot(rootPath) {
+    state.selectedRoot = rootPath;
     state.selectedRootInfo = null;
     state.selectedFile = null;
     state.selectedDir = null;
@@ -29,16 +29,16 @@ async function selectRoot(id) {
     _armedBulkTag = null;
     renderDetail();
     try {
-        state.selectedRootInfo = await api('/api/info?root=' + id);
+        state.selectedRootInfo = await api('/api/info?dir=' + encodeURIComponent(rootPath));
         renderDetail();
     } catch (_) { /* ignore */ }
 }
 
 // Enter a specific root database (from the virtual root listing).
-async function enterRoot(id) {
+async function enterRoot(rootPath) {
     _thumbClearCache();
     _kbCursor = -1;
-    state.currentRootId = id;
+    state.currentBasePath = rootPath;
     state.selectedFile = null;
     state.selectedDir = null;
     state.selectedRoot = null;
@@ -56,7 +56,7 @@ async function enterRoot(id) {
 async function goVirtualRoot() {
     _thumbClearCache();
     _kbCursor = -1;
-    state.currentRootId = null;
+    state.currentBasePath = null;
     state.currentPath = '';
     state.selectedFile = null;
     state.selectedDir = null;
@@ -154,7 +154,7 @@ async function selectFile(path, event) {
         } else {
             state.selectedPaths.add(path);
             if (!state.selectedFilesData.has(path)) {
-                const data = await api('/api/file?path=' + encodeURIComponent(path) + rootParam('&'));
+                const data = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
                 state.selectedFilesData.set(path, data);
             }
         }
@@ -189,7 +189,7 @@ async function selectFile(path, event) {
         // Batch-fetch file data for newly added paths
         await Promise.all([...state.selectedPaths].map(async p => {
             if (!state.selectedFilesData.has(p)) {
-                const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam('&'));
+                const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
                 state.selectedFilesData.set(p, data);
             }
         }));
@@ -488,10 +488,10 @@ async function doBulkAddTag() {
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
-    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], root_id: state.currentRootId })));
+    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
     // Refresh cached data for all selected files
     await Promise.all(paths.map(async p => {
-        const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam('&'));
+        const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
         state.selectedFilesData.set(p, data);
     }));
     await loadTags();
@@ -536,6 +536,12 @@ async function clearCache(all = false) {
     const menu = document.getElementById('cache-menu');
     if (menu) menu.hidden = true;
 
+    // A root must always be explicitly selected. Never write to other roots.
+    if (state.currentBasePath == null) {
+        showToast('No database selected — navigate into a database first');
+        return;
+    }
+
     const btn = document.getElementById('cache-clear-page-btn');
     btn.disabled = true;
     const toast = showToast(all ? 'Clearing cache…' : 'Clearing page cache…', 0);
@@ -553,8 +559,13 @@ async function clearCache(all = false) {
             } else {
                 body = JSON.stringify({ dir: state.currentPath || '' });
             }
+        } else {
+            // Send the current directory so the server can find the exact
+            // (deepest) root that owns it and clear only that root's cache.
+            body = JSON.stringify({ current_dir: state.currentPath || '' });
         }
-        const resp = await fetch('/api/cache/clear' + rootParam('?'), {
+        // Always send the explicit current dir — never omit it.
+        const resp = await fetch('/api/cache/clear' + dirParam('?'), {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : {},
             body: body ?? undefined,
@@ -615,7 +626,7 @@ async function pregenSprites() {
         try {
             const minN = state.settings.sprite_min ?? 8;
             const maxN = state.settings.sprite_max ?? 16;
-            await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + rootParam('&'));
+            await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + dirParam('&'));
         } catch (_) { /* ignore */ }
         done++;
         _trickplayCache.delete(path);
@@ -664,7 +675,7 @@ async function openSettings(tab = 'video') {
     document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
     // AI settings from server
     try {
-        const res = await fetch('/api/ai/config?' + new URLSearchParams({ root_id: state.currentRootId }) + rootParam('&'));
+        const res = await fetch('/api/ai/config?' + new URLSearchParams({ dir: currentAbsDir() || '' }));
         const cfg = await res.json();
         document.getElementById('ai-endpoint').value = cfg.endpoint || '';
         document.getElementById('ai-model').value = cfg.model || '';
@@ -690,7 +701,7 @@ async function saveVideoSettings() {
     const max = parseInt(document.getElementById('sprite-max').value, 10);
     if (min >= 2 && min <= 64 && max >= 2 && max <= 64) {
         const body = {
-            root_id: state.currentRootId,
+            dir: currentAbsDir(),
             sprite_min: min,
             sprite_max: Math.max(max, min),
         };
@@ -723,7 +734,7 @@ async function aiSaveSettings() {
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,
-        root_id: state.currentRootId,
+        dir: currentAbsDir(),
     };
     const apiKey = document.getElementById('ai-api-key').value;
     if (apiKey) body.api_key = apiKey;
@@ -764,7 +775,7 @@ async function aiTestConnection() {
         const res = await fetch('/api/ai/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: testFile.path, root_id: state.currentRootId, dry_run: true }),
+            body: JSON.stringify({ path: testFile.path, dir: currentAbsDir(), dry_run: true }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -791,9 +802,9 @@ async function aiPromoteTag(path, tagName, value) {
     const toast = showToast(`Promoting: ${newTagStr}…`, 0);
     try {
         // Add the promoted tag, then remove the ai/ original.
-        await apiPost('/api/tag', { path, tags: [newTagStr], root_id: state.currentRootId });
+        await apiPost('/api/tag', { path, tags: [newTagStr], dir: currentAbsDir() });
         const origStr = value ? `${tagName}=${value}` : tagName;
-        await apiPost('/api/untag', { path, tags: [origStr], root_id: state.currentRootId });
+        await apiPost('/api/untag', { path, tags: [origStr], dir: currentAbsDir() });
         await loadFileDetail(path);
         await loadTags();
         renderDetailTagsOnly();
@@ -809,7 +820,7 @@ async function aiPromoteTag(path, tagName, value) {
 async function aiClearTags(paths) {
     const toast = showToast(`Removing ai/ tags from ${paths.length} file${paths.length !== 1 ? 's' : ''}…`, 0);
     try {
-        await apiPost('/api/ai/clear-tags', { paths, root_id: state.currentRootId });
+        await apiPost('/api/ai/clear-tags', { paths, dir: currentAbsDir() });
         // Refresh each file that may be currently selected.
         for (const p of paths) {
             if (state.selectedFile?.path === p) {
@@ -837,7 +848,7 @@ async function aiAnalyseSingle(path) {
         const res = await fetch('/api/ai/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, root_id: state.currentRootId }),
+            body: JSON.stringify({ path, dir: currentAbsDir() }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
@@ -888,7 +899,7 @@ async function aiAnalyseBatch() {
         const res = await fetch('/api/ai/analyse-batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: imagePaths, root_id: state.currentRootId }),
+            body: JSON.stringify({ paths: imagePaths, dir: currentAbsDir() }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
@@ -922,7 +933,7 @@ async function aiAnalyseBatch() {
 async function refreshSelectedFile() {
     if (!state.selectedFile) return;
     try {
-        const res = await fetch('/api/file?path=' + encodeURIComponent(state.selectedFile.path) + rootParam('&'));
+        const res = await fetch('/api/file?path=' + encodeURIComponent(state.selectedFile.path) + dirParam('&'));
         if (res.ok) {
             state.selectedFile = await res.json();
             renderDetailTagsOnly();

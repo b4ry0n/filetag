@@ -15,8 +15,8 @@ use axum::{
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::state::{AppState, THUMB_LIMITER, VTHUMB_LIMITER, resolve_preview, root_at};
-use crate::types::RootParam;
+use crate::state::{AppState, THUMB_LIMITER, VTHUMB_LIMITER, resolve_preview, root_for_dir};
+use crate::types::DirParam;
 
 // ---------------------------------------------------------------------------
 // Video cache eviction
@@ -68,13 +68,16 @@ async fn evict_video_cache(video_dir: PathBuf, max_bytes: u64) {
 /// Serve a file for preview, converting RAW / HEIC formats server-side.
 pub async fn preview_handler(
     AxumPath(rel_path): AxumPath<String>,
-    Query(rp): Query<RootParam>,
+    Query(rp): Query<DirParam>,
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
-    let db_root = match root_at(&state, rp.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(rp.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
         Some(t) => t,
@@ -811,7 +814,7 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
 #[derive(Deserialize)]
 pub struct VThumbsParams {
     path: String,
-    root: Option<usize>,
+    dir: Option<String>,
     #[serde(default)]
     n: Option<usize>,
     /// Client-configured max sprites (default 16). Lower = faster generation.
@@ -827,9 +830,12 @@ pub async fn api_vthumbs(
     Query(params): Query<VThumbsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_at(&state, params.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
         Some(t) => t,
@@ -952,7 +958,7 @@ fn sprites_for_duration(duration_secs: f64, min_n: usize, max_n: usize) -> usize
 /// Query params for `POST /api/vthumbs-pregen`.
 #[derive(Deserialize)]
 pub struct PregenParams {
-    root: Option<usize>,
+    dir: Option<String>,
 }
 
 /// Request body for `POST /api/vthumbs-pregen`.
@@ -967,9 +973,12 @@ pub async fn api_vthumbs_pregen(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<PregenBody>,
 ) -> Response {
-    let db_root = match root_at(&state, params.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let root = db_root.root.clone();
     let queued = body.paths.len();
@@ -1055,10 +1064,12 @@ pub struct VideoInfo {
 
 impl VideoInfo {
     /// Returns the ffmpeg `-c:v` argument: "copy" when the codec can be placed
-    /// directly in an MP4 container (H.264, HEVC, MPEG-4, VP9).
+    /// directly in an MP4 container and decoded by browsers (H.264, HEVC, AV1).
+    /// MPEG-4 part 2 (DivX/Xvid) and VP9 are excluded: not reliably decoded
+    /// by browsers in an MP4 container.
     pub fn video_arg(&self) -> &'static str {
         match self.video_codec.as_str() {
-            "h264" | "hevc" | "mpeg4" | "vp9" | "av1" => "copy",
+            "h264" | "hevc" | "av1" => "copy",
             _ => "libx264",
         }
     }
@@ -1203,12 +1214,15 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 /// Thumbnail endpoint — generates a JPEG thumbnail for any previewable file.
 pub async fn thumb_handler(
     AxumPath(rel_path): AxumPath<String>,
-    Query(rp): Query<RootParam>,
+    Query(rp): Query<DirParam>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_at(&state, rp.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(rp.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
         Some(t) => t,
@@ -1654,7 +1668,7 @@ fn dir_thumb_cache_path(dir_abs: &Path, root: &Path) -> Option<PathBuf> {
 #[derive(Deserialize)]
 pub struct DirThumbsParams {
     path: String,
-    root: Option<usize>,
+    dir: Option<String>,
 }
 
 /// `GET /api/dir-thumbs` — return a horizontal JPEG sprite sheet of 240 × 240
@@ -1670,9 +1684,12 @@ pub async fn api_dir_thumbs(
     Query(params): Query<DirThumbsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_at(&state, params.root) {
-        Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     let abs_dir = match crate::state::preview_safe_path(&db_root.root, &params.path) {
@@ -1685,8 +1702,8 @@ pub async fn api_dir_thumbs(
     }
 
     // Determine the correct cache root for this directory (may be a child DB).
-    let cache_root = crate::state::root_for_file(&state, &abs_dir)
-        .map(|p| p.to_path_buf())
+    let cache_root = root_for_dir(&state, &abs_dir)
+        .map(|r| r.root.clone())
         .unwrap_or_else(|| db_root.root.clone());
 
     // Check cache before acquiring the permit.

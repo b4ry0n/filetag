@@ -11,17 +11,17 @@ function renderBreadcrumb() {
     }
 
     const isMultiRoot = state.roots.filter(r => r.entry_point).length > 1;
-    const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip' && state.currentRootId != null;
+    const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip' && state.currentBasePath != null;
 
     // "/" button: goes to virtual root in multi-root mode, or to '' in single-root mode.
     let html;
     if (isMultiRoot) {
-        html = `<button class="breadcrumb-item${state.currentRootId == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
-        if (state.currentRootId != null) {
-            const root = state.roots.find(r => r.id === state.currentRootId);
-            const rootName = root ? root.name : String(state.currentRootId);
+        html = `<button class="breadcrumb-item${state.currentBasePath == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
+        if (state.currentBasePath != null) {
+            const root = state.roots.find(r => r.path === state.currentBasePath);
+            const rootName = root ? root.name : state.currentBasePath.split('/').pop();
             if (rootIsCurrent) {
-                html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename(${state.currentRootId}, this)">${esc(rootName)}</span>`;
+                html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename('${jesc(state.currentBasePath)}', this)">${esc(rootName)}</span>`;
             } else {
                 html += `<button class="breadcrumb-item" onclick="navigateTo('')">${esc(rootName)}</button>`;
             }
@@ -55,8 +55,8 @@ function renderBreadcrumb() {
 }
 
 // Inline rename of a root database name.
-function startRootRename(rootId, el) {
-    const root = state.roots.find(r => r.id === rootId);
+function startRootRename(rootPath, el) {
+    const root = state.roots.find(r => r.path === rootPath);
     if (!root) return;
     const currentName = root.name;
     const input = document.createElement('input');
@@ -71,9 +71,9 @@ function startRootRename(rootId, el) {
     async function commit() {
         const newName = input.value.trim();
         if (newName && newName !== currentName) {
-            await apiPost('/api/db/rename', { root_id: rootId, name: newName });
+            await apiPost('/api/db/rename', { dir: rootPath, name: newName });
             // Update local state
-            const idx = state.roots.findIndex(r => r.id === rootId);
+            const idx = state.roots.findIndex(r => r.path === rootPath);
             if (idx !== -1) state.roots[idx] = { ...root, name: newName };
         }
         renderBreadcrumb();
@@ -101,22 +101,22 @@ function renderGrid(items) {
         let preview = '';
         if (isDir) {
             // Add data-dir-path so the trickplay logic can request the sprite.
-            // Root cards (entry.root_id != null) keep the plain icon.
-            const dirPath = entry.root_id == null ? fullPath(entry) : null;
+            // Root cards (entry.root_path != null) keep the plain icon.
+            const dirPath = entry.root_path == null ? fullPath(entry) : null;
             preview = dirPath
                 ? `<div class="card-icon dir-thumb-anchor" data-dir-path="${esc(dirPath)}">${ICONS.folder}</div>`
                 : `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>`;
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}"></div>`;
         } else if (type_ === 'video') {
             const vpath = fullPath(entry);
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(vpath)}${rootParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}"></div>` +
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(vpath)}${dirParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else if (type_ === 'zip') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>` +
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else if (type_ === 'pdf') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${rootParam('?')}" data-name="${esc(name)}"></div>` +
+            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}"></div>` +
                 `<div class="card-filmstrip-badge">${ICONS.pdf}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
@@ -126,15 +126,15 @@ function renderGrid(items) {
 
         if (isDir) {
             // Virtual root entry (shown at the top level when multiple roots exist)
-            if (entry.root_id != null) {
-                html += `<div class="card folder root-card" data-root-id="${entry.root_id}"
+            if (entry.root_path != null) {
+                html += `<div class="card folder root-card" data-root-path="${esc(entry.root_path)}"
                     draggable="true"
-                    ondragstart="_rootDragStart(event,${entry.root_id})"
+                    ondragstart="_rootDragStart(event,'${jesc(entry.root_path)}')"
                     ondragover="_rootDragOver(event)"
                     ondragleave="_rootDragLeave(event)"
-                    ondrop="_rootDrop(event,${entry.root_id})"
-                    onclick="selectRoot(${entry.root_id})"
-                    ondblclick="enterRoot(${entry.root_id})">
+                    ondrop="_rootDrop(event,'${jesc(entry.root_path)}')"
+                    onclick="selectRoot('${jesc(entry.root_path)}')"
+                    ondblclick="enterRoot('${jesc(entry.root_path)}')">
                     <div class="card-preview"><div class="card-icon">${ICONS.root}</div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
@@ -191,8 +191,8 @@ function renderList(items) {
         const tags = isDir ? `${entry.file_count} files` : (entry.tag_count != null ? `${entry.tag_count} tags` : '');
 
         if (isDir) {
-            if (entry.root_id != null) {
-                html += `<div class="list-row folder" data-root-id="${entry.root_id}" ondblclick="enterRoot(${entry.root_id})" onclick="enterRoot(${entry.root_id})">
+            if (entry.root_path != null) {
+                html += `<div class="list-row folder" data-root-path="${esc(entry.root_path)}" ondblclick="enterRoot('${jesc(entry.root_path)}')" onclick="enterRoot('${jesc(entry.root_path)}')">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}</span>
                     <span class="size"></span>
@@ -245,10 +245,10 @@ function renderList(items) {
 // Root drag-and-drop reordering
 // ---------------------------------------------------------------------------
 
-let _rootDragId = null;
+let _rootDragPath = null;
 
-function _rootDragStart(ev, id) {
-    _rootDragId = id;
+function _rootDragStart(ev, rootPath) {
+    _rootDragPath = rootPath;
     ev.dataTransfer.effectAllowed = 'move';
 }
 
@@ -262,19 +262,19 @@ function _rootDragLeave(ev) {
     ev.currentTarget.classList.remove('drag-over');
 }
 
-async function _rootDrop(ev, targetId) {
+async function _rootDrop(ev, targetPath) {
     ev.preventDefault();
     ev.currentTarget.classList.remove('drag-over');
-    if (_rootDragId === null || _rootDragId === targetId) return;
+    if (_rootDragPath === null || _rootDragPath === targetPath) return;
 
     // Build new order: swap dragged root to just before target
-    const current = state.roots.map(r => r.id);
-    const from = current.indexOf(_rootDragId);
-    const to = current.indexOf(targetId);
+    const current = state.roots.map(r => r.path);
+    const from = current.indexOf(_rootDragPath);
+    const to = current.indexOf(targetPath);
     if (from < 0 || to < 0) return;
     current.splice(from, 1);
-    current.splice(to, 0, _rootDragId);
-    _rootDragId = null;
+    current.splice(to, 0, _rootDragPath);
+    _rootDragPath = null;
 
     await apiPost('/api/roots/reorder', { order: current });
     // Reload roots and re-render virtual root page
