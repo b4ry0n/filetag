@@ -10,6 +10,7 @@ const state = {
     searchQuery: '',
     searchResults: [],
     zipPath: null,         // path to the currently browsed zip archive
+    zipSubdir: '',         // current sub-path within the archive (e.g. "chapter1/")
     zipEntries: [],        // [{name, size, is_image, image_index, tag_count}]
     selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null

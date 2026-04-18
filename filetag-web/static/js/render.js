@@ -52,7 +52,24 @@ function renderBreadcrumb() {
 
     if (state.mode === 'zip') {
         const zipName = state.zipPath.split('/').pop();
-        html += `<span class="breadcrumb-sep">/</span><span class="breadcrumb-item current">${esc(zipName)}</span>`;
+        if (!state.zipSubdir) {
+            html += `<span class="breadcrumb-sep">/</span><span class="breadcrumb-item current">${esc(zipName)}</span>`;
+        } else {
+            html += `<span class="breadcrumb-sep">/</span><button class="breadcrumb-item" onclick="enterZipSubdir('')">${esc(zipName)}</button>`;
+            const parts = state.zipSubdir.replace(/\/$/, '').split('/');
+            let accum = '';
+            for (let i = 0; i < parts.length; i++) {
+                accum += (i === 0 ? '' : '/') + parts[i];
+                const isCurrent = i === parts.length - 1;
+                const target = accum + '/';
+                html += `<span class="breadcrumb-sep">/</span>`;
+                if (isCurrent) {
+                    html += `<span class="breadcrumb-item current">${esc(parts[i])}</span>`;
+                } else {
+                    html += `<button class="breadcrumb-item" onclick="enterZipSubdir('${jesc(target)}')">${esc(parts[i])}</button>`;
+                }
+            }
+        }
     }
 
     el.innerHTML = html;

@@ -246,6 +246,14 @@
                     </div>
                 </div>
                 <div id="settings-tab-ai" class="modal-tab-panel" hidden>
+                    <label class="feature-check ai-enabled-row">
+                        <input type="checkbox" id="ai-enabled" onchange="aiToggleEnabled()">
+                        <div>
+                            <span class="feature-name">AI analysis</span>
+                            <small>Enable AI-powered image analysis. Settings are preserved when disabled.</small>
+                        </div>
+                    </label>
+                    <div id="ai-settings-fields">
                     <label>Format
                         <select id="ai-format">
                             <option value="openai">OpenAI-compatible (llama.cpp, LM Studio, vLLM)</option>
@@ -277,6 +285,7 @@
                         <button onclick="closeSettings()">Cancel</button>
                     </div>
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
+                    </div><!-- #ai-settings-fields -->
                 </div>
             </div>
         </div>

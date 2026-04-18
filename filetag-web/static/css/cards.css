@@ -35,8 +35,7 @@
 }
 
 .card.kb-focus {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
+    box-shadow: 0 0 0 3px var(--accent), 0 0 12px 4px rgba(18, 184, 134, 0.45);
 }
 
 .card-goto {
@@ -144,16 +143,14 @@
     overflow: hidden;
     pointer-events: all;
 }
-/* Progress bar at the bottom of the trickplay area */
-.card-trickplay-bar {
+/* Inline pinned sprite: shown inside the card after clicking a video card */
+.card-trickplay-pinned {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    height: 3px;
-    background: var(--accent);
+    inset: 0;
+    background-repeat: no-repeat;
+    background-size: auto 100%;
+    z-index: 1;
     pointer-events: none;
-    transition: width 0.06s linear;
-    width: 0;
 }
 
 .card-icon {
@@ -289,8 +286,9 @@
 .list-row:hover { background: var(--bg-hover); }
 .list-row.selected { background: var(--primary-light); }
 .list-row.kb-focus {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
+    background: rgba(18, 184, 134, 0.12);
+    box-shadow: inset 4px 0 0 var(--accent);
+    outline: none;
 }
 
 .list-row .icon { display: flex; align-items: center; justify-content: center; }

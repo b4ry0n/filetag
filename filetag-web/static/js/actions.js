@@ -143,6 +143,22 @@ async function clearTagFilters() {
 }
 
 async function selectFile(path, event) {
+    // Dismiss trickplay overlay and move keyboard focus to the clicked item.
+    // Floating sprites are cleaned up by the trickplay click handler; here we
+    // only clear pinned inline sprites from cards that are not the clicked one.
+    if (event && event.target) {
+        const clickedCard = event.target.closest('.card');
+        document.querySelectorAll('.card-trickplay-pinned').forEach(el => {
+            if (!clickedCard || !clickedCard.contains(el)) el.remove();
+        });
+        const el = event.target.closest('[data-path], [data-root-path]');
+        if (el) {
+            const items = _kbItems();
+            const idx = items.indexOf(el);
+            if (idx !== -1) _kbSetCursor(idx, false);
+        }
+    }
+
     const layout = document.querySelector('.layout');
     const anchor = saveScrollAnchor(path);
 
@@ -703,6 +719,9 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-prompt').value = cfg.prompt || '';
         document.getElementById('ai-prompt').placeholder = cfg.default_prompt || '';
         document.getElementById('ai-format').value = cfg.format || 'openai';
+        const enabled = cfg.enabled !== false; // default true if key absent
+        document.getElementById('ai-enabled').checked = enabled;
+        document.getElementById('ai-settings-fields').hidden = !enabled;
     } catch (_) { /* defaults are fine */ }
     document.getElementById('ai-test-result').hidden = true;
     switchSettingsTab(tab);
@@ -759,6 +778,11 @@ async function saveFeaturesSettings() {
 function openAiSettings() { openSettings('ai'); }
 function closeAiSettings() { closeSettings(); }
 
+function aiToggleEnabled() {
+    const enabled = document.getElementById('ai-enabled').checked;
+    document.getElementById('ai-settings-fields').hidden = !enabled;
+}
+
 function aiUseDefaultPrompt() {
     const el = document.getElementById('ai-prompt');
     if (el) el.value = el.placeholder;
@@ -772,6 +796,7 @@ async function aiSaveSettings() {
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,
+        enabled: document.getElementById('ai-enabled').checked,
         dir: currentAbsDir(),
     };
     const apiKey = document.getElementById('ai-api-key').value;
