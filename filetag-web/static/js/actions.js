@@ -226,6 +226,17 @@ async function doAddTag() {
     input.focus();
 }
 
+async function doDirAddTag() {
+    if (!state.selectedDir) return;
+    const input = document.getElementById('dir-tag-input');
+    const tagStr = input?.value.trim();
+    if (!tagStr) return;
+    input.value = '';
+    await addTagToDir(state.selectedDir.path, tagStr);
+    renderTags();
+    _updateCardTagBadges();
+}
+
 async function doRemoveTag(path, tagStr) {
     await removeTagFromFile(path, tagStr);
     renderTags();

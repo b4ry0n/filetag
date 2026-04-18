@@ -184,6 +184,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/info", get(api::api_info))
         .route("/api/cache/clear", post(api::api_cache_clear))
         .route("/api/tags", get(api::api_tags))
+        .route("/api/tag-values", get(api::api_tag_values))
         .route("/api/files", get(api::api_files))
         .route("/api/search", get(api::api_search))
         .route("/api/file", get(api::api_file_detail))
