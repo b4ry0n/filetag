@@ -734,11 +734,12 @@ async function saveFeaturesSettings() {
         state.settings.feature_imagemagick = body.feature_imagemagick;
         state.settings.feature_pdf = body.feature_pdf;
         _thumbClearCache();
+        closeSettings();
+        await loadFiles(state.currentPath);
     } catch (e) {
         showToast('Failed to save settings: ' + e.message);
         return;
     }
-    closeSettings();
 }
 
 // Backward-compat wrappers (called from cache-menu & ai-test flow)
