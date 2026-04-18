@@ -764,6 +764,50 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
 }
 
 // ---------------------------------------------------------------------------
+// sips thumbnail helper (macOS)
+// ---------------------------------------------------------------------------
+
+/// Use sips (macOS built-in) to convert `path` to a JPEG thumbnail.
+/// `root` is the database root; the temp file goes under `<root>/.filetag/cache/tmp/`.
+/// Returns `None` on non-macOS or when sips fails.
+#[cfg(target_os = "macos")]
+pub async fn sips_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
+    let tmp_dir = root.join(".filetag").join("cache").join("tmp");
+    let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+    let stem = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = tmp_dir.join(format!("sips_{stem}.jpg"));
+    let status = tokio::process::Command::new("sips")
+        .args(["-s", "format", "jpeg", "-Z", "400"])
+        .arg(path)
+        .args(["--out"])
+        .arg(&tmp)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .ok()?;
+    if !status.success() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return None;
+    }
+    let data = tokio::fs::read(&tmp).await.ok()?;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    if data.starts_with(&[0xFF, 0xD8]) {
+        Some(data)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub async fn sips_thumb_jpeg(_path: &Path, _root: &Path) -> Option<Vec<u8>> {
+    None
+}
+
+// ---------------------------------------------------------------------------
 // PDF thumbnail
 // ---------------------------------------------------------------------------
 
@@ -878,8 +922,21 @@ pub async fn thumb_handler(
 
         // HEIC/HEIF
         "heic" | "heif" => {
+            let root = cache_root.clone();
             thumb_cached(&abs, &cache_root, |abs| {
-                Box::pin(async move { image_thumb_jpeg(abs, features).await })
+                Box::pin(async move {
+                    if let Some(data) = image_thumb_jpeg(abs, features).await {
+                        return Some(data);
+                    }
+                    // sips fallback: handles HEVC-encoded HEIC (dynamic wallpapers)
+                    // that the pure-Rust extractor and ImageMagick miss.
+                    if features.imagemagick
+                        && let Some(data) = sips_thumb_jpeg(abs, &root).await
+                    {
+                        return Some(data);
+                    }
+                    None
+                })
             })
             .await
         }
