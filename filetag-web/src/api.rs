@@ -352,17 +352,34 @@ pub async fn api_tags(
     let tags = db::all_tags(&conn).map_err(AppError)?;
     let result: Result<Vec<ApiTag>, AppError> = tags
         .into_iter()
-        .map(|(name, count, color)| {
+        .map(|(name, count, color, has_values)| {
             let synonyms = db::synonyms_for_tag(&conn, &name).map_err(AppError)?;
             Ok(ApiTag {
                 name,
                 count,
                 color,
                 synonyms,
+                has_values,
             })
         })
         .collect();
     Ok(Json(result?))
+}
+
+/// `GET /api/tag-values` — list all distinct values for a given k/v tag.
+pub async fn api_tag_values(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<TagValuesParams>,
+) -> Result<Json<Vec<ApiTagValue>>, AppError> {
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let values = db::tag_values(&conn, &params.name).map_err(AppError)?;
+    Ok(Json(
+        values
+            .into_iter()
+            .map(|(value, count)| ApiTagValue { value, count })
+            .collect(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -488,13 +505,21 @@ pub async fn api_files(
             let child_count = std::fs::read_dir(entry.path())
                 .map(|rd| rd.flatten().count() as i64)
                 .unwrap_or(0);
+            let dir_rel_path = format!("{}{}", prefix, name);
+            let dir_tag_count: i64 = tag_stmt
+                .query_row(rusqlite::params![&dir_rel_path], |r| r.get(0))
+                .unwrap_or(0);
             dirs.push(ApiDirEntry {
                 name,
                 is_dir: true,
                 size: None,
                 mtime: None,
                 file_count: Some(child_count),
-                tag_count: None,
+                tag_count: if dir_tag_count > 0 {
+                    Some(dir_tag_count)
+                } else {
+                    None
+                },
                 root_path: None,
                 covered: None,
             });

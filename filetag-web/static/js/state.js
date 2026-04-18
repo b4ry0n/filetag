@@ -21,6 +21,7 @@ const state = {
     detailOpen: true,
     expandedGroups: new Set(), // tag group prefixes that are expanded
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
+    kvValueCache: {},          // tagName → [{value, count}] loaded lazily for k/v tags
     aiAnalysing: new Set(),    // paths currently being analysed by AI
     settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false }, // per-root settings (loaded from DB)
 };
@@ -169,9 +170,9 @@ async function loadFileDetail(path) {
     state.selectedDir = null;
 }
 
-function selectDir(path, name, fileCount) {
+async function selectDir(path, name, fileCount) {
     const anchor = saveScrollAnchor(path);
-    state.selectedDir = { path, name, file_count: fileCount };
+    state.selectedDir = { path, name, file_count: fileCount, tags: null };
     state.selectedFile = null;
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
@@ -184,6 +185,41 @@ function selectDir(path, name, fileCount) {
     _updateCardSelection();
     renderDetail();
     restoreScrollAnchor(anchor);
+    // Load tags asynchronously so the panel appears immediately.
+    try {
+        const detail = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
+        if (state.selectedDir && state.selectedDir.path === path) {
+            state.selectedDir.tags = detail.tags || [];
+            renderDetail();
+        }
+    } catch (_) {
+        if (state.selectedDir && state.selectedDir.path === path) {
+            state.selectedDir.tags = [];
+            renderDetail();
+        }
+    }
+}
+
+async function addTagToDir(path, tagStr) {
+    await apiPost('/api/tag', { path, tags: [tagStr], dir: currentAbsDir() });
+    const detail = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
+    if (state.selectedDir && state.selectedDir.path === path) {
+        state.selectedDir.tags = detail.tags || [];
+        renderDetail();
+    }
+    await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
+}
+
+async function removeTagFromDir(path, tagStr) {
+    await apiPost('/api/untag', { path, tags: [tagStr], dir: currentAbsDir() });
+    const detail = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
+    if (state.selectedDir && state.selectedDir.path === path) {
+        state.selectedDir.tags = detail.tags || [];
+        renderDetail();
+    }
+    await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
 }
 
 // Timer to distinguish single click (select) from double click (navigate) on directories.

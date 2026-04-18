@@ -126,7 +126,8 @@ function renderGrid(items) {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
         }
 
-        const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : formatSize(entry.size);
+        const dirTagHint = isDir && entry.tag_count ? ` · ${entry.tag_count} tag${entry.tag_count === 1 ? '' : 's'}` : '';
+        const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}${dirTagHint}` : formatSize(entry.size);
 
         if (isDir) {
             // Virtual root entry (shown at the top level when multiple roots exist)
@@ -195,7 +196,9 @@ function renderList(items) {
         const icon = isDir ? ICONS.folder : fileIcon(name);
         const size = isDir ? '' : formatSize(entry.size);
         const date = isDir ? '' : formatDate(entry.mtime);
-        const tags = isDir ? `${entry.file_count} files` : (entry.tag_count != null ? `${entry.tag_count} tags` : '');
+        const tags = isDir
+            ? (entry.tag_count ? `${entry.tag_count} tag${entry.tag_count === 1 ? '' : 's'}` : '')
+            : (entry.tag_count != null ? `${entry.tag_count} tags` : '');
 
         if (isDir) {
             if (entry.root_path != null) {

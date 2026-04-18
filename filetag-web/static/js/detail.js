@@ -675,7 +675,26 @@ function renderDetail() {
     // Directory selected
     if (state.selectedDir) {
         const d = state.selectedDir;
+        let tagsHtml;
+        let tagInputHtml = '';
+        if (d.tags === null) {
+            tagsHtml = '<span class="no-tags">Loading…</span>';
+        } else {
+            tagsHtml = d.tags.length === 0
+                ? '<span class="no-tags">No tags assigned</span>'
+                : d.tags.map(t => {
+                    const tagStr = formatTag(t);
+                    const stateTag = state.tags.find(st => st.name === t.name);
+                    const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+                    return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="removeTagFromDir('${jesc(d.path)}','${jesc(tagStr)}')">&times;</button></span>`;
+                }).join('');
+            tagInputHtml = `<div class="tag-add-form">
+                <input type="text" id="dir-tag-input" placeholder="Add tag (e.g. genre/rock)">
+                <button onclick="doDirAddTag()">Add</button>
+            </div>`;
+        }
         panel.innerHTML = `
+            <div class="detail-top">
             <div class="detail-header">
                 <h3>${esc(d.name)}</h3>
                 <button class="detail-close" onclick="closeDetail()" title="Close">&times;</button>
@@ -686,7 +705,19 @@ function renderDetail() {
             <div class="detail-meta">
                 <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(d.path)}</span></div>
                 <div class="detail-meta-row"><span class="detail-meta-label">Items</span><span class="detail-meta-value">${d.file_count}</span></div>
+            </div>
+            </div>
+            <div class="detail-v-handle" id="detail-v-handle"></div>
+            <div class="detail-tags-section">
+                <h4>Tags</h4>
+                <div class="detail-tags">${tagsHtml}</div>
+                ${tagInputHtml}
             </div>`;
+        if (d.tags !== null) {
+            const inp = document.getElementById('dir-tag-input');
+            if (inp) attachTagAutocomplete(inp, () => doDirAddTag());
+            initDetailVHandle(document.getElementById('detail-v-handle'));
+        }
         return;
     }
 

@@ -512,10 +512,14 @@ pub fn tags_for_file(conn: &Connection, file_id: i64) -> Result<Vec<(String, Opt
     Ok(result)
 }
 
+/// A single tag as returned by [`all_tags`]: (name, count, color, has_values).
+pub type TagRow = (String, i64, Option<String>, bool);
+
 /// List all known tags (with usage count).
-pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64, Option<String>)>> {
+pub fn all_tags(conn: &Connection) -> Result<Vec<TagRow>> {
     let mut stmt = conn.prepare(
-        "SELECT t.name, COUNT(ft.file_id), t.color
+        "SELECT t.name, COUNT(ft.file_id), t.color,
+                MAX(CASE WHEN ft.value IS NOT NULL AND ft.value != '' THEN 1 ELSE 0 END) AS has_values
          FROM tags t
          LEFT JOIN file_tags ft ON ft.tag_id = t.id
          GROUP BY t.id
@@ -526,7 +530,29 @@ pub fn all_tags(conn: &Connection) -> Result<Vec<(String, i64, Option<String>)>>
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)?,
             row.get::<_, Option<String>>(2)?,
+            row.get::<_, bool>(3)?,
         ))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// Return all distinct non-empty values for a given tag, with per-value file counts.
+/// Results are ordered by count descending, then by value.
+pub fn tag_values(conn: &Connection, name: &str) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT ft.value, COUNT(DISTINCT ft.file_id)
+         FROM file_tags ft
+         JOIN tags t ON t.id = ft.tag_id
+         WHERE t.name = ?1 AND ft.value != ''
+         GROUP BY ft.value
+         ORDER BY COUNT(DISTINCT ft.file_id) DESC, ft.value",
+    )?;
+    let rows = stmt.query_map(params![name], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
     })?;
     let mut result = Vec::new();
     for row in rows {

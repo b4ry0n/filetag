@@ -39,6 +39,28 @@ pub struct ApiTag {
     /// Registered synonyms (aliases) for this tag.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub synonyms: Vec<String>,
+    /// True when at least one file-tag assignment carries a non-empty value
+    /// (i.e. this tag is used in `key=value` style).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_values: bool,
+}
+
+/// Query parameters for `GET /api/tag-values`.
+#[derive(Deserialize)]
+pub struct TagValuesParams {
+    /// Tag name to query values for.
+    pub name: String,
+    /// Optional absolute directory path for root resolution.
+    pub dir: Option<String>,
+}
+
+/// A single value variant for a k/v tag, returned by `GET /api/tag-values`.
+#[derive(Serialize)]
+pub struct ApiTagValue {
+    /// The concrete value string (e.g. `"2024"`, `"Miles Davis"`).
+    pub value: String,
+    /// Number of files carrying this tag with this value.
+    pub count: i64,
 }
 
 /// A directory listing as returned by `GET /api/files`.

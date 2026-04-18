@@ -669,7 +669,7 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, isolated: bool, all_dbs: bool) -> Re
                 if let Ok(c) = rusqlite::Connection::open(&db_path)
                     && let Ok(tags) = db::all_tags(&c)
                 {
-                    for (name, count, _color) in tags {
+                    for (name, count, _color, _has_values) in tags {
                         *merged_tags.entry(name).or_insert(0) += count;
                     }
                 }
@@ -677,14 +677,14 @@ fn cmd_tags(cli: &Cli, files: Vec<PathBuf>, isolated: bool, all_dbs: bool) -> Re
         } else if isolated {
             // Isolated: only the current database, no linked children, no ancestors.
             let tags = db::all_tags(&conn)?;
-            for (name, count, _color) in tags {
+            for (name, count, _color, _has_values) in tags {
                 merged_tags.insert(name, count);
             }
         } else {
             let databases = db::collect_all_databases(conn, root, !cli.no_parents)?;
             for db in &databases {
                 if let Ok(tags) = db::all_tags(&db.conn) {
-                    for (name, count, _color) in tags {
+                    for (name, count, _color, _has_values) in tags {
                         *merged_tags.entry(name).or_insert(0) += count;
                     }
                 }

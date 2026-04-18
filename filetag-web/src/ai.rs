@@ -774,22 +774,12 @@ fn fetch_existing_tags(
     let kv_keys: Vec<String> = db::all_tags(conn)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|(name, _count, _color)| {
-            if name.starts_with(tag_prefix) {
-                return None;
+        .filter_map(|(name, _count, _color, has_values)| {
+            if name.starts_with(tag_prefix) || !has_values {
+                None
+            } else {
+                Some(name)
             }
-            let has_value: bool = conn
-                .query_row(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM file_tags ft
-                        JOIN tags t ON t.id = ft.tag_id
-                        WHERE t.name = ?1 AND ft.value != ''
-                     )",
-                    rusqlite::params![name],
-                    |r| r.get::<_, bool>(0),
-                )
-                .unwrap_or(false);
-            if has_value { Some(name) } else { None }
         })
         .collect();
 
@@ -1009,22 +999,12 @@ pub async fn api_ai_analyse_batch(
                 let kv: Vec<String> = db::all_tags(&conn)
                     .unwrap_or_default()
                     .into_iter()
-                    .filter_map(|(name, _, _)| {
-                        if name.starts_with(&config.tag_prefix) {
-                            return None;
+                    .filter_map(|(name, _, _, has_values)| {
+                        if name.starts_with(&config.tag_prefix) || !has_values {
+                            None
+                        } else {
+                            Some(name)
                         }
-                        let has_value: bool = conn
-                            .query_row(
-                                "SELECT EXISTS(
-                                    SELECT 1 FROM file_tags ft
-                                    JOIN tags t ON t.id = ft.tag_id
-                                    WHERE t.name = ?1 AND ft.value != ''
-                                 )",
-                                rusqlite::params![name],
-                                |r| r.get::<_, bool>(0),
-                            )
-                            .unwrap_or(false);
-                        if has_value { Some(name) } else { None }
                     })
                     .collect();
                 (existing, kv)
