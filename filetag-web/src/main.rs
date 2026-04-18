@@ -5,6 +5,7 @@ mod extract;
 mod preview;
 mod state;
 mod types;
+mod video;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -198,11 +199,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dir/images", get(archive::api_dir_images))
         .route("/preview/*path", get(preview::preview_handler))
         .route("/thumb/*path", get(preview::thumb_handler))
-        .route("/api/vthumbs", get(preview::api_vthumbs))
-        .route(
-            "/api/vthumbs/pregenerate",
-            post(preview::api_vthumbs_pregen),
-        )
+        .route("/api/vthumbs", get(video::api_vthumbs))
+        .route("/api/vthumbs/pregenerate", post(video::api_vthumbs_pregen))
         .route("/api/dir-thumbs", get(preview::api_dir_thumbs))
         .route("/api/ai/analyse", post(ai::api_ai_analyse))
         .route("/api/ai/analyse-batch", post(ai::api_ai_analyse_batch))
