@@ -1,6 +1,7 @@
 mod ai;
 mod api;
 mod archive;
+mod extract;
 mod preview;
 mod state;
 mod types;

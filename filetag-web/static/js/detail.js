@@ -543,8 +543,10 @@ async function _thumbRun() {
         const src = el.dataset.thumbSrc;
         if (!src) continue;
         // Check cache (may have been filled by another element with the same URL).
+        // null = permanent failure (e.g. 422): skip without fetching again.
         if (_thumbCache.has(src)) {
-            _thumbReplace(el, _thumbCache.get(src));
+            const cached = _thumbCache.get(src);
+            if (cached) _thumbReplace(el, cached);
             continue;
         }
         try {
@@ -561,6 +563,10 @@ async function _thumbRun() {
                     _thumbQueue.push(el);
                     _thumbObserver.observe(el);
                 }
+            } else {
+                // 422 (feature disabled) or other permanent failure: cache null
+                // so future renders skip the fetch instead of retrying.
+                _thumbCache.set(src, null);
             }
         } catch (_) { /* network error: leave placeholder */ }
     }

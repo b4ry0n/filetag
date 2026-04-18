@@ -15,6 +15,7 @@ use axum::{
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::extract::{heic_extract_jpeg_thumbnail, raw_embedded_jpeg};
 use crate::state::Features;
 use crate::state::{
     AppState, THUMB_LIMITER, VTHUMB_LIMITER, load_features_for, resolve_preview, root_for_dir,
@@ -511,160 +512,6 @@ pub fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
     file_cache_path(abs, root, "thumbs", "thumb.jpg")
 }
 
-// ---------------------------------------------------------------------------
-// Pure-Rust embedded JPEG extraction from RAW files
-// ---------------------------------------------------------------------------
-
-/// Read a `u16` from `data[off..]` with the given byte order.
-fn tiff_u16(data: &[u8], off: usize, le: bool) -> Option<u16> {
-    let s = data.get(off..off + 2)?;
-    Some(if le {
-        u16::from_le_bytes([s[0], s[1]])
-    } else {
-        u16::from_be_bytes([s[0], s[1]])
-    })
-}
-
-/// Read a `u32` from `data[off..]` with the given byte order.
-fn tiff_u32(data: &[u8], off: usize, le: bool) -> Option<u32> {
-    let s = data.get(off..off + 4)?;
-    let arr: [u8; 4] = s.try_into().ok()?;
-    Some(if le {
-        u32::from_le_bytes(arr)
-    } else {
-        u32::from_be_bytes(arr)
-    })
-}
-
-/// Walk one TIFF IFD at `offset`, collecting `(jpeg_offset, jpeg_len)` pairs
-/// and any sub-IFD offsets. Returns the next-IFD offset when non-zero.
-fn tiff_walk_ifd(
-    data: &[u8],
-    offset: usize,
-    le: bool,
-    jpegs: &mut Vec<(usize, usize)>,
-    sub_ifds: &mut Vec<usize>,
-) -> Option<usize> {
-    let count = tiff_u16(data, offset, le)? as usize;
-    let base = offset + 2;
-    // Ensure all entry bytes are in-bounds before iterating.
-    data.get(base..base + count * 12)?;
-
-    let mut jpeg_off: Option<usize> = None;
-    let mut jpeg_len: Option<usize> = None;
-
-    for i in 0..count {
-        let e = base + i * 12;
-        let tag = tiff_u16(data, e, le).unwrap_or(0);
-        let typ = tiff_u16(data, e + 2, le).unwrap_or(0);
-        let cnt = tiff_u32(data, e + 4, le).unwrap_or(0) as usize;
-
-        match tag {
-            // JPEGInterchangeFormat: file offset to embedded JPEG
-            0x0201 => jpeg_off = tiff_u32(data, e + 8, le).map(|v| v as usize),
-            // JPEGInterchangeFormatLength: byte length of embedded JPEG
-            0x0202 => jpeg_len = tiff_u32(data, e + 8, le).map(|v| v as usize),
-            // SubIFD: one or more additional IFD offsets (used in DNG / NEF)
-            0x014A => {
-                if cnt == 1 {
-                    if let Some(v) = tiff_u32(data, e + 8, le) {
-                        sub_ifds.push(v as usize);
-                    }
-                } else if typ == 4 {
-                    // LONG array; value field is a pointer to the array
-                    if let Some(arr_off) = tiff_u32(data, e + 8, le).map(|v| v as usize) {
-                        for j in 0..cnt {
-                            if let Some(v) = tiff_u32(data, arr_off + j * 4, le) {
-                                sub_ifds.push(v as usize);
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if let (Some(off), Some(len)) = (jpeg_off, jpeg_len)
-        && len > 0
-    {
-        jpegs.push((off, len));
-    }
-
-    // The next-IFD offset is stored immediately after the last entry.
-    let next_off = tiff_u32(data, base + count * 12, le).unwrap_or(0) as usize;
-    if next_off != 0 { Some(next_off) } else { None }
-}
-
-/// Extract an embedded JPEG preview from a TIFF-family RAW file.
-/// Covers NEF, CR2, ARW, ORF, DNG, PEF, SRW, RW2 and most other TIFF-based
-/// formats. Prefers the largest JPEG found (full preview over tiny thumbnail).
-fn raw_embedded_jpeg_tiff(data: &[u8]) -> Option<Vec<u8>> {
-    let le = match data.get(0..2)? {
-        b"II" => true,
-        b"MM" => false,
-        _ => return None,
-    };
-    // Standard TIFF magic number = 42
-    if tiff_u16(data, 2, le)? != 42 {
-        return None;
-    }
-    let ifd0_off = tiff_u32(data, 4, le)? as usize;
-
-    let mut jpegs: Vec<(usize, usize)> = Vec::new();
-    let mut sub_ifds: Vec<usize> = Vec::new();
-
-    // Walk IFD0 and the full linked IFD chain (IFD1, IFD2, …)
-    let mut next = tiff_walk_ifd(data, ifd0_off, le, &mut jpegs, &mut sub_ifds);
-    while let Some(off) = next {
-        next = tiff_walk_ifd(data, off, le, &mut jpegs, &mut sub_ifds);
-    }
-    // Walk sub-IFDs (DNG preview IFD, NEF large preview, etc.)
-    for off in sub_ifds {
-        tiff_walk_ifd(data, off, le, &mut jpegs, &mut Vec::new());
-    }
-
-    // Pick the largest valid JPEG (most likely the full-resolution preview).
-    jpegs.sort_by_key(|&(_, len)| std::cmp::Reverse(len));
-    for (off, len) in jpegs {
-        if let Some(slice) = data.get(off..off + len)
-            && slice.starts_with(&[0xFF, 0xD8])
-        {
-            return Some(slice.to_vec());
-        }
-    }
-    None
-}
-
-/// Extract an embedded JPEG preview from a Fujifilm RAF file.
-/// RAF header (big-endian):
-///   0x00–0x0F  "FUJIFILMCCD-RAW " (magic)
-///   0x44–0x47  u32 preview image file offset
-///   0x48–0x4B  u32 preview image size in bytes
-fn raf_extract_jpeg(data: &[u8]) -> Option<Vec<u8>> {
-    let off = u32::from_be_bytes(data.get(0x44..0x48)?.try_into().ok()?) as usize;
-    let len = u32::from_be_bytes(data.get(0x48..0x4C)?.try_into().ok()?) as usize;
-    if len == 0 {
-        return None;
-    }
-    let slice = data.get(off..off + len)?;
-    if slice.starts_with(&[0xFF, 0xD8]) {
-        Some(slice.to_vec())
-    } else {
-        None
-    }
-}
-
-/// Extract the largest embedded JPEG preview from a RAW file without any
-/// external tools. Handles TIFF-family formats and Fujifilm RAF. Returns
-/// `None` for unsupported container types (e.g. CR3 / ISOBMFF).
-fn raw_embedded_jpeg(data: &[u8]) -> Option<Vec<u8>> {
-    if data.starts_with(b"FUJIFILMCCD-RAW ") {
-        return raf_extract_jpeg(data);
-    }
-    raw_embedded_jpeg_tiff(data)
-}
-
 /// RAW extensions for which pure-Rust embedded JPEG extraction is attempted.
 const RAW_THUMB_EXTS: &[&str] = &[
     "arw", "cr2", "nef", "orf", "dng", "rw2", "pef", "srw", "raf", "raw", "3fr", "erf", "mef",
@@ -810,9 +657,18 @@ pub async fn raw_extract_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
 // ---------------------------------------------------------------------------
 
 /// Convert HEIC/HEIF to JPEG for browser display.
-/// Attempt order: sips/magick (imagemagick) → ffmpeg (video).
-/// Returns 422 with an explanatory message when no feature is enabled.
+/// Attempt order: pure-Rust ISOBMFF thumbnail → sips/magick (imagemagick) → ffmpeg (video).
+/// Returns 422 with an explanatory message when nothing works.
 pub async fn preview_heic(path: &Path, root: &Path, features: Features) -> Response {
+    // Pure-Rust: extract embedded JPEG thumbnail from ISOBMFF container.
+    // Works without any external tools; yields the thumbnail image stored
+    // alongside the primary HEVC item (typically 240–480 px on iPhone files).
+    if let Ok(data) = tokio::fs::read(path).await
+        && let Some(jpeg) = heic_extract_jpeg_thumbnail(&data)
+    {
+        return ([(header::CONTENT_TYPE, "image/jpeg")], jpeg).into_response();
+    }
+
     if !features.imagemagick && !features.video {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -1081,6 +937,38 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
     // Pure-Rust RAW path: extract embedded JPEG preview and resize
     if let Some(data) = raw_thumb_rust(path).await {
         return Some(data);
+    }
+
+    // Pure-Rust HEIC/HEIF path: extract JPEG thumbnail from ISOBMFF container
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if (ext == "heic" || ext == "heif")
+        && let Ok(raw) = tokio::fs::read(path).await
+        && let Some(jpeg) = heic_extract_jpeg_thumbnail(&raw)
+    {
+        // Resize the extracted thumbnail to the standard thumb size.
+        let resized = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+            let img = image::load_from_memory(&jpeg).ok()?;
+            let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
+                .encode_image(&img.to_rgb8())
+                .ok()?;
+            if out.starts_with(&[0xFF, 0xD8]) {
+                Some(out)
+            } else {
+                None
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+        if resized.is_some() {
+            return resized;
+        }
     }
 
     if features.imagemagick {

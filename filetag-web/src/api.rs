@@ -374,7 +374,7 @@ pub async fn api_files(
         .enumerate()
         .filter(|(_, r)| r.entry_point)
         .collect();
-    if params.dir.is_none() && entry_point_roots.len() > 1 {
+    if params.dir.is_none() {
         let mut ordered: Vec<(usize, &TagRoot, i64)> = entry_point_roots
             .iter()
             .map(|&(id, r)| {
