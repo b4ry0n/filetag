@@ -95,6 +95,15 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
     if endpoint.is_empty() {
         return None;
     }
+    // If explicitly disabled, return None (endpoint is preserved).
+    if db::get_setting(conn, "ai.enabled")
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("0")
+    {
+        return None;
+    }
     let model = db::get_setting(conn, "ai.model")
         .ok()
         .flatten()
@@ -1080,6 +1089,7 @@ pub(crate) struct AiConfigRequest {
     tag_prefix: Option<String>,
     max_tokens: Option<u32>,
     format: Option<String>,
+    enabled: Option<bool>,
     dir: Option<String>,
 }
 
@@ -1115,6 +1125,9 @@ pub async fn api_ai_config_set(
     }
     if let Some(v) = &body.format {
         db::set_setting(&conn, "ai.format", v).map_err(AppError)?;
+    }
+    if let Some(v) = body.enabled {
+        db::set_setting(&conn, "ai.enabled", if v { "1" } else { "0" }).map_err(AppError)?;
     }
 
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -1180,6 +1193,7 @@ pub async fn api_ai_config_get(
         "tag_prefix": tag_prefix,
         "max_tokens": max_tokens,
         "format": format,
+        "enabled": g("ai.enabled") != "0",
         "default_prompt": AI_DEFAULT_PROMPT,
     })))
 }

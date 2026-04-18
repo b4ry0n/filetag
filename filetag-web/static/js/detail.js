@@ -14,6 +14,7 @@ async function openZipDir(zipPath) {
     _thumbClearCache();
     state.mode = 'zip';
     state.zipPath = zipPath;
+    state.zipSubdir = '';
     state.zipEntries = [];
     state.selectedFile = null;
     state.selectedDir = null;
@@ -40,12 +41,66 @@ async function refreshZipEntries() {
     renderContent();
     _thumbInit();
     _dirThumbInit();
+    _kbRestoreFocus();
+}
+
+/**
+ * Navigate to a sub-path within the currently open archive.
+ * Pass '' to go back to the archive root.
+ */
+function enterZipSubdir(subdir) {
+    state.zipSubdir = subdir;
+    state.selectedFile = null;
+    state.selectedDir = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    _lastClickedPath = null;
+    _kbCursor = -1;
+    renderBreadcrumb();
+    renderContent();
+    _thumbInit();
+    _dirThumbInit();
+    _kbRestoreFocus();
+}
+
+/**
+ * Split zip entries into the immediate sub-folders and files visible at
+ * the current sub-path (`subdir`).  Returns { folders: string[], files: ZipEntry[] }.
+ */
+function getZipDirContents(entries, subdir) {
+    const folders = new Set();
+    const files = [];
+    for (const entry of entries) {
+        if (!entry.name.startsWith(subdir)) continue;
+        const rest = entry.name.slice(subdir.length);
+        if (!rest) continue;
+        const slash = rest.indexOf('/');
+        if (slash !== -1) {
+            folders.add(rest.slice(0, slash));
+        } else {
+            files.push(entry);
+        }
+    }
+    return { folders: [...folders].sort(), files };
 }
 
 function renderZipGrid(entries) {
+    const { folders, files } = getZipDirContents(entries, state.zipSubdir);
     let html = '';
-    for (const entry of entries) {
-        // Entry names may include path components (e.g. "chapter1/img001.jpg")
+
+    // Folder entries (navigate into zip sub-directory)
+    for (const folder of folders) {
+        const target = state.zipSubdir + folder + '/';
+        html += `<div class="card folder" data-zip-folder="${esc(folder)}"
+            onclick="enterZipSubdir('${jesc(target)}')">
+            <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
+            <div class="card-body"><div class="card-name">${esc(folder)}</div>
+            <div class="card-meta">folder</div></div>
+        </div>`;
+    }
+
+    // File entries
+    for (const entry of files) {
         const displayName = entry.name.split('/').pop() || entry.name;
         const dbPath = state.zipPath + '::' + entry.name;
         const selected = state.selectedFile && state.selectedFile.path === dbPath ? ' selected' : '';
@@ -74,10 +129,25 @@ function renderZipGrid(entries) {
 }
 
 function renderZipList(entries) {
+    const { folders, files } = getZipDirContents(entries, state.zipSubdir);
     let html = `<div class="list-header">
         <span></span><span>Name</span><span>Size</span><span>Tags</span>
     </div>`;
-    for (const entry of entries) {
+
+    // Folder entries
+    for (const folder of folders) {
+        const target = state.zipSubdir + folder + '/';
+        html += `<div class="list-row folder" data-zip-folder="${esc(folder)}"
+            onclick="enterZipSubdir('${jesc(target)}')">
+            <span class="icon">${ICONS.folder}</span>
+            <span class="name">${esc(folder)}</span>
+            <span class="size"></span>
+            <span class="tags-count"></span>
+        </div>`;
+    }
+
+    // File entries
+    for (const entry of files) {
         const displayName = entry.name.split('/').pop() || entry.name;
         const dbPath = state.zipPath + '::' + entry.name;
         const selected = state.selectedFile && state.selectedFile.path === dbPath ? ' selected' : '';
@@ -137,20 +207,20 @@ const _trickplayCache = new Map(); // path → {src, n} | 'loading' | 'failed'
  */
 function _trickplayAttach(img, path) {
     // Wrap img in a positional container that holds the progress bar.
-    // The sprite popup is a fixed-position element on document.body so it can
-    // break out of the card boundaries to show the frame at its natural AR.
+    // The floating sprite popup is a fixed-position element on document.body so
+    // it can break out of the card boundaries.  When the card is clicked the
+    // sprite is shown inline (pinned) directly inside the card instead.
     const wrap = document.createElement('div');
     wrap.className = 'card-trickplay';
     img.replaceWith(wrap);
     wrap.appendChild(img);
-    const bar = document.createElement('div');
-    bar.className = 'card-trickplay-bar';
-    wrap.appendChild(bar);
     // Use the enclosing .card as the hover target so the sprite stays visible
     // when moving between the thumbnail area and the title/meta area below it.
     const card = wrap.closest('.card') || wrap;
 
-    let spriteEl = null;
+    let spriteEl  = null; // floating popup (hover)
+    let pinnedEl  = null; // inline pinned (after click)
+    let wantPin   = false; // pin requested before cacheEntry loaded
     let cacheEntry = null;
 
     function ensureSprite() {
@@ -171,7 +241,8 @@ function _trickplayAttach(img, path) {
             const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
             _trickplayCache.set(path, entry);
             cacheEntry = entry;
-            if (card.matches(':hover')) buildOverlay();
+            if (card.matches(':hover') && !pinnedEl) buildOverlay();
+            if (wantPin) buildInline();
         };
         preload.onerror = () => {
             // Mark as failed; schedule a retry after 3 s so the next hover
@@ -187,7 +258,7 @@ function _trickplayAttach(img, path) {
     }
 
     function buildOverlay() {
-        if (spriteEl || !cacheEntry) return;
+        if (spriteEl || pinnedEl || !cacheEntry) return;
         const cardRect = wrap.getBoundingClientRect();
         if (!cardRect.width) return; // not yet laid out
 
@@ -239,6 +310,36 @@ function _trickplayAttach(img, path) {
         showFrame(0);
     }
 
+    /** Build an inline pinned sprite that fills the card preview area.
+     *  @param {number} [clientX] - mouse X from the triggering event, used to
+     *  show the correct frame immediately rather than defaulting to frame 0. */
+    function buildInline(clientX) {
+        if (!cacheEntry) { wantPin = true; return; }
+        wantPin = false;
+        if (pinnedEl && pinnedEl.isConnected) return; // already pinned
+        pinnedEl = document.createElement('div');
+        pinnedEl.className = 'card-trickplay-pinned';
+        Object.assign(pinnedEl.style, {
+            backgroundImage:  `url(${JSON.stringify(cacheEntry.src)})`,
+            backgroundRepeat: 'no-repeat',
+            backgroundSize:   'auto 100%',
+        });
+        wrap.appendChild(pinnedEl);
+        if (clientX !== undefined) {
+            const rect = wrap.getBoundingClientRect();
+            const frac = Math.max(0, Math.min(0.9999, (clientX - rect.left) / rect.width));
+            const idx  = Math.min(cacheEntry.n - 1, Math.floor(frac * cacheEntry.n));
+            showPinnedFrame(idx);
+        } else {
+            showPinnedFrame(0);
+        }
+    }
+
+    function teardownInline() {
+        wantPin = false;
+        if (pinnedEl) { pinnedEl.remove(); pinnedEl = null; }
+    }
+
     /** Recompute spriteEl position from the card's current viewport rect. */
     function reposition() {
         if (!spriteEl) return;
@@ -253,7 +354,7 @@ function _trickplayAttach(img, path) {
         spriteEl.style.top  = top.toFixed(1)  + 'px';
     }
 
-    /** Jump to a discrete frame; pixel-offset preserves native AR and centers. */
+    /** Jump to a discrete frame in the floating overlay. */
     function showFrame(idx) {
         if (!spriteEl || !cacheEntry) return;
         const popupH = parseFloat(spriteEl.style.height);
@@ -264,15 +365,26 @@ function _trickplayAttach(img, path) {
         spriteEl.style.backgroundPosition = `${x.toFixed(1)}px 0`;
     }
 
-    /** Update frame and bar from a MouseEvent. Uses the card rect, not the
+    /** Jump to a discrete frame in the inline pinned element. */
+    function showPinnedFrame(idx) {
+        if (!pinnedEl || !cacheEntry) return;
+        const h = wrap.offsetHeight || 140;
+        const w = wrap.offsetWidth  || 140;
+        const scale = h / cacheEntry.natH;
+        const tileW = (cacheEntry.natW / cacheEntry.n) * scale;
+        const x = w / 2 - tileW * (idx + 0.5);
+        pinnedEl.style.backgroundPosition = `${x.toFixed(1)}px 0`;
+    }
+
+    /** Update frame from a MouseEvent. Uses the card rect, not the
      *  popup rect, so the full [0, N-1] range is reachable across the card width. */
     function onMove(e) {
-        if (!cacheEntry || !spriteEl) return;
+        if (!cacheEntry) return;
         const rect = wrap.getBoundingClientRect();
         const frac = Math.max(0, Math.min(0.9999, (e.clientX - rect.left) / rect.width));
         const idx  = Math.min(cacheEntry.n - 1, Math.floor(frac * cacheEntry.n));
-        showFrame(idx);
-        bar.style.width = (frac * 100).toFixed(1) + '%';
+        if (spriteEl)  showFrame(idx);
+        if (pinnedEl)  showPinnedFrame(idx);
     }
 
     function teardown() {
@@ -281,22 +393,42 @@ function _trickplayAttach(img, path) {
             spriteEl = null;
             window.removeEventListener('scroll', reposition, { capture: true });
         }
-        bar.style.width = '0';
     }
 
     card.addEventListener('mouseenter', () => {
         ensureSprite();
-        if (cacheEntry) buildOverlay();
+        if (cacheEntry && !pinnedEl) buildOverlay();
     }, { passive: true });
 
-    card.addEventListener('mouseleave', teardown);
+    card.addEventListener('mouseleave', () => {
+        teardown();
+        teardownInline();
+    });
 
     card.addEventListener('mousemove', e => {
         ensureSprite();
         if (!cacheEntry) return;
-        if (!spriteEl) buildOverlay();
+        if (!spriteEl && !pinnedEl) buildOverlay();
         onMove(e);
     }, { passive: true });
+
+    // Click: show inline trickplay while hovering over the card.
+    card.addEventListener('click', e => {
+        if (e.target.closest('button, a')) return;
+        teardown(); // dismiss floating overlay
+        // Unpin any other card that was previously pinned.
+        document.querySelectorAll('.card-trickplay-pinned').forEach(el => {
+            if (!wrap.contains(el)) el.remove();
+        });
+        // Toggle pinned state for this card.
+        if (pinnedEl && pinnedEl.isConnected) {
+            teardownInline();
+        } else {
+            pinnedEl = null; // clear stale reference if detached by external cleanup
+            ensureSprite();
+            buildInline(e.clientX);
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

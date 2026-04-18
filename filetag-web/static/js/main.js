@@ -4,7 +4,7 @@
 
 /** All navigable items in the content area, in DOM order. */
 function _kbItems() {
-    return [...document.querySelectorAll('#content [data-path], #content [data-root-path]')];
+    return [...document.querySelectorAll('#content [data-path], #content [data-root-path], #content [data-zip-folder]')];
 }
 
 /** Move the keyboard cursor to idx and apply the visual indicator. */
@@ -41,8 +41,11 @@ function _kbActivate() {
     const items = _kbItems();
     if (_kbCursor < 0 || _kbCursor >= items.length) return;
     const el = items[_kbCursor];
-    if (el.dataset.rootId != null) {
-        enterRoot(Number(el.dataset.rootId));
+    if (el.dataset.zipFolder !== undefined) {
+        // Navigate into a sub-folder within the current archive.
+        enterZipSubdir(state.zipSubdir + el.dataset.zipFolder + '/');
+    } else if (el.dataset.rootPath != null) {
+        enterRoot(el.dataset.rootPath);
     } else if (el.classList.contains('folder')) {
         navigateTo(el.dataset.path);
     } else if (el.dataset.path) {
@@ -60,6 +63,13 @@ function _kbActivate() {
 async function _kbGoUp() {
     if (state.mode === 'search') { doClearSearch(); return; }
     if (state.mode === 'zip') {
+        if (state.zipSubdir) {
+            // Go to parent folder within the archive.
+            const parts = state.zipSubdir.replace(/\/$/, '').split('/');
+            parts.pop();
+            enterZipSubdir(parts.length > 0 ? parts.join('/') + '/' : '');
+            return;
+        }
         if (state.zipPath) {
             const parts = state.zipPath.split('/');
             await navigateTo(parts.length > 1 ? parts.slice(0, -1).join('/') : '');
