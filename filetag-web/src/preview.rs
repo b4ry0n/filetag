@@ -14,7 +14,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::extract::{heic_extract_jpeg_thumbnail, raw_embedded_jpeg};
+use crate::extract::{heic_extract_jpeg_thumbnail, raw_embedded_jpeg, raw_tiff_orientation};
 use crate::state::Features;
 use crate::state::{AppState, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir};
 use crate::types::DirParam;
@@ -277,8 +277,17 @@ async fn raw_thumb_rust(path: &Path) -> Option<Vec<u8>> {
         let data = std::fs::read(&path).ok()?;
         let jpeg_bytes = raw_embedded_jpeg(&data)?;
 
-        // The embedded preview carries its own EXIF orientation.
-        let orient = jpeg_exif_orientation(&jpeg_bytes);
+        // Use the outer TIFF IFD0 orientation (tag 0x0112) as the authoritative
+        // rotation, because embedded preview JPEGs in RAW files (e.g. Sony ARW)
+        // are often stored in native sensor orientation without their own EXIF
+        // orientation tag. Fall back to the JPEG EXIF only when IFD0 says 1.
+        let tiff_orient = raw_tiff_orientation(&data);
+        let jpeg_orient = jpeg_exif_orientation(&jpeg_bytes);
+        let orient = if tiff_orient != 1 {
+            tiff_orient
+        } else {
+            jpeg_orient
+        };
         let img = image::load_from_memory(&jpeg_bytes).ok()?;
         let img = apply_exif_orientation(img, orient);
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
@@ -946,6 +955,14 @@ pub async fn thumb_handler(
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             thumb_cached(&abs, &cache_root, |abs| {
                 Box::pin(async move {
+                    // raw_thumb_rust reads TIFF IFD0 orientation (tag 0x0112) correctly.
+                    // Embedded JPEG previews in TIFF-family RAW files (ARW, NEF, CR2, …)
+                    // are stored in native sensor orientation without their own EXIF tag,
+                    // so we must take the orientation from the outer TIFF container.
+                    if let Some(data) = raw_thumb_rust(abs).await {
+                        return Some(data);
+                    }
+                    // Fallback for formats not in RAW_THUMB_EXTS (PSD, XCF, CR3, EPS, …)
                     if let Some(full_jpeg) = raw_extract_jpeg(abs, features).await {
                         thumb_from_raw_bytes(&full_jpeg, abs, features).await
                     } else {
