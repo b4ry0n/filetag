@@ -560,9 +560,9 @@ async function clearCache(all = false) {
                 body = JSON.stringify({ dir: state.currentPath || '' });
             }
         } else {
-            // Send the current directory so the server can find the exact
-            // (deepest) root that owns it and clear only that root's cache.
-            body = JSON.stringify({ current_dir: state.currentPath || '' });
+            // Send all:true plus the current directory so the server can find
+            // the exact (deepest) root that owns it and clear only that root's cache.
+            body = JSON.stringify({ all: true });
         }
         // Always send the explicit current dir — never omit it.
         const resp = await fetch('/api/cache/clear' + dirParam('?'), {
@@ -733,6 +733,7 @@ async function saveFeaturesSettings() {
         state.settings.feature_video = body.feature_video;
         state.settings.feature_imagemagick = body.feature_imagemagick;
         state.settings.feature_pdf = body.feature_pdf;
+        _thumbClearCache();
     } catch (e) {
         showToast('Failed to save settings: ' + e.message);
         return;
