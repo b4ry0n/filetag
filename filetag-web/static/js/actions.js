@@ -13,7 +13,7 @@ async function navigateTo(path) {
     state.activeTags.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
-    await loadFiles(path);
+    await Promise.all([loadFiles(path), loadSettings()]);
     render();
 }
 
