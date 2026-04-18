@@ -155,7 +155,7 @@ function closeTagMenu() {
 
 async function setTagColor(tagName, color) {
     closeTagMenu();
-    await apiPost('/api/tag-color', { name: tagName, color, root_id: state.currentRootId });
+    await apiPost('/api/tag-color', { name: tagName, color, dir: currentAbsDir() });
     await loadTags();
     render();
 }
@@ -167,7 +167,7 @@ async function deleteTag(tagName) {
     if (count > 0 && !confirm(`Delete tag "${tagName}"? It is applied to ${count} file(s).`)) {
         return;
     }
-    await apiPost('/api/delete-tag', { name: tagName, root_id: state.currentRootId });
+    await apiPost('/api/delete-tag', { name: tagName, dir: currentAbsDir() });
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();
@@ -204,7 +204,7 @@ function startTagRename(tagName) {
 async function renameTag(oldName, newName) {
     if (!newName || newName === oldName) { closeTagMenu(); return; }
     closeTagMenu();
-    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, root_id: state.currentRootId });
+    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
     if (res && res.ok === false) {
         alert(`Could not rename tag "${oldName}".`);
         return;

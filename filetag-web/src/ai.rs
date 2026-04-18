@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_read_entry};
 use crate::preview::{raw_cache_path, raw_extract_jpeg};
 use crate::state::{
-    AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_at,
+    AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
 
 // ---------------------------------------------------------------------------
@@ -767,7 +767,7 @@ async fn prepare_jpeg_for_analysis(effective_root: &Path, rel: &str) -> Option<V
 #[derive(Deserialize)]
 pub(crate) struct AiClearTagsRequest {
     paths: Vec<String>,
-    root_id: Option<usize>,
+    dir: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
 }
@@ -778,7 +778,11 @@ pub async fn api_ai_clear_tags(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiClearTagsRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_for_dir(
+        &state,
+        std::path::Path::new(body.dir.as_deref().unwrap_or("")),
+    )
+    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
     let prefix = body.prefix.as_deref().unwrap_or("ai/");
     let mut cleared = 0usize;
     for path in &body.paths {
@@ -792,7 +796,7 @@ pub async fn api_ai_clear_tags(
 #[derive(Deserialize)]
 pub(crate) struct AiAnalyseRequest {
     path: String,
-    root_id: Option<usize>,
+    dir: Option<String>,
     #[serde(default)]
     dry_run: bool,
 }
@@ -802,7 +806,10 @@ pub async fn api_ai_analyse(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiAnalyseRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = match root_for_dir(&state, Path::new(body.dir.as_deref().unwrap_or(""))) {
+        Some(r) => r,
+        None => return Err(AppError(anyhow::anyhow!("no database found for this path"))),
+    };
     let config = {
         let root_conn = open_conn(db_root).map_err(AppError)?;
         load_ai_config(&root_conn).ok_or_else(|| {
@@ -854,7 +861,7 @@ pub async fn api_ai_analyse(
 #[derive(Deserialize)]
 pub(crate) struct AiBatchRequest {
     paths: Vec<String>,
-    root_id: Option<usize>,
+    dir: Option<String>,
 }
 
 /// Queue AI analysis for a batch of images (background task).
@@ -862,7 +869,11 @@ pub async fn api_ai_analyse_batch(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_for_dir(
+        &state,
+        std::path::Path::new(body.dir.as_deref().unwrap_or("")),
+    )
+    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
     let root = db_root.root.clone();
     let batch_config = {
         let root_conn = open_conn(db_root).map_err(AppError)?;
@@ -1032,7 +1043,7 @@ pub(crate) struct AiConfigRequest {
     tag_prefix: Option<String>,
     max_tokens: Option<u32>,
     format: Option<String>,
-    root_id: Option<usize>,
+    dir: Option<String>,
 }
 
 /// Save AI configuration to the database settings table.
@@ -1040,7 +1051,11 @@ pub async fn api_ai_config_set(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_for_dir(
+        &state,
+        std::path::Path::new(body.dir.as_deref().unwrap_or("")),
+    )
+    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
     let conn = open_conn(db_root).map_err(AppError)?;
 
     if let Some(v) = &body.endpoint {
@@ -1070,7 +1085,7 @@ pub async fn api_ai_config_set(
 
 #[derive(Deserialize)]
 pub(crate) struct AiConfigQuery {
-    root_id: Option<usize>,
+    dir: Option<String>,
 }
 
 /// Read AI configuration from the database settings table.
@@ -1079,7 +1094,11 @@ pub async fn api_ai_config_get(
     Query(params): Query<AiConfigQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, params.root_id)?;
+    let db_root = root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    )
+    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
     let conn = open_conn(db_root).map_err(AppError)?;
 
     let g = |key: &str| -> String {

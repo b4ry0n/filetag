@@ -1,7 +1,7 @@
 //! Core CRUD API handlers and embedded static-file serving for `filetag-web`.
 //!
 //! All JSON-returning handlers follow the pattern:
-//! - Resolve the `root` / `root_id` parameter via [`root_at`].
+//! - Resolve the active root via [`root_from_dir`] (from the `dir` query / body field).
 //! - For file operations, open the correct child database via [`open_for_file_op`].
 //! - Return `Result<Json<…>, AppError>` so errors become HTTP 500 responses.
 
@@ -20,10 +20,34 @@ use crate::archive::ensure_zip_entry_record;
 use crate::preview::video_info;
 use crate::state::{
     AppError, AppState, file_is_covered, open_conn, open_for_file_op, parse_tag, resolve_preview,
-    root_at, safe_path,
+    root_for_dir, safe_path,
 };
 use crate::types::*;
 use filetag_lib::db::TagRoot;
+
+// ---------------------------------------------------------------------------
+// Root resolution from `dir` parameter
+// ---------------------------------------------------------------------------
+
+/// Resolve the active database root from an absolute filesystem path.
+///
+/// Returns the deepest `TagRoot` whose root directory contains `dir`. This is
+/// the one canonical root-resolution function used by all API handlers.
+///
+/// Returns `AppError` (HTTP 400) when `dir` is absent or not within any loaded root.
+fn root_from_dir<'a>(state: &'a AppState, dir: Option<&str>) -> Result<&'a TagRoot, AppError> {
+    let d = dir.ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "dir parameter is required — navigate into a database first"
+        ))
+    })?;
+    root_for_dir(state, Path::new(d)).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "path '{}' is not within any loaded database root",
+            d
+        ))
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Static file handlers (embedded)
@@ -130,8 +154,8 @@ pub async fn api_reorder_roots(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ReorderRootsRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    for (position, &root_id) in body.order.iter().enumerate() {
-        let db_root = root_at(&state, Some(root_id))?;
+    for (position, root_path) in body.order.iter().enumerate() {
+        let db_root = root_from_dir(&state, Some(root_path.as_str()))?;
         let conn = open_conn(db_root)?;
         db::set_setting(&conn, "sort_order", &position.to_string())?;
     }
@@ -143,7 +167,7 @@ pub async fn api_rename_db(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameDbRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, Some(body.root_id))?;
+    let db_root = root_from_dir(&state, Some(body.dir.as_str()))?;
     let conn = open_conn(db_root)?;
     db::set_setting(&conn, "name", &body.name)?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -156,9 +180,9 @@ pub async fn api_rename_db(
 /// `GET /api/info` — database statistics (file count, tag count, total size).
 pub async fn api_info(
     State(state): State<Arc<AppState>>,
-    Query(rp): Query<RootParam>,
+    Query(rp): Query<DirParam>,
 ) -> Result<Json<ApiInfo>, AppError> {
-    let db_root = root_at(&state, rp.root)?;
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let files: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
     let tags: i64 = conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))?;
@@ -243,94 +267,65 @@ fn remove_cache_for_path(abs: &Path, root: &Path) -> u64 {
 
 /// `POST /api/cache/clear` — delete cached thumbnails and preview files.
 ///
-/// Clears the entire cache for the root when `paths` is absent; otherwise
-/// removes only the cache entries for the listed files.
+/// The active root is always determined from the `dir` query parameter.
+/// Three modes (controlled by the request body):
+/// - `all: true` — wipe the entire `.filetag/cache/` directory of the active root.
+/// - `paths: [...]` — clear cache for exactly those file paths.
+/// - no body (or empty body) — enumerate `dir` and clear the entries on the page.
 pub async fn api_cache_clear(
     State(state): State<Arc<AppState>>,
-    Query(rp): Query<RootParam>,
+    Query(rp): Query<DirParam>,
     body: Option<axum::extract::Json<CacheClearBody>>,
 ) -> Response {
-    let (paths, dir) = body
-        .map(|b| (b.paths.clone(), b.dir.clone()))
-        .unwrap_or_default();
+    let db_root = match root_from_dir(&state, rp.dir.as_deref()) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.0.to_string()).into_response(),
+    };
 
-    // When clearing specific paths we need a concrete root.
-    // When wiping the full cache we clear every loaded root if none is specified.
-    let removed = if dir.is_some() || paths.is_some() {
-        // Determine which files to clear:
-        //  - dir: enumerate all real files in that directory on disk
-        //  - paths: use the explicitly provided list
-        let anchor_root = if let Some(idx) = rp.root {
-            match root_at(&state, Some(idx)) {
-                Ok(r) => r.root.clone(),
-                Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
-            }
+    let body = body.map(|b| b.0).unwrap_or_default();
+
+    let removed = if body.all.unwrap_or(false) {
+        // Wipe the entire cache of the active root. root_from_dir already
+        // returned the deepest root containing the current dir, so this always
+        // clears exactly the right cache directory.
+        let cache_dir = db_root.root.join(".filetag").join("cache");
+        if cache_dir.exists()
+            && let Err(e) = tokio::fs::remove_dir_all(&cache_dir).await
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to clear cache: {e}"),
+            )
+                .into_response();
+        }
+        1u64
+    } else {
+        // Determine the list of file paths to clear.
+        let anchor = &db_root.root;
+        let rel_paths: Vec<String> = if let Some(paths) = body.paths {
+            // Caller supplied an explicit list (search-mode page clear).
+            paths
         } else {
-            state
-                .roots
-                .first()
-                .map(|r| r.root.clone())
-                .unwrap_or_default()
-        };
-        let rel_paths: Vec<String> = if let Some(d) = dir {
-            // Build paths from all non-directory entries in the real directory.
-            let abs_dir = anchor_root.join(&d);
-            match std::fs::read_dir(&abs_dir) {
+            // Browse-mode page clear: enumerate the current directory on disk.
+            let abs_dir = Path::new(rp.dir.as_deref().unwrap_or(""));
+            match std::fs::read_dir(abs_dir) {
                 Ok(rd) => rd
                     .flatten()
                     .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
                     .filter_map(|e| {
-                        let rel = e
-                            .path()
-                            .strip_prefix(&anchor_root)
-                            .ok()?
-                            .to_string_lossy()
-                            .into_owned();
-                        Some(rel)
+                        e.path()
+                            .strip_prefix(anchor)
+                            .ok()
+                            .map(|p| p.to_string_lossy().into_owned())
                     })
                     .collect(),
                 Err(_) => vec![],
             }
-        } else {
-            paths.unwrap_or_default()
         };
         let mut n = 0u64;
         for rel in rel_paths {
-            if let Some((abs, cr)) = resolve_preview(&state, &anchor_root, &rel) {
+            if let Some((abs, cr)) = resolve_preview(&state, anchor, &rel) {
                 n += remove_cache_for_path(&abs, &cr);
-            }
-        }
-        n
-    } else if let Some(idx) = rp.root {
-        // Explicit root: clear just that root's cache.
-        let db_root = match root_at(&state, Some(idx)) {
-            Ok(r) => r,
-            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root").into_response(),
-        };
-        let cache_dir = db_root.root.join(".filetag").join("cache");
-        if cache_dir.exists() {
-            if let Err(e) = tokio::fs::remove_dir_all(&cache_dir).await {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to clear cache: {e}"),
-                )
-                    .into_response();
-            }
-            1
-        } else {
-            0
-        }
-    } else {
-        // No root specified: clear every root's cache directory.
-        let mut n = 0u64;
-        for root in &state.roots {
-            let cache_dir = root.root.join(".filetag").join("cache");
-            if cache_dir.exists() {
-                if let Err(e) = tokio::fs::remove_dir_all(&cache_dir).await {
-                    eprintln!("cache clear error for {}: {e}", cache_dir.display());
-                } else {
-                    n += 1;
-                }
             }
         }
         n
@@ -350,9 +345,9 @@ pub async fn api_cache_clear(
 /// `GET /api/tags` — list all known tags with usage counts and colours.
 pub async fn api_tags(
     State(state): State<Arc<AppState>>,
-    Query(rp): Query<RootParam>,
+    Query(rp): Query<DirParam>,
 ) -> Result<Json<Vec<ApiTag>>, AppError> {
-    let db_root = root_at(&state, rp.root)?;
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let tags = db::all_tags(&conn).map_err(AppError)?;
     Ok(Json(
@@ -371,15 +366,15 @@ pub async fn api_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileListParams>,
 ) -> Result<Json<ApiDirListing>, AppError> {
-    // Virtual root: only when there are multiple entry-point roots and no root
-    // has been explicitly selected yet.
+    // Virtual root: only when there are multiple entry-point roots and no dir
+    // parameter has been provided yet.
     let entry_point_roots: Vec<(usize, &TagRoot)> = state
         .roots
         .iter()
         .enumerate()
         .filter(|(_, r)| r.entry_point)
         .collect();
-    if params.root.is_none() && params.path.is_empty() && entry_point_roots.len() > 1 {
+    if params.dir.is_none() && entry_point_roots.len() > 1 {
         let mut ordered: Vec<(usize, &TagRoot, i64)> = entry_point_roots
             .iter()
             .map(|&(id, r)| {
@@ -394,34 +389,39 @@ pub async fn api_files(
         ordered.sort_by_key(|&(_, _, o)| o);
         let entries = ordered
             .iter()
-            .map(|&(id, r, _)| ApiDirEntry {
+            .map(|&(_id, r, _)| ApiDirEntry {
                 name: r.name.clone(),
                 is_dir: true,
                 size: None,
                 mtime: None,
                 file_count: None,
                 tag_count: None,
-                root_id: Some(id),
+                root_path: Some(r.root.display().to_string()),
                 covered: None,
             })
             .collect();
         return Ok(Json(ApiDirListing {
             path: String::new(),
+            root_path: String::new(),
             entries,
         }));
     }
 
-    let db_root = root_at(&state, params.root)?;
-    let dir = if params.path.is_empty() {
-        db_root.root.clone()
-    } else {
-        safe_path(&db_root.root, &params.path)?
-    };
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let abs_dir = std::path::Path::new(params.dir.as_deref().unwrap_or(""));
 
-    let prefix = if params.path.is_empty() {
+    // Path relative to the deepest root — used for breadcrumb in JS and for
+    // tag-count queries; this matches how paths are stored in the DB.
+    let db_rel: String = abs_dir
+        .strip_prefix(&db_root.root)
+        .unwrap_or(std::path::Path::new(""))
+        .to_string_lossy()
+        .into_owned();
+
+    let prefix = if db_rel.is_empty() {
         String::new()
     } else {
-        format!("{}/", params.path.trim_end_matches('/'))
+        format!("{}/", db_rel.trim_end_matches('/'))
     };
 
     let conn = open_conn(db_root)?;
@@ -433,8 +433,8 @@ pub async fn api_files(
     let mut dirs = Vec::new();
     let mut files = Vec::new();
 
-    let rd =
-        std::fs::read_dir(&dir).with_context(|| format!("reading directory {}", dir.display()))?;
+    let rd = std::fs::read_dir(abs_dir)
+        .with_context(|| format!("reading directory {}", abs_dir.display()))?;
 
     for entry in rd.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -461,7 +461,7 @@ pub async fn api_files(
                 mtime: None,
                 file_count: Some(child_count),
                 tag_count: None,
-                root_id: None,
+                root_path: None,
                 covered: None,
             });
         } else if meta.is_file() {
@@ -485,7 +485,7 @@ pub async fn api_files(
                 mtime: Some(mtime),
                 file_count: None,
                 tag_count: Some(tag_count),
-                root_id: None,
+                root_path: None,
                 covered: Some(file_is_covered(&state, &entry.path())),
             });
         }
@@ -496,7 +496,8 @@ pub async fn api_files(
     dirs.extend(files);
 
     Ok(Json(ApiDirListing {
-        path: params.path,
+        path: db_rel,
+        root_path: db_root.root.display().to_string(),
         entries: dirs,
     }))
 }
@@ -510,7 +511,7 @@ pub async fn api_search(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<ApiSearchResult>, AppError> {
-    let db_root = root_at(&state, params.root)?;
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let expr = query::parse(&params.q).map_err(AppError)?;
     let results = query::execute_with_tags(&conn, &expr).map_err(AppError)?;
@@ -539,7 +540,7 @@ pub async fn api_file_detail(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileDetailParams>,
 ) -> Result<Json<ApiFileDetail>, AppError> {
-    let db_root = root_at(&state, params.root)?;
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
 
     let is_zip = params.path.contains("::");
     let fs_path = if is_zip {
@@ -672,7 +673,7 @@ pub async fn api_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let (conn, effective_root, effective_rel) =
         open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
@@ -700,7 +701,7 @@ pub async fn api_untag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let (conn, _effective_root, effective_rel) =
         open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
@@ -733,7 +734,7 @@ pub async fn api_rename_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let ok = db::rename_tag(&conn, &body.name, &body.new_name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": ok })))
@@ -744,7 +745,7 @@ pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let ok = db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": ok })))
@@ -755,7 +756,7 @@ pub async fn api_delete_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let deleted = db::delete_tag(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
@@ -766,7 +767,7 @@ pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, params.root)?;
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     let sprite_min: u32 = db::get_setting(&conn, "sprite_min")
         .map_err(AppError)?
@@ -786,7 +787,7 @@ pub async fn api_settings_set(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SettingsBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_at(&state, body.root_id)?;
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     if let Some(v) = body.sprite_min {
         db::set_setting(&conn, "sprite_min", &v.to_string()).map_err(AppError)?;

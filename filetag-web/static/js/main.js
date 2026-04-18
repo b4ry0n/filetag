@@ -4,7 +4,7 @@
 
 /** All navigable items in the content area, in DOM order. */
 function _kbItems() {
-    return [...document.querySelectorAll('#content [data-path], #content [data-root-id]')];
+    return [...document.querySelectorAll('#content [data-path], #content [data-root-path]')];
 }
 
 /** Move the keyboard cursor to idx and apply the visual indicator. */
@@ -67,7 +67,7 @@ async function _kbGoUp() {
         return;
     }
     if (!state.currentPath) {
-        if (state.currentRootId != null) await goVirtualRoot();
+        if (state.currentBasePath != null) await goVirtualRoot();
         return;
     }
     const parts = state.currentPath.split('/');
@@ -160,7 +160,7 @@ async function _selectAllFiles() {
     filePaths.forEach(p => state.selectedPaths.add(p));
     await Promise.all(filePaths.map(async p => {
         if (!state.selectedFilesData.has(p)) {
-            const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam('&'));
+            const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
             state.selectedFilesData.set(p, data);
         }
     }));
@@ -260,14 +260,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Initial load: restore directory from sessionStorage if present (survives Cmd-R).
     const initialPath = sessionStorage.getItem('ft_path') || '';
-    const savedRoot = sessionStorage.getItem('ft_root');
+    const savedBase = sessionStorage.getItem('ft_base');
     await loadRoots();
-    // Restore root selection; for single-root loadRoots() already set currentRootId = 0.
-    if (state.roots.filter(r => r.entry_point).length > 1 && savedRoot !== '' && savedRoot != null) {
-        const id = parseInt(savedRoot, 10);
-        // Only restore if the saved id still maps to an entry-point root.
-        if (!isNaN(id) && state.roots.find(r => r.id === id)?.entry_point) {
-            state.currentRootId = id;
+    // Restore base path for multi-root setups; for single-root loadRoots() already set it.
+    if (state.roots.filter(r => r.entry_point).length > 1 && savedBase) {
+        // Only restore if the saved base path still maps to a known root.
+        const rootMeta = state.roots.find(r => r.path === savedBase || savedBase.startsWith(r.path + '/'));
+        if (rootMeta) {
+            state.currentBasePath = savedBase;
         }
     }
     try { await Promise.all([loadInfo(), loadTags(), loadSettings()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }

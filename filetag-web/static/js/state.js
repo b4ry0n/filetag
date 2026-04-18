@@ -1,8 +1,8 @@
 const state = {
     mode: 'browse', // browse | search | zip
     currentPath: '',
-    currentRootId: null, // null = virtual root (multi-root), number = index into state.roots
-    roots: [],           // [{id, name, path}] loaded from /api/roots
+    currentBasePath: null,   // absolute filesystem path of the deepest active DB root (updated by api_files)
+    roots: [],               // [{id, name, path, entry_point}] loaded from /api/roots
     viewMode: 'grid',
     showHidden: false,
     tags: [],
@@ -13,7 +13,7 @@ const state = {
     zipEntries: [],        // [{name, size, is_image, image_index, tag_count}]
     selectedFile: null,  // { path, size, file_id, mtime, indexed_at, tags } | null
     selectedDir: null,   // { path, name, file_count } | null
-    selectedRoot: null,  // root id (number) when a root card is selected | null
+    selectedRoot: null,  // root path (string) when a root card is selected | null
     selectedRootInfo: null, // ApiInfo fetched for the selected root | null
     selectedPaths: new Set(), // multi-select: Set of paths
     selectedFilesData: new Map(), // path → file detail (for tag aggregation)
@@ -55,9 +55,18 @@ async function apiPost(url, body) {
     return res.json();
 }
 
-// Helper: append root query param when a root is selected.
-function rootParam(sep) {
-    return state.currentRootId != null ? `${sep}root=${state.currentRootId}` : '';
+// Returns the absolute filesystem path of the currently browsed directory.
+// This is what the backend uses to determine the correct (deepest) root.
+function currentAbsDir() {
+    if (state.currentBasePath == null) return null;
+    return state.currentPath ? state.currentBasePath + '/' + state.currentPath : state.currentBasePath;
+}
+
+// Append dir query param with the current absolute directory path.
+// The backend resolves the active root from this path using root_for_dir.
+function dirParam(sep) {
+    const d = currentAbsDir();
+    return d != null ? sep + 'dir=' + encodeURIComponent(d) : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -91,31 +100,40 @@ async function loadRoots() {
     // Single entry-point: enter it automatically so the UI is transparent.
     const entryPoints = state.roots.filter(r => r.entry_point);
     if (entryPoints.length === 1) {
-        state.currentRootId = entryPoints[0].id;
+        state.currentBasePath = entryPoints[0].path;
     }
 }
 
 async function loadInfo() {
-    state.info = await api('/api/info' + rootParam('?'));
+    state.info = await api('/api/info' + dirParam('?'));
 }
 
 async function loadSettings() {
     try {
-        state.settings = await api('/api/settings' + rootParam('?'));
+        state.settings = await api('/api/settings' + dirParam('?'));
     } catch (_) {
         state.settings = { sprite_min: 8, sprite_max: 16 };
     }
 }
 
 async function loadTags() {
-    state.tags = await api('/api/tags' + rootParam('?'));
+    state.tags = await api('/api/tags' + dirParam('?'));
 }
 
 async function loadFiles(path) {
-    const url = '/api/files?path=' + encodeURIComponent(path) +
-        (state.showHidden ? '&show_hidden=true' : '') +
-        rootParam('&');
+    // Compute the absolute path of the target directory.
+    // 'path' is relative to the current deepest root (currentBasePath).
+    let absDir = null;
+    if (state.currentBasePath != null) {
+        absDir = path ? state.currentBasePath + '/' + path : state.currentBasePath;
+    }
+    const dirPart = absDir != null ? 'dir=' + encodeURIComponent(absDir) : null;
+    const url = '/api/files?' + [dirPart, state.showHidden ? 'show_hidden=true' : null]
+        .filter(Boolean).join('&');
     const data = await api(url);
+    // Update the deepest active root from server response so all subsequent
+    // operations (tag/untag, file detail, cache) target the correct database.
+    if (data.root_path) state.currentBasePath = data.root_path;
     state.currentPath = data.path;
     state.entries = data.entries;
     state.mode = 'browse';
@@ -123,12 +141,12 @@ async function loadFiles(path) {
     state.zipPath = null;
     state.zipEntries = [];
     sessionStorage.setItem('ft_path', state.currentPath);
-    sessionStorage.setItem('ft_root', state.currentRootId != null ? String(state.currentRootId) : '');
+    sessionStorage.setItem('ft_base', state.currentBasePath || '');
 }
 
 async function searchFiles(query) {
     try {
-        const data = await api('/api/search?q=' + encodeURIComponent(query) + rootParam('&'));
+        const data = await api('/api/search?q=' + encodeURIComponent(query) + dirParam('&'));
         state.searchQuery = query;
         state.searchResults = data.results;
         state.mode = 'search';
@@ -147,7 +165,7 @@ async function searchFiles(query) {
 }
 
 async function loadFileDetail(path) {
-    state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + rootParam('&'));
+    state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
     state.selectedDir = null;
 }
 
@@ -199,7 +217,7 @@ function handleZipClick(path, event) {
 }
 
 async function addTagToFile(path, tagStr) {
-    await apiPost('/api/tag', { path, tags: [tagStr], root_id: state.currentRootId });
+    await apiPost('/api/tag', { path, tags: [tagStr], dir: currentAbsDir() });
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
@@ -207,7 +225,7 @@ async function addTagToFile(path, tagStr) {
 }
 
 async function removeTagFromFile(path, tagStr) {
-    await apiPost('/api/untag', { path, tags: [tagStr], root_id: state.currentRootId });
+    await apiPost('/api/untag', { path, tags: [tagStr], dir: currentAbsDir() });
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
