@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_read_entry};
 use crate::preview::{raw_cache_path, raw_extract_jpeg};
+use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
@@ -147,7 +148,12 @@ async fn ai_prepare_jpeg(abs_path: &Path, root: &Path) -> Option<Vec<u8>> {
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" => {
             if let Some(cache) = raw_cache_path(abs_path, root) {
                 if !cache.exists() {
-                    if let Some(data) = raw_extract_jpeg(abs_path).await {
+                    // AI analysis implies external tool availability for RAW extraction.
+                    let feats = Features {
+                        imagemagick: true,
+                        ..Features::default()
+                    };
+                    if let Some(data) = raw_extract_jpeg(abs_path, feats).await {
                         let _ = tokio::fs::write(&cache, &data).await;
                     } else {
                         return None;

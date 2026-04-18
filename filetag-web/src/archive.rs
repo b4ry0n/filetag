@@ -166,6 +166,7 @@ fn zip_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
 // RAR / CBR
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "rar")]
 fn rar_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
     let archive = unrar::Archive::new(path).open_for_listing()?;
     let mut names: Vec<String> = archive
@@ -178,6 +179,12 @@ fn rar_image_entries(path: &Path) -> anyhow::Result<Vec<String>> {
     Ok(names)
 }
 
+#[cfg(not(feature = "rar"))]
+fn rar_image_entries(_path: &Path) -> anyhow::Result<Vec<String>> {
+    anyhow::bail!("RAR support not compiled in (enable the `rar` feature)")
+}
+
+#[cfg(feature = "rar")]
 fn rar_read_entry(rar_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
     let mut archive = unrar::Archive::new(rar_path).open_for_processing()?;
     while let Some(header) = archive.read_header()? {
@@ -191,6 +198,12 @@ fn rar_read_entry(rar_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>,
     anyhow::bail!("entry not found: {entry_name}")
 }
 
+#[cfg(not(feature = "rar"))]
+fn rar_read_entry(_rar_path: &Path, _entry_name: &str) -> anyhow::Result<(Vec<u8>, &'static str)> {
+    anyhow::bail!("RAR support not compiled in (enable the `rar` feature)")
+}
+
+#[cfg(feature = "rar")]
 fn rar_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
     let archive = unrar::Archive::new(path).open_for_listing()?;
     let mut entries: Vec<(String, u64, bool)> = archive
@@ -207,6 +220,12 @@ fn rar_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>>
     Ok(entries)
 }
 
+#[cfg(not(feature = "rar"))]
+fn rar_list_entries_raw(_path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
+    anyhow::bail!("RAR support not compiled in (enable the `rar` feature)")
+}
+
+#[cfg(feature = "rar")]
 fn rar_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
     let mut archive = unrar::Archive::new(path).open_for_processing()?;
     while let Some(header) = archive.read_header()? {
@@ -219,6 +238,11 @@ fn rar_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
         archive = header.skip()?;
     }
     anyhow::bail!("no images in archive")
+}
+
+#[cfg(not(feature = "rar"))]
+fn rar_cover_image(_path: &Path) -> anyhow::Result<Vec<u8>> {
+    anyhow::bail!("RAR support not compiled in (enable the `rar` feature)")
 }
 
 // ---------------------------------------------------------------------------
@@ -578,6 +602,7 @@ pub async fn api_zip_thumb(
         Some(r) => r,
         None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
+    let features = crate::state::load_features_for(&state, &db_root.root);
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
@@ -613,7 +638,7 @@ pub async fn api_zip_thumb(
                 .join(format!("zp_{page_idx}.jpg"));
             let _ = tokio::fs::create_dir_all(tmp.parent().unwrap()).await;
             if tokio::fs::write(&tmp, &img_bytes).await.is_ok() {
-                if let Some(small) = image_thumb_jpeg(&tmp).await {
+                if let Some(small) = image_thumb_jpeg(&tmp, features).await {
                     let _ = tokio::fs::remove_file(&tmp).await;
                     let _ = tokio::fs::write(&cache, &small).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], small).into_response();

@@ -262,13 +262,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const initialPath = sessionStorage.getItem('ft_path') || '';
     const savedBase = sessionStorage.getItem('ft_base');
     await loadRoots();
-    // Restore base path for multi-root setups; for single-root loadRoots() already set it.
-    if (state.roots.filter(r => r.entry_point).length > 1 && savedBase) {
-        // Only restore if the saved base path still maps to a known root.
-        const rootMeta = state.roots.find(r => r.path === savedBase || savedBase.startsWith(r.path + '/'));
-        if (rootMeta) {
-            state.currentBasePath = savedBase;
-        }
+    // Restore the previously active root from sessionStorage, or auto-enter when
+    // there is exactly one entry-point (good UX on first visit).
+    const entryPoints = state.roots.filter(r => r.entry_point);
+    const baseToRestore = savedBase || (entryPoints.length === 1 ? entryPoints[0].path : null);
+    if (baseToRestore) {
+        const rootMeta = state.roots.find(r => r.path === baseToRestore || baseToRestore.startsWith(r.path + '/'));
+        if (rootMeta) state.currentBasePath = baseToRestore;
     }
     try { await Promise.all([loadInfo(), loadTags(), loadSettings()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }
     // Attempt to restore the last-visited path. If that fails (e.g. because new

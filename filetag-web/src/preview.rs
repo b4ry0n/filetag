@@ -15,7 +15,10 @@ use axum::{
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::state::{AppState, THUMB_LIMITER, VTHUMB_LIMITER, resolve_preview, root_for_dir};
+use crate::state::Features;
+use crate::state::{
+    AppState, THUMB_LIMITER, VTHUMB_LIMITER, load_features_for, resolve_preview, root_for_dir,
+};
 use crate::types::DirParam;
 
 // ---------------------------------------------------------------------------
@@ -83,6 +86,7 @@ pub async fn preview_handler(
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
+    let features = load_features_for(&state, &db_root.root);
 
     let ext = abs
         .extension()
@@ -93,12 +97,16 @@ pub async fn preview_handler(
     match ext.as_str() {
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
-            preview_raw(&abs, &cache_root).await
+            preview_raw(&abs, &cache_root, features).await
         }
-        "heic" | "heif" => preview_heic(&abs, &cache_root).await,
+        "heic" | "heif" => preview_heic(&abs, &cache_root, features).await,
         // Formats browsers cannot decode natively: transcode to mp4 via ffmpeg
         "avi" | "wmv" | "mkv" | "flv" | "mpg" | "mpeg" | "3gp" | "f4v" | "m4v" => {
-            serve_transcoded_mp4(&abs, &cache_root, &headers).await
+            if features.video {
+                serve_transcoded_mp4(&abs, &cache_root, &headers).await
+            } else {
+                serve_file_range(&abs, &headers).await
+            }
         }
         _ => serve_file_range(&abs, &headers).await,
     }
@@ -504,82 +512,272 @@ pub fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
+// Pure-Rust embedded JPEG extraction from RAW files
+// ---------------------------------------------------------------------------
+
+/// Read a `u16` from `data[off..]` with the given byte order.
+fn tiff_u16(data: &[u8], off: usize, le: bool) -> Option<u16> {
+    let s = data.get(off..off + 2)?;
+    Some(if le {
+        u16::from_le_bytes([s[0], s[1]])
+    } else {
+        u16::from_be_bytes([s[0], s[1]])
+    })
+}
+
+/// Read a `u32` from `data[off..]` with the given byte order.
+fn tiff_u32(data: &[u8], off: usize, le: bool) -> Option<u32> {
+    let s = data.get(off..off + 4)?;
+    let arr: [u8; 4] = s.try_into().ok()?;
+    Some(if le {
+        u32::from_le_bytes(arr)
+    } else {
+        u32::from_be_bytes(arr)
+    })
+}
+
+/// Walk one TIFF IFD at `offset`, collecting `(jpeg_offset, jpeg_len)` pairs
+/// and any sub-IFD offsets. Returns the next-IFD offset when non-zero.
+fn tiff_walk_ifd(
+    data: &[u8],
+    offset: usize,
+    le: bool,
+    jpegs: &mut Vec<(usize, usize)>,
+    sub_ifds: &mut Vec<usize>,
+) -> Option<usize> {
+    let count = tiff_u16(data, offset, le)? as usize;
+    let base = offset + 2;
+    // Ensure all entry bytes are in-bounds before iterating.
+    data.get(base..base + count * 12)?;
+
+    let mut jpeg_off: Option<usize> = None;
+    let mut jpeg_len: Option<usize> = None;
+
+    for i in 0..count {
+        let e = base + i * 12;
+        let tag = tiff_u16(data, e, le).unwrap_or(0);
+        let typ = tiff_u16(data, e + 2, le).unwrap_or(0);
+        let cnt = tiff_u32(data, e + 4, le).unwrap_or(0) as usize;
+
+        match tag {
+            // JPEGInterchangeFormat: file offset to embedded JPEG
+            0x0201 => jpeg_off = tiff_u32(data, e + 8, le).map(|v| v as usize),
+            // JPEGInterchangeFormatLength: byte length of embedded JPEG
+            0x0202 => jpeg_len = tiff_u32(data, e + 8, le).map(|v| v as usize),
+            // SubIFD: one or more additional IFD offsets (used in DNG / NEF)
+            0x014A => {
+                if cnt == 1 {
+                    if let Some(v) = tiff_u32(data, e + 8, le) {
+                        sub_ifds.push(v as usize);
+                    }
+                } else if typ == 4 {
+                    // LONG array; value field is a pointer to the array
+                    if let Some(arr_off) = tiff_u32(data, e + 8, le).map(|v| v as usize) {
+                        for j in 0..cnt {
+                            if let Some(v) = tiff_u32(data, arr_off + j * 4, le) {
+                                sub_ifds.push(v as usize);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let (Some(off), Some(len)) = (jpeg_off, jpeg_len)
+        && len > 0
+    {
+        jpegs.push((off, len));
+    }
+
+    // The next-IFD offset is stored immediately after the last entry.
+    let next_off = tiff_u32(data, base + count * 12, le).unwrap_or(0) as usize;
+    if next_off != 0 { Some(next_off) } else { None }
+}
+
+/// Extract an embedded JPEG preview from a TIFF-family RAW file.
+/// Covers NEF, CR2, ARW, ORF, DNG, PEF, SRW, RW2 and most other TIFF-based
+/// formats. Prefers the largest JPEG found (full preview over tiny thumbnail).
+fn raw_embedded_jpeg_tiff(data: &[u8]) -> Option<Vec<u8>> {
+    let le = match data.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    // Standard TIFF magic number = 42
+    if tiff_u16(data, 2, le)? != 42 {
+        return None;
+    }
+    let ifd0_off = tiff_u32(data, 4, le)? as usize;
+
+    let mut jpegs: Vec<(usize, usize)> = Vec::new();
+    let mut sub_ifds: Vec<usize> = Vec::new();
+
+    // Walk IFD0 and the full linked IFD chain (IFD1, IFD2, …)
+    let mut next = tiff_walk_ifd(data, ifd0_off, le, &mut jpegs, &mut sub_ifds);
+    while let Some(off) = next {
+        next = tiff_walk_ifd(data, off, le, &mut jpegs, &mut sub_ifds);
+    }
+    // Walk sub-IFDs (DNG preview IFD, NEF large preview, etc.)
+    for off in sub_ifds {
+        tiff_walk_ifd(data, off, le, &mut jpegs, &mut Vec::new());
+    }
+
+    // Pick the largest valid JPEG (most likely the full-resolution preview).
+    jpegs.sort_by_key(|&(_, len)| std::cmp::Reverse(len));
+    for (off, len) in jpegs {
+        if let Some(slice) = data.get(off..off + len)
+            && slice.starts_with(&[0xFF, 0xD8])
+        {
+            return Some(slice.to_vec());
+        }
+    }
+    None
+}
+
+/// Extract an embedded JPEG preview from a Fujifilm RAF file.
+/// RAF header (big-endian):
+///   0x00–0x0F  "FUJIFILMCCD-RAW " (magic)
+///   0x44–0x47  u32 preview image file offset
+///   0x48–0x4B  u32 preview image size in bytes
+fn raf_extract_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+    let off = u32::from_be_bytes(data.get(0x44..0x48)?.try_into().ok()?) as usize;
+    let len = u32::from_be_bytes(data.get(0x48..0x4C)?.try_into().ok()?) as usize;
+    if len == 0 {
+        return None;
+    }
+    let slice = data.get(off..off + len)?;
+    if slice.starts_with(&[0xFF, 0xD8]) {
+        Some(slice.to_vec())
+    } else {
+        None
+    }
+}
+
+/// Extract the largest embedded JPEG preview from a RAW file without any
+/// external tools. Handles TIFF-family formats and Fujifilm RAF. Returns
+/// `None` for unsupported container types (e.g. CR3 / ISOBMFF).
+fn raw_embedded_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+    if data.starts_with(b"FUJIFILMCCD-RAW ") {
+        return raf_extract_jpeg(data);
+    }
+    raw_embedded_jpeg_tiff(data)
+}
+
+/// RAW extensions for which pure-Rust embedded JPEG extraction is attempted.
+const RAW_THUMB_EXTS: &[&str] = &[
+    "arw", "cr2", "nef", "orf", "dng", "rw2", "pef", "srw", "raf", "raw", "3fr", "erf", "mef",
+    "mos", "rwl", "nrw", "kdc",
+];
+
+/// Generate a JPEG thumbnail for a RAW file by extracting the embedded preview
+/// and resizing it with the `image` crate. Returns `None` when the embedded
+/// preview cannot be found or the extension is not in `RAW_THUMB_EXTS`.
+async fn raw_thumb_rust(path: &Path) -> Option<Vec<u8>> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    if !RAW_THUMB_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        let data = std::fs::read(&path).ok()?;
+        let jpeg_bytes = raw_embedded_jpeg(&data)?;
+
+        // The embedded preview carries its own EXIF orientation.
+        let orient = jpeg_exif_orientation(&jpeg_bytes);
+        let img = image::load_from_memory(&jpeg_bytes).ok()?;
+        let img = apply_exif_orientation(img, orient);
+        let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+
+        let rgb = img.to_rgb8();
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
+            .encode_image(&rgb)
+            .ok()?;
+        if out.starts_with(&[0xFF, 0xD8]) {
+            Some(out)
+        } else {
+            None
+        }
+    })
+    .await
+    .ok()?
+}
+
+// ---------------------------------------------------------------------------
 // RAW / PSD / layered format preview
 // ---------------------------------------------------------------------------
 
-/// Try to extract a JPEG preview from a RAW file using available tools.
-/// Attempt order: dcraw -e -c → exiftool → ffmpeg → ImageMagick.
+/// Try to extract a JPEG preview from a RAW file.
+/// Attempt order: pure-Rust (TIFF/RAF) → dcraw (imagemagick) → ffmpeg (video) → ImageMagick.
 /// Result is cached in `<root>/.filetag/cache/raw/` keyed by mtime+size.
-async fn preview_raw(path: &Path, root: &Path) -> Response {
+async fn preview_raw(path: &Path, root: &Path, features: Features) -> Response {
     if let Some(cache) = raw_cache_path(path, root) {
         if let Ok(data) = tokio::fs::read(&cache).await {
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
-        let jpeg = raw_extract_jpeg(path).await;
+        let jpeg = raw_extract_jpeg(path, features).await;
         if let Some(data) = jpeg {
             let _ = tokio::fs::write(&cache, &data).await;
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
-    } else if let Some(data) = raw_extract_jpeg(path).await {
+    } else if let Some(data) = raw_extract_jpeg(path, features).await {
         return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
     (
         StatusCode::UNPROCESSABLE_ENTITY,
-        "RAW preview unavailable — install dcraw, exiftool, ffmpeg, or ImageMagick",
+        "RAW preview unavailable — enable Video or ImageMagick features in Settings",
     )
         .into_response()
 }
 
-/// Inner extraction logic for `preview_raw`: tries tools in order and returns
-/// the first JPEG bytes found, or `None` if all tools fail.
-pub async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
-    // dcraw: extract embedded thumbnail to stdout
-    if let Ok(out) = tokio::process::Command::new("dcraw")
-        .args(["-e", "-c"])
-        .arg(path)
-        .kill_on_drop(true)
-        .output()
-        .await
+/// Inner extraction logic for `preview_raw`: tries extraction methods in order.
+/// Pure-Rust paths always run; external tools are gated by `features`.
+pub async fn raw_extract_jpeg(path: &Path, features: Features) -> Option<Vec<u8>> {
+    // Pure-Rust: parse embedded JPEG from TIFF header or RAF container.
+    // Handles NEF, CR2, ARW, ORF, DNG, PEF, SRW, RW2, RAF without any
+    // external tools.
+    if let Ok(data) = tokio::fs::read(path).await
+        && let Some(jpeg) = raw_embedded_jpeg(&data)
+    {
+        return Some(jpeg);
+    }
+
+    // dcraw: extract embedded thumbnail to stdout (fallback for exotic formats)
+    if features.imagemagick
+        && let Ok(out) = tokio::process::Command::new("dcraw")
+            .args(["-e", "-c"])
+            .arg(path)
+            .kill_on_drop(true)
+            .output()
+            .await
         && out.status.success()
         && out.stdout.starts_with(&[0xFF, 0xD8])
     {
         return Some(out.stdout);
     }
 
-    // exiftool: extract PreviewImage or ThumbnailImage
-    for tag in &["-PreviewImage", "-ThumbnailImage", "-JpgFromRaw"] {
-        if let Ok(out) = tokio::process::Command::new("exiftool")
-            .args(["-b", tag])
+    // ffmpeg: decode first frame to JPEG
+    if features.video
+        && let Ok(out) = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg"])
+            .arg("-i")
             .arg(path)
+            .args([
+                "-vframes",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+            ])
             .kill_on_drop(true)
             .output()
             .await
-            && out.status.success()
-            && out.stdout.starts_with(&[0xFF, 0xD8])
-        {
-            return Some(out.stdout);
-        }
-    }
-
-    // ffmpeg: decode first frame to JPEG
-    if let Ok(out) = tokio::process::Command::new("nice")
-        .args(["-n", "10", "ffmpeg"])
-        .arg("-i")
-        .arg(path)
-        .args([
-            "-vframes",
-            "1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "pipe:1",
-        ])
-        .kill_on_drop(true)
-        .output()
-        .await
         && out.status.success()
         && !out.stdout.is_empty()
     {
@@ -587,18 +785,20 @@ pub async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
     }
 
     // ImageMagick 7 (magick) or 6 (convert): composite/layered formats
-    let path_layer = format!("{}[0]", path.display());
-    for cmd in &["magick", "convert"] {
-        if let Ok(out) = tokio::process::Command::new(cmd)
-            .arg(&path_layer)
-            .args(["-flatten", "-quality", "85", "jpg:-"])
-            .kill_on_drop(true)
-            .output()
-            .await
-            && out.status.success()
-            && out.stdout.starts_with(&[0xFF, 0xD8])
-        {
-            return Some(out.stdout);
+    if features.imagemagick {
+        let path_layer = format!("{}[0]", path.display());
+        for cmd in &["magick", "convert"] {
+            if let Ok(out) = tokio::process::Command::new(cmd)
+                .arg(&path_layer)
+                .args(["-flatten", "-quality", "85", "jpg:-"])
+                .kill_on_drop(true)
+                .output()
+                .await
+                && out.status.success()
+                && out.stdout.starts_with(&[0xFF, 0xD8])
+            {
+                return Some(out.stdout);
+            }
         }
     }
 
@@ -610,8 +810,16 @@ pub async fn raw_extract_jpeg(path: &Path) -> Option<Vec<u8>> {
 // ---------------------------------------------------------------------------
 
 /// Convert HEIC/HEIF to JPEG for browser display.
-/// Attempt order: sips (macOS) → ffmpeg → ImageMagick convert
-pub async fn preview_heic(path: &Path, root: &Path) -> Response {
+/// Attempt order: sips/magick (imagemagick) → ffmpeg (video).
+/// Returns 422 with an explanatory message when no feature is enabled.
+pub async fn preview_heic(path: &Path, root: &Path, features: Features) -> Response {
+    if !features.imagemagick && !features.video {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "HEIC preview unavailable — enable ImageMagick or Video features in Settings",
+        )
+            .into_response();
+    }
     let cache_dir = root.join(".filetag").join("cache");
     let _ = std::fs::create_dir_all(&cache_dir);
     let tmp = cache_dir.join(format!(
@@ -633,15 +841,16 @@ pub async fn preview_heic(path: &Path, root: &Path) -> Response {
         return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
-    // sips (macOS built-in)
-    if let Ok(out) = tokio::process::Command::new("sips")
-        .args(["-s", "format", "jpeg", "-Z", "1600"])
-        .arg(path)
-        .arg("--out")
-        .arg(&tmp)
-        .kill_on_drop(true)
-        .output()
-        .await
+    // sips (macOS built-in) — requires imagemagick feature (it's a system image tool)
+    if features.imagemagick
+        && let Ok(out) = tokio::process::Command::new("sips")
+            .args(["-s", "format", "jpeg", "-Z", "1600"])
+            .arg(path)
+            .arg("--out")
+            .arg(&tmp)
+            .kill_on_drop(true)
+            .output()
+            .await
         && out.status.success()
         && let Ok(data) = tokio::fs::read(&tmp).await
     {
@@ -649,22 +858,23 @@ pub async fn preview_heic(path: &Path, root: &Path) -> Response {
     }
 
     // ffmpeg
-    if let Ok(out) = tokio::process::Command::new("nice")
-        .args(["-n", "10", "ffmpeg"])
-        .arg("-i")
-        .arg(path)
-        .args([
-            "-vframes",
-            "1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "pipe:1",
-        ])
-        .kill_on_drop(true)
-        .output()
-        .await
+    if features.video
+        && let Ok(out) = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg"])
+            .arg("-i")
+            .arg(path)
+            .args([
+                "-vframes",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+            ])
+            .kill_on_drop(true)
+            .output()
+            .await
         && out.status.success()
         && !out.stdout.is_empty()
     {
@@ -673,13 +883,14 @@ pub async fn preview_heic(path: &Path, root: &Path) -> Response {
     }
 
     // ImageMagick convert
-    if let Ok(out) = tokio::process::Command::new("convert")
-        .arg(path)
-        .args(["-auto-orient"])
-        .arg(&tmp)
-        .kill_on_drop(true)
-        .output()
-        .await
+    if features.imagemagick
+        && let Ok(out) = tokio::process::Command::new("convert")
+            .arg(path)
+            .args(["-auto-orient"])
+            .arg(&tmp)
+            .kill_on_drop(true)
+            .output()
+            .await
         && out.status.success()
         && let Ok(data) = tokio::fs::read(&tmp).await
     {
@@ -688,30 +899,249 @@ pub async fn preview_heic(path: &Path, root: &Path) -> Response {
 
     (
         StatusCode::UNPROCESSABLE_ENTITY,
-        "HEIC preview unavailable — install sips (macOS), ffmpeg, or ImageMagick",
+        "HEIC preview unavailable — enable ImageMagick or Video features in Settings",
     )
         .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// EXIF orientation helpers
+// ---------------------------------------------------------------------------
+
+/// Read the EXIF Orientation tag from raw JPEG bytes.
+/// Returns the orientation value (1–8), or 1 (normal) if absent or unreadable.
+fn jpeg_exif_orientation(data: &[u8]) -> u8 {
+    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+        return 1;
+    }
+    let mut pos = 2;
+    while pos + 3 < data.len() {
+        if data[pos] != 0xFF {
+            return 1;
+        }
+        let marker = data[pos + 1];
+        if marker == 0xDA {
+            return 1; // start of scan — no APP1 before image data
+        }
+        let seg_len = ((data[pos + 2] as usize) << 8) | data[pos + 3] as usize;
+        if seg_len < 2 || pos + 2 + seg_len > data.len() {
+            return 1;
+        }
+        if marker == 0xE1 {
+            let app1 = &data[pos + 4..pos + 2 + seg_len];
+            if app1.starts_with(b"Exif\0\0") && app1.len() >= 14 {
+                return parse_tiff_orientation(&app1[6..]);
+            }
+        }
+        pos += 2 + seg_len;
+    }
+    1
+}
+
+fn parse_tiff_orientation(tiff: &[u8]) -> u8 {
+    if tiff.len() < 8 {
+        return 1;
+    }
+    let le = &tiff[0..2] == b"II";
+    let u16_at = |off: usize| -> u16 {
+        if off + 2 > tiff.len() {
+            return 0;
+        }
+        if le {
+            u16::from_le_bytes([tiff[off], tiff[off + 1]])
+        } else {
+            u16::from_be_bytes([tiff[off], tiff[off + 1]])
+        }
+    };
+    let u32_at = |off: usize| -> u32 {
+        if off + 4 > tiff.len() {
+            return 0;
+        }
+        if le {
+            u32::from_le_bytes([tiff[off], tiff[off + 1], tiff[off + 2], tiff[off + 3]])
+        } else {
+            u32::from_be_bytes([tiff[off], tiff[off + 1], tiff[off + 2], tiff[off + 3]])
+        }
+    };
+    let ifd0 = u32_at(4) as usize;
+    if ifd0 + 2 > tiff.len() {
+        return 1;
+    }
+    let nentries = u16_at(ifd0) as usize;
+    for i in 0..nentries {
+        let e = ifd0 + 2 + i * 12;
+        if e + 12 > tiff.len() {
+            break;
+        }
+        if u16_at(e) == 0x0112 {
+            // Orientation tag: type SHORT (3), count 1; value in bytes 8–9.
+            let v = u16_at(e + 8) as u8;
+            return if (1..=8).contains(&v) { v } else { 1 };
+        }
+    }
+    1
+}
+
+/// Map an EXIF Orientation value to the ffmpeg `-vf` prefix needed to
+/// correct the rotation before scaling.  Returns an empty string for
+/// orientation 1 (normal) so the scale filter can be used unmodified.
+fn orient_to_vf_prefix(orient: u8) -> &'static str {
+    match orient {
+        2 => "hflip,",
+        3 => "hflip,vflip,",
+        4 => "vflip,",
+        5 => "transpose=0,vflip,",
+        6 => "transpose=1,",
+        7 => "transpose=3,",
+        8 => "transpose=2,",
+        _ => "",
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Image thumbnail (resize to max 400 px)
 // ---------------------------------------------------------------------------
 
+/// Rotate/flip a `DynamicImage` to match its EXIF orientation tag so that the
+/// resulting image is always in "normal" (orientation 1) display order.
+fn apply_exif_orientation(img: image::DynamicImage, orient: u8) -> image::DynamicImage {
+    match orient {
+        2 => img.fliph(),
+        3 => img.rotate180(),
+        4 => img.flipv(),
+        5 => img.rotate90().fliph(),
+        6 => img.rotate90(),
+        7 => img.rotate90().flipv(),
+        8 => img.rotate270(),
+        _ => img,
+    }
+}
+
+/// Extensions handled by the pure-Rust path (`image` crate).
+const RUST_THUMB_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "tiff", "tif", "bmp", "gif", "ico",
+];
+
+/// Generate a JPEG thumbnail using the pure-Rust `image` crate.
+/// Returns `None` for unsupported extensions or on decode failure so the
+/// caller can fall back to ImageMagick / ffmpeg.
+async fn image_thumb_rust(path: &Path) -> Option<Vec<u8>> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    if !RUST_THUMB_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        let data = std::fs::read(&path).ok()?;
+
+        // EXIF orientation (JPEG only — PNG/WebP rarely carry EXIF rotation)
+        let orient = if matches!(ext.as_str(), "jpg" | "jpeg") {
+            jpeg_exif_orientation(&data)
+        } else {
+            1
+        };
+
+        let img = image::load_from_memory(&data).ok()?;
+        let img = apply_exif_orientation(img, orient);
+
+        // Resize: fit within 400×400 preserving aspect ratio
+        let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+
+        // Encode as JPEG quality 80
+        let rgb = img.to_rgb8();
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
+            .encode_image(&rgb)
+            .ok()?;
+
+        if out.starts_with(&[0xFF, 0xD8]) {
+            Some(out)
+        } else {
+            None
+        }
+    })
+    .await
+    .ok()?
+}
+
 /// Generate a small JPEG thumbnail for any image file.
 /// Target: max 400 px on the longest side, quality 80.
-pub async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
-    let path_layer = format!("{}[0]", path.display());
-    for cmd in &["magick", "convert"] {
-        if let Ok(out) = tokio::process::Command::new(cmd)
-            .arg(&path_layer)
+///
+/// Priority:
+/// 1. Pure-Rust path (`image` crate) — fast, no system dependencies, correct EXIF orientation.
+/// 2. Pure-Rust RAW path — extracts embedded JPEG from TIFF/RAF containers.
+/// 3. ImageMagick (`magick` / `convert`) — handles HEIC and other exotic formats (if enabled).
+/// 4. ffmpeg — last resort with manual EXIF orientation correction (if enabled).
+pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>> {
+    // Fast pure-Rust path for common formats
+    if let Some(data) = image_thumb_rust(path).await {
+        return Some(data);
+    }
+
+    // Pure-Rust RAW path: extract embedded JPEG preview and resize
+    if let Some(data) = raw_thumb_rust(path).await {
+        return Some(data);
+    }
+
+    if features.imagemagick {
+        let path_layer = format!("{}[0]", path.display());
+        for cmd in &["magick", "convert"] {
+            if let Ok(out) = tokio::process::Command::new(cmd)
+                .arg(&path_layer)
+                .args([
+                    "-auto-orient",
+                    "-strip",
+                    "-resize",
+                    "400x400>",
+                    "-quality",
+                    "80",
+                    "jpg:-",
+                ])
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .output()
+                .await
+                && out.status.success()
+                && out.stdout.starts_with(&[0xFF, 0xD8])
+            {
+                return Some(out.stdout);
+            }
+        }
+    }
+
+    // ffmpeg fallback — read EXIF orientation from the first 64 KiB of the
+    // file so we can correct the rotation that ImageMagick would have handled
+    // with -auto-orient.
+    if features.video {
+        let orient = {
+            let mut buf = vec![0u8; 65536];
+            let n = std::fs::File::open(path)
+                .and_then(|mut f| std::io::Read::read(&mut f, &mut buf))
+                .unwrap_or(0);
+            jpeg_exif_orientation(&buf[..n])
+        };
+        let vf = format!(
+            "{}scale='if(gt(iw,ih),400,-2)':'if(gt(iw,ih),-2,400)':flags=lanczos",
+            orient_to_vf_prefix(orient)
+        );
+        if let Ok(out) = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg"])
+            .args(["-i"])
+            .arg(path)
+            .args(["-vf"])
+            .arg(&vf)
             .args([
-                "-auto-orient",
-                "-strip",
-                "-resize",
-                "400x400>",
-                "-quality",
-                "80",
-                "jpg:-",
+                "-vframes",
+                "1",
+                "-map_metadata",
+                "-1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-q:v",
+                "5",
+                "pipe:1",
             ])
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
@@ -724,36 +1154,6 @@ pub async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
         }
     }
 
-    // ffmpeg fallback
-    if let Ok(out) = tokio::process::Command::new("nice")
-        .args(["-n", "10", "ffmpeg"])
-        .args(["-i"])
-        .arg(path)
-        .args([
-            "-vf",
-            "scale='if(gt(iw,ih),400,-2)':'if(gt(iw,ih),-2,400)':flags=lanczos",
-            "-vframes",
-            "1",
-            "-map_metadata",
-            "-1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-q:v",
-            "5",
-            "pipe:1",
-        ])
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        && out.status.success()
-        && out.stdout.starts_with(&[0xFF, 0xD8])
-    {
-        return Some(out.stdout);
-    }
-
     None
 }
 
@@ -764,7 +1164,11 @@ pub async fn image_thumb_jpeg(path: &Path) -> Option<Vec<u8>> {
 /// Generate a JPEG thumbnail for a PDF by rasterising the first page.
 /// Tries pdftoppm first (poppler-utils), then ImageMagick+Ghostscript.
 /// Temp files are written under `<root>/.filetag/tmp/` per data-isolation rules.
-pub async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
+/// Returns `None` immediately when `features.pdf` is disabled.
+pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Option<Vec<u8>> {
+    if !features.pdf {
+        return None;
+    }
     let tmp_dir = root.join(".filetag").join("tmp");
     let _ = std::fs::create_dir_all(&tmp_dir);
     let stem = path
@@ -803,7 +1207,7 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
     let _ = tokio::fs::remove_file(&expected).await;
 
     // Fallback: ImageMagick (requires Ghostscript for PDF rasterisation)
-    image_thumb_jpeg(path).await
+    image_thumb_jpeg(path, features).await
 }
 
 // ---------------------------------------------------------------------------
@@ -837,6 +1241,11 @@ pub async fn api_vthumbs(
         Some(r) => r,
         None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
+
+    if !load_features_for(&state, &db_root.root).video {
+        return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
+    }
+
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
@@ -980,6 +1389,11 @@ pub async fn api_vthumbs_pregen(
         Some(r) => r,
         None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
+
+    if !load_features_for(&state, &db_root.root).video {
+        return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
+    }
+
     let root = db_root.root.clone();
     let queued = body.paths.len();
     let state_clone = state.clone();
@@ -1228,6 +1642,7 @@ pub async fn thumb_handler(
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
+    let features = load_features_for(&state, &db_root.root);
 
     let ext = abs
         .extension()
@@ -1246,7 +1661,7 @@ pub async fn thumb_handler(
                     })
                     .await;
                     if let Ok(Ok(img_bytes)) = result {
-                        thumb_from_raw_bytes(&img_bytes, abs).await
+                        thumb_from_raw_bytes(&img_bytes, abs, features).await
                     } else {
                         None
                     }
@@ -1255,17 +1670,21 @@ pub async fn thumb_handler(
             .await
         }
 
-        // Video: single-frame thumbnail
+        // Video: single-frame thumbnail (requires video feature)
         "mp4" | "webm" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "m4v" | "ts" | "3gp" | "f4v"
         | "mpg" | "mpeg" | "m2v" | "m2ts" | "mts" | "mxf" | "rm" | "rmvb" | "divx" | "vob"
         | "ogv" | "ogg" | "dv" | "asf" | "amv" | "mpe" | "m1v" | "mpv" | "qt" => {
-            video_thumb_strip(&abs, &cache_root).await
+            if features.video {
+                video_thumb_strip(&abs, &cache_root).await
+            } else {
+                (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response()
+            }
         }
 
         // HEIC/HEIF
         "heic" | "heif" => {
             thumb_cached(&abs, &cache_root, |abs| {
-                Box::pin(async move { image_thumb_jpeg(abs).await })
+                Box::pin(async move { image_thumb_jpeg(abs, features).await })
             })
             .await
         }
@@ -1275,8 +1694,8 @@ pub async fn thumb_handler(
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             thumb_cached(&abs, &cache_root, |abs| {
                 Box::pin(async move {
-                    if let Some(full_jpeg) = raw_extract_jpeg(abs).await {
-                        thumb_from_raw_bytes(&full_jpeg, abs).await
+                    if let Some(full_jpeg) = raw_extract_jpeg(abs, features).await {
+                        thumb_from_raw_bytes(&full_jpeg, abs, features).await
                     } else {
                         None
                     }
@@ -1288,7 +1707,9 @@ pub async fn thumb_handler(
         // PDF
         "pdf" => {
             thumb_cached(&abs, &cache_root, |abs| {
-                Box::pin(async move { pdf_thumb_jpeg(abs, abs.parent().unwrap_or(abs)).await })
+                Box::pin(
+                    async move { pdf_thumb_jpeg(abs, abs.parent().unwrap_or(abs), features).await },
+                )
             })
             .await
         }
@@ -1306,7 +1727,7 @@ pub async fn thumb_handler(
                             .into_response();
                     }
                 };
-                if let Some(data) = image_thumb_jpeg(&abs).await {
+                if let Some(data) = image_thumb_jpeg(&abs, features).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
                 }
@@ -1362,13 +1783,13 @@ where
 /// Convert raw image bytes (e.g. from an archive or RAW extraction) into a
 /// thumbnail JPEG by writing to a temp file and calling `image_thumb_jpeg`.
 /// Falls back to the raw bytes if resizing fails.
-async fn thumb_from_raw_bytes(raw_bytes: &[u8], abs: &Path) -> Option<Vec<u8>> {
+async fn thumb_from_raw_bytes(raw_bytes: &[u8], abs: &Path, features: Features) -> Option<Vec<u8>> {
     let root = abs.parent()?;
     let tmp_dir = root.join(".filetag").join("tmp");
     let _ = tokio::fs::create_dir_all(&tmp_dir).await;
     let tmp = tmp_dir.join("thumb_src.jpg");
     if tokio::fs::write(&tmp, raw_bytes).await.is_ok() {
-        if let Some(small) = image_thumb_jpeg(&tmp).await {
+        if let Some(small) = image_thumb_jpeg(&tmp, features).await {
             let _ = tokio::fs::remove_file(&tmp).await;
             return Some(small);
         }
@@ -1432,7 +1853,7 @@ fn pick_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
 
 /// Generate a small JPEG for a single directory item (image or video first frame).
 /// Target dimensions: 120 × 120 px, square-cropped.
-async fn dir_item_jpeg(path: &Path) -> Option<Vec<u8>> {
+async fn dir_item_jpeg(path: &Path, features: Features) -> Option<Vec<u8>> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -1440,6 +1861,9 @@ async fn dir_item_jpeg(path: &Path) -> Option<Vec<u8>> {
         .to_lowercase();
 
     if DIR_VIDEO_EXTS.contains(&ext.as_str()) {
+        if !features.video {
+            return None;
+        }
         // Extract the first decodable video frame, square-cropped to 120×120.
         let out = tokio::process::Command::new("ffmpeg")
             .arg("-i")
@@ -1472,7 +1896,7 @@ async fn dir_item_jpeg(path: &Path) -> Option<Vec<u8>> {
     }
 
     // Images: delegate to the shared thumbnail function (handles RAW, HEIC, etc.).
-    image_thumb_jpeg(path).await
+    image_thumb_jpeg(path, features).await
 }
 
 /// Assemble a 2 × 2 JPEG collage (240 × 240 px) from four input images.
@@ -1691,6 +2115,7 @@ pub async fn api_dir_thumbs(
         Some(r) => r,
         None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
+    let features = load_features_for(&state, &db_root.root);
 
     let abs_dir = match crate::state::preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
@@ -1751,7 +2176,7 @@ pub async fn api_dir_thumbs(
             // Generate per-item thumbnails in parallel (bounded by outer permit).
             let mut thumb_paths: Vec<PathBuf> = Vec::new();
             for (item_idx, item_path) in group.iter().enumerate() {
-                if let Some(jpeg) = dir_item_jpeg(item_path).await {
+                if let Some(jpeg) = dir_item_jpeg(item_path, features).await {
                     let tp = tmp_dir.join(format!("t{frame_idx}_{item_idx}.jpg"));
                     if tokio::fs::write(&tp, &jpeg).await.is_ok() {
                         thumb_paths.push(tp);
