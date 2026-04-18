@@ -320,11 +320,7 @@ async fn preview_raw(path: &Path, root: &Path, features: Features) -> Response {
         return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "RAW preview unavailable — enable Video or ImageMagick features in Settings",
-    )
-        .into_response()
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Inner extraction logic for `preview_raw`: tries extraction methods in order.
@@ -416,11 +412,7 @@ pub async fn preview_heic(path: &Path, root: &Path, features: Features) -> Respo
     }
 
     if !features.imagemagick && !features.video {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "HEIC preview unavailable — enable ImageMagick or Video features in Settings",
-        )
-            .into_response();
+        return StatusCode::NO_CONTENT.into_response();
     }
     let cache_dir = root.join(".filetag").join("cache");
     let _ = std::fs::create_dir_all(&cache_dir);
@@ -499,11 +491,7 @@ pub async fn preview_heic(path: &Path, root: &Path, features: Features) -> Respo
         return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
     }
 
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "HEIC preview unavailable — enable ImageMagick or Video features in Settings",
-    )
-        .into_response()
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
