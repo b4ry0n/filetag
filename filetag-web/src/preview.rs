@@ -890,8 +890,50 @@ pub async fn thumb_handler(
 
         // HEIC/HEIF
         "heic" | "heif" => {
+            let cr = cache_root.clone();
             thumb_cached(&abs, &cache_root, |abs| {
-                Box::pin(async move { image_thumb_jpeg(abs, features).await })
+                Box::pin(async move {
+                    // 1. Pure-Rust + ImageMagick + ffmpeg (via image_thumb_jpeg).
+                    if let Some(d) = image_thumb_jpeg(abs, features).await {
+                        return Some(d);
+                    }
+                    // 2. sips — always available on macOS; no feature flag needed.
+                    //    Writes to a temp file under .filetag/tmp/ to honour
+                    //    the data-isolation invariant, then reads and removes it.
+                    #[cfg(target_os = "macos")]
+                    {
+                        let tmp = cr
+                            .join(".filetag")
+                            .join("tmp")
+                            .join(format!("sips_{}.jpg", rand_hex()));
+                        if let Some(parent) = tmp.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        let ok = tokio::process::Command::new("sips")
+                            .args(["-s", "format", "jpeg", "-Z", "400"])
+                            .arg(abs)
+                            .args(["--out"])
+                            .arg(&tmp)
+                            .stderr(std::process::Stdio::null())
+                            .kill_on_drop(true)
+                            .output()
+                            .await
+                            .map(|o| o.status.success())
+                            .unwrap_or(false);
+                        if ok {
+                            let data = tokio::fs::read(&tmp).await.ok();
+                            let _ = tokio::fs::remove_file(&tmp).await;
+                            if data
+                                .as_ref()
+                                .map(|d| d.starts_with(&[0xFF, 0xD8]))
+                                .unwrap_or(false)
+                            {
+                                return data;
+                            }
+                        }
+                    }
+                    None
+                })
             })
             .await
         }
