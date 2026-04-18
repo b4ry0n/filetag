@@ -133,7 +133,6 @@ async function loadFiles(path) {
     const data = await api(url);
     // Update the deepest active root from server response so all subsequent
     // operations (tag/untag, file detail, cache) target the correct database.
-    const prevBase = state.currentBasePath;
     if (data.root_path) state.currentBasePath = data.root_path;
     state.currentPath = data.path;
     state.entries = data.entries;
@@ -143,11 +142,6 @@ async function loadFiles(path) {
     state.zipEntries = [];
     sessionStorage.setItem('ft_path', state.currentPath);
     sessionStorage.setItem('ft_base', state.currentBasePath || '');
-    // If the active root changed (navigated into or out of a nested database),
-    // reload settings so feature flags reflect the new root's configuration.
-    if (state.currentBasePath !== prevBase) {
-        await loadSettings();
-    }
 }
 
 async function searchFiles(query) {
