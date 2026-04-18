@@ -884,7 +884,7 @@ pub async fn thumb_handler(
             if features.video {
                 video_thumb_strip(&abs, &cache_root).await
             } else {
-                (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response()
+                StatusCode::NO_CONTENT.into_response()
             }
         }
 
@@ -984,7 +984,7 @@ where
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
     }
-    (StatusCode::UNPROCESSABLE_ENTITY, "Thumbnail unavailable").into_response()
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Convert raw image bytes (e.g. from an archive or RAW extraction) into a
