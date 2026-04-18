@@ -17,12 +17,12 @@ use axum::{
 use filetag_lib::{db, query};
 
 use crate::archive::ensure_zip_entry_record;
-use crate::preview::video_info;
 use crate::state::{
     AppError, AppState, file_is_covered, load_features_for, open_conn, open_for_file_op, parse_tag,
     resolve_preview, root_for_dir, safe_path,
 };
 use crate::types::*;
+use crate::video::video_info;
 use filetag_lib::db::TagRoot;
 
 // ---------------------------------------------------------------------------
