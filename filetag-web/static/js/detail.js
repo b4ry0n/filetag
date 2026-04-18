@@ -53,7 +53,7 @@ function renderZipGrid(entries) {
         let preview;
         if (entry.is_image) {
             const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + dirParam('&');
-            preview = `<div class="card-thumb-pending" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}"></div>`;
+            preview = `<div class="card-icon" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}">${fileIcon(displayName)}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
         }
@@ -506,7 +506,7 @@ function _thumbFlush() {
 
 function _thumbInit() {
     _thumbFlush();
-    document.querySelectorAll('.card-thumb-pending[data-thumb-src]').forEach(el => {
+    document.querySelectorAll('.card-icon[data-thumb-src]').forEach(el => {
         const src = el.dataset.thumbSrc;
         // If we already have this thumbnail cached, replace immediately.
         if (_thumbCache.has(src)) {
@@ -535,15 +535,10 @@ function _thumbReplace(el, blobUrl) {
     }
 }
 
-/** Replace a pending-thumb element with a type-appropriate icon placeholder.
- * Uses card-icon so the card automatically switches to the stacked light layout. */
+/** Mark a card-icon element as permanently failed: strip data-thumb-src so it
+ * is never re-queued. The element already shows the right icon. */
 function _thumbShowFailed(el) {
-    const name = el.dataset.name || '';
-    const icon = fileIcon(name);
-    const div = document.createElement('div');
-    div.className = 'card-icon';
-    div.innerHTML = icon;
-    el.replaceWith(div);
+    el.removeAttribute('data-thumb-src');
 }
 
 async function _thumbRun() {

@@ -111,16 +111,16 @@ function renderGrid(items) {
                 ? `<div class="card-icon dir-thumb-anchor" data-dir-path="${esc(dirPath)}">${ICONS.folder}</div>`
                 : `<div class="card-icon">${ICONS.folder}</div>`;
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}"></div>`;
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}">${fileIcon(name)}</div>`;
         } else if (type_ === 'video') {
             const vpath = fullPath(entry);
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(vpath)}${dirParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}"></div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodeURI(vpath)}${dirParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}">${ICONS.video}</div>` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else if (type_ === 'zip') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}"></div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}">${ICONS.zip || ''}</div>` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else if (type_ === 'pdf') {
-            preview = `<div class="card-thumb-pending" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}"></div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodeURI(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}">${ICONS.pdf}</div>` +
                 `<div class="card-filmstrip-badge">${ICONS.pdf}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
