@@ -110,7 +110,7 @@ function _previewImgError(img) {
 function _previewRawError(img) {
     const p = img.closest('.detail-preview');
     if (!p) return;
-    p.innerHTML = `<div class="no-preview">${fileIcon(img.dataset.name || '')}<div class="preview-unavail-msg">Preview unavailable — install dcraw, exiftool, ffmpeg, or ImageMagick</div></div>`;
+    p.innerHTML = `<div class="no-preview">${fileIcon(img.dataset.name || '')}<div class="preview-unavail-msg">Preview unavailable — install dcraw, ffmpeg, or ImageMagick and enable the corresponding feature in Settings</div></div>`;
 }
 
 function _previewVideoError(video) {
