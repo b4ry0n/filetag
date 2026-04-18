@@ -19,6 +19,57 @@ use rusqlite::Connection;
 use crate::ai::AiProgress;
 
 // ---------------------------------------------------------------------------
+// Feature flags
+// ---------------------------------------------------------------------------
+
+/// Feature flags that govern the use of external tools and optional capabilities.
+///
+/// All flags default to `false` (fully portable, no external tools required).
+/// Operators enable them per database root via the Settings panel.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Features {
+    /// Enable ffmpeg for video transcoding, HLS streaming, trickplay sprites,
+    /// and video thumbnails. Also enables ffmpeg as an image-preview fallback.
+    pub video: bool,
+    /// Enable ImageMagick (`magick`/`convert`) and `sips` (macOS) for HEIC,
+    /// PSD, XCF, and other exotic image formats. Also enables `dcraw` as a
+    /// RAW-extraction fallback.
+    pub imagemagick: bool,
+    /// Enable PDF thumbnail generation via `pdftoppm` (poppler) or ImageMagick
+    /// + Ghostscript.
+    pub pdf: bool,
+}
+
+/// Load feature flags from the per-root settings table.
+pub fn load_features(conn: &Connection) -> Features {
+    let get = |key: &str| -> bool {
+        db::get_setting(conn, key)
+            .ok()
+            .flatten()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    };
+    Features {
+        video: get("feature.video"),
+        imagemagick: get("feature.imagemagick"),
+        pdf: get("feature.pdf"),
+    }
+}
+
+/// Load feature flags for the database root at `root_path`.
+/// Returns `Features::default()` (all off) when the root is not found or the
+/// settings table cannot be read.
+pub fn load_features_for(state: &AppState, root_path: &Path) -> Features {
+    let Some(tag_root) = state.roots.iter().find(|r| r.root == root_path) else {
+        return Features::default();
+    };
+    match open_conn(tag_root) {
+        Ok(conn) => load_features(&conn),
+        Err(_) => Features::default(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Concurrency limiters
 // ---------------------------------------------------------------------------
 

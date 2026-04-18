@@ -10,24 +10,18 @@ function renderBreadcrumb() {
         return;
     }
 
-    const isMultiRoot = state.roots.filter(r => r.entry_point).length > 1;
     const rootIsCurrent = state.currentPath === '' && state.mode !== 'zip' && state.currentBasePath != null;
 
-    // "/" button: goes to virtual root in multi-root mode, or to '' in single-root mode.
-    let html;
-    if (isMultiRoot) {
-        html = `<button class="breadcrumb-item${state.currentBasePath == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
-        if (state.currentBasePath != null) {
-            const root = state.roots.find(r => r.path === state.currentBasePath);
-            const rootName = root ? root.name : state.currentBasePath.split('/').pop();
-            if (rootIsCurrent) {
-                html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename('${jesc(state.currentBasePath)}', this)">${esc(rootName)}</span>`;
-            } else {
-                html += `<button class="breadcrumb-item" onclick="navigateTo('')">${esc(rootName)}</button>`;
-            }
+    // "/" always goes to the roots overview, whether there is one root or many.
+    let html = `<button class="breadcrumb-item${state.currentBasePath == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
+    if (state.currentBasePath != null) {
+        const root = state.roots.find(r => r.path === state.currentBasePath);
+        const rootName = root ? root.name : state.currentBasePath.split('/').pop();
+        if (rootIsCurrent) {
+            html += `<span class="breadcrumb-item current" title="Click to rename" ondblclick="startRootRename('${jesc(state.currentBasePath)}', this)">${esc(rootName)}</span>`;
+        } else {
+            html += `<button class="breadcrumb-item" onclick="navigateTo('')">${esc(rootName)}</button>`;
         }
-    } else {
-        html = `<button class="breadcrumb-item${rootIsCurrent ? ' current' : ''}" onclick="navigateTo('')">/</button>`;
     }
 
     if (state.currentPath) {
@@ -37,11 +31,9 @@ function renderBreadcrumb() {
             accumulated += (i === 0 ? '' : '/') + parts[i];
             const isCurrent = i === parts.length - 1 && state.mode !== 'zip';
             const path = accumulated;
-            // In single-root mode the root button is already "/", so skip the
-            // separator before the very first path component to avoid "/ / Foo".
-            if (i > 0 || isMultiRoot) {
-                html += `<span class="breadcrumb-sep">/</span>`;
-            }
+            // The root-name segment is always shown before path parts, so always
+            // emit a separator between the root name and the first path component.
+            html += `<span class="breadcrumb-sep">/</span>`;
             html += `<button class="breadcrumb-item${isCurrent ? ' current' : ''}" onclick="navigateTo('${jesc(path)}')">${esc(parts[i])}</button>`;
         }
     }

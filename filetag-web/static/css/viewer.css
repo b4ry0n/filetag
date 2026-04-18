@@ -411,6 +411,33 @@
     border-bottom-color: var(--accent, #6ba3f7);
 }
 .modal-tab-panel[hidden] { display: none; }
+
+.settings-desc {
+    font-size: 13px;
+    color: var(--fg-dim);
+    margin: 0 0 12px;
+}
+.feature-check {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 6px 0;
+    cursor: pointer;
+}
+.feature-check input[type="checkbox"] {
+    flex-shrink: 0;
+    margin-top: 2px;
+    width: auto;
+    border: none;
+    padding: 0;
+    background: none;
+}
+.feature-check .feature-name {
+    display: block;
+    color: var(--fg);
+    font-size: 13px;
+    font-weight: 500;
+}
 .modal-body small {
     font-size: 11px;
     color: var(--fg-dim);

@@ -673,6 +673,10 @@ async function openSettings(tab = 'video') {
     // Video settings from per-root state
     document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
     document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
+    // Feature flags from per-root state
+    document.getElementById('feat-video').checked = state.settings.feature_video ?? false;
+    document.getElementById('feat-imagemagick').checked = state.settings.feature_imagemagick ?? false;
+    document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
     // AI settings from server
     try {
         const res = await fetch('/api/ai/config?' + new URLSearchParams({ dir: currentAbsDir() || '' }));
@@ -713,6 +717,25 @@ async function saveVideoSettings() {
             showToast('Failed to save settings: ' + e.message);
             return;
         }
+    }
+    closeSettings();
+}
+
+async function saveFeaturesSettings() {
+    const body = {
+        dir: currentAbsDir(),
+        feature_video: document.getElementById('feat-video').checked,
+        feature_imagemagick: document.getElementById('feat-imagemagick').checked,
+        feature_pdf: document.getElementById('feat-pdf').checked,
+    };
+    try {
+        await apiPost('/api/settings', body);
+        state.settings.feature_video = body.feature_video;
+        state.settings.feature_imagemagick = body.feature_imagemagick;
+        state.settings.feature_pdf = body.feature_pdf;
+    } catch (e) {
+        showToast('Failed to save settings: ' + e.message);
+        return;
     }
     closeSettings();
 }

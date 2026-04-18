@@ -19,8 +19,8 @@ use filetag_lib::{db, query};
 use crate::archive::ensure_zip_entry_record;
 use crate::preview::video_info;
 use crate::state::{
-    AppError, AppState, file_is_covered, open_conn, open_for_file_op, parse_tag, resolve_preview,
-    root_for_dir, safe_path,
+    AppError, AppState, file_is_covered, load_features_for, open_conn, open_for_file_op, parse_tag,
+    resolve_preview, root_for_dir, safe_path,
 };
 use crate::types::*;
 use filetag_lib::db::TagRoot;
@@ -583,7 +583,12 @@ pub async fn api_file_detail(
             })
             .unwrap_or(false);
     let duration = if is_video {
-        video_info(&fs_path).await.map(|i| i.duration)
+        let features = load_features_for(&state, &db_root.root);
+        if features.video {
+            video_info(&fs_path).await.map(|i| i.duration)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -762,7 +767,7 @@ pub async fn api_delete_tag(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
-/// `GET /api/settings` — read per-root settings (currently trickplay sprite counts).
+/// `GET /api/settings` — read per-root settings (trickplay counts + feature flags).
 pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,
     State(state): State<Arc<AppState>>,
@@ -777,9 +782,20 @@ pub async fn api_settings_get(
         .map_err(AppError)?
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
-    Ok(Json(
-        serde_json::json!({ "sprite_min": sprite_min, "sprite_max": sprite_max }),
-    ))
+    let bool_setting = |key: &str| -> bool {
+        db::get_setting(&conn, key)
+            .ok()
+            .flatten()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    };
+    Ok(Json(serde_json::json!({
+        "sprite_min": sprite_min,
+        "sprite_max": sprite_max,
+        "feature_video": bool_setting("feature.video"),
+        "feature_imagemagick": bool_setting("feature.imagemagick"),
+        "feature_pdf": bool_setting("feature.pdf"),
+    })))
 }
 
 /// `POST /api/settings` — persist per-root settings.
@@ -794,6 +810,16 @@ pub async fn api_settings_set(
     }
     if let Some(v) = body.sprite_max {
         db::set_setting(&conn, "sprite_max", &v.to_string()).map_err(AppError)?;
+    }
+    let bool_to_str = |b: bool| if b { "1" } else { "0" };
+    if let Some(v) = body.feature_video {
+        db::set_setting(&conn, "feature.video", bool_to_str(v)).map_err(AppError)?;
+    }
+    if let Some(v) = body.feature_imagemagick {
+        db::set_setting(&conn, "feature.imagemagick", bool_to_str(v)).map_err(AppError)?;
+    }
+    if let Some(v) = body.feature_pdf {
+        db::set_setting(&conn, "feature.pdf", bool_to_str(v)).map_err(AppError)?;
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

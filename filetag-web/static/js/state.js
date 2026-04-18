@@ -22,7 +22,7 @@ const state = {
     expandedGroups: new Set(), // tag group prefixes that are expanded
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
     aiAnalysing: new Set(),    // paths currently being analysed by AI
-    settings: { sprite_min: 8, sprite_max: 16 }, // per-root settings (loaded from DB)
+    settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false }, // per-root settings (loaded from DB)
 };
 
 let _lastClickedPath = null; // for shift-range selection
@@ -112,7 +112,7 @@ async function loadSettings() {
     try {
         state.settings = await api('/api/settings' + dirParam('?'));
     } catch (_) {
-        state.settings = { sprite_min: 8, sprite_max: 16 };
+        state.settings = { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false };
     }
 }
 

@@ -244,4 +244,10 @@ pub struct SettingsBody {
     pub sprite_min: Option<u32>,
     /// Maximum number of trickplay sprites for a video.
     pub sprite_max: Option<u32>,
+    /// Enable ffmpeg video features.
+    pub feature_video: Option<bool>,
+    /// Enable ImageMagick / sips for exotic image formats.
+    pub feature_imagemagick: Option<bool>,
+    /// Enable PDF thumbnail generation.
+    pub feature_pdf: Option<bool>,
 }

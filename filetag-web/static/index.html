@@ -198,6 +198,7 @@
             </div>
             <nav class="modal-tabs">
                 <button class="modal-tab-btn active" data-tab="video" onclick="switchSettingsTab('video')">Video</button>
+                <button class="modal-tab-btn" data-tab="features" onclick="switchSettingsTab('features')">Features</button>
                 <button class="modal-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')">AI</button>
             </nav>
             <div class="modal-body">
@@ -212,6 +213,34 @@
                     </label>
                     <div class="modal-actions">
                         <button onclick="saveVideoSettings()">Save</button>
+                        <button onclick="closeSettings()">Cancel</button>
+                    </div>
+                </div>
+                <div id="settings-tab-features" class="modal-tab-panel" hidden>
+                    <p class="settings-desc">Enable features that require external tools. All features are off by default for maximum portability.</p>
+                    <label class="feature-check">
+                        <input type="checkbox" id="feat-video">
+                        <div>
+                            <span class="feature-name">Video</span>
+                            <small>Enables ffmpeg for transcoding, HLS streaming, trickplay sprites, and video thumbnails.</small>
+                        </div>
+                    </label>
+                    <label class="feature-check">
+                        <input type="checkbox" id="feat-imagemagick">
+                        <div>
+                            <span class="feature-name">ImageMagick</span>
+                            <small>Enables ImageMagick and sips for HEIC, PSD, and other exotic image formats.</small>
+                        </div>
+                    </label>
+                    <label class="feature-check">
+                        <input type="checkbox" id="feat-pdf">
+                        <div>
+                            <span class="feature-name">PDF thumbnails</span>
+                            <small>Enables PDF thumbnail generation via pdftoppm or ImageMagick with Ghostscript.</small>
+                        </div>
+                    </label>
+                    <div class="modal-actions">
+                        <button onclick="saveFeaturesSettings()">Save</button>
                         <button onclick="closeSettings()">Cancel</button>
                     </div>
                 </div>
