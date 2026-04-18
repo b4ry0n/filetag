@@ -510,7 +510,8 @@ function _thumbInit() {
         const src = el.dataset.thumbSrc;
         // If we already have this thumbnail cached, replace immediately.
         if (_thumbCache.has(src)) {
-            _thumbReplace(el, _thumbCache.get(src));
+            const cached = _thumbCache.get(src);
+            if (cached) _thumbReplace(el, cached); else _thumbShowFailed(el);
             return;
         }
         if (_thumbQueue.includes(el)) return;
@@ -532,6 +533,16 @@ function _thumbReplace(el, blobUrl) {
     if (el.dataset.videoPath) {
         _trickplayAttach(img, el.dataset.videoPath);
     }
+}
+
+/** Replace a pending-thumb element with a type-appropriate icon placeholder. */
+function _thumbShowFailed(el) {
+    const name = el.dataset.name || '';
+    const icon = fileIcon(name);
+    const div = document.createElement('div');
+    div.className = 'card-thumb-failed';
+    div.innerHTML = icon;
+    el.replaceWith(div);
 }
 
 async function _thumbRun() {
@@ -564,11 +575,16 @@ async function _thumbRun() {
                     _thumbObserver.observe(el);
                 }
             } else {
-                // 422 (feature disabled) or other permanent failure: cache null
-                // so future renders skip the fetch instead of retrying.
+                // Permanent failure (e.g. 422 — feature disabled): show a
+                // type-appropriate icon placeholder and cache null so future
+                // renders skip the fetch without retrying.
                 _thumbCache.set(src, null);
+                if (el.isConnected) _thumbShowFailed(el);
             }
-        } catch (_) { /* network error: leave placeholder */ }
+        } catch (_) {
+            // Network error: show placeholder so shimmer does not run forever.
+            if (el.isConnected) _thumbShowFailed(el);
+        }
     }
     _thumbBusy = false;
 }
