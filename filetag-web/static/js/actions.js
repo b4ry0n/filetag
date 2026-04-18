@@ -39,6 +39,7 @@ async function enterRoot(rootPath) {
     _thumbClearCache();
     _kbCursor = -1;
     state.currentBasePath = rootPath;
+    state.currentPath = '';
     state.selectedFile = null;
     state.selectedDir = null;
     state.selectedRoot = null;
