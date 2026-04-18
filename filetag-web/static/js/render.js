@@ -15,6 +15,18 @@ function renderBreadcrumb() {
     // "/" always goes to the roots overview, whether there is one root or many.
     let html = `<button class="breadcrumb-item${state.currentBasePath == null ? ' current' : ''}" onclick="goVirtualRoot()">/</button>`;
     if (state.currentBasePath != null) {
+        // Ancestor roots: any root whose path is a strict prefix of the current base path.
+        const ancestors = state.roots
+            .filter(r => state.currentBasePath.startsWith(r.path + '/'))
+            .sort((a, b) => a.path.length - b.path.length);
+
+        for (const anc of ancestors) {
+            if (ancestors.indexOf(anc) > 0) html += `<span class="breadcrumb-sep">/</span>`;
+            html += `<button class="breadcrumb-item" onclick="enterRoot('${jesc(anc.path)}')">${esc(anc.name)}</button>`;
+        }
+
+        if (ancestors.length > 0) html += `<span class="breadcrumb-sep">/</span>`;
+
         const root = state.roots.find(r => r.path === state.currentBasePath);
         const rootName = root ? root.name : state.currentBasePath.split('/').pop();
         if (rootIsCurrent) {
