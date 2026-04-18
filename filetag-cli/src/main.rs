@@ -204,6 +204,12 @@ enum Command {
     /// Show database statistics
     Info,
 
+    /// Manage tag synonyms (aliases)
+    Synonym {
+        #[command(subcommand)]
+        action: SynonymAction,
+    },
+
     /// Manage linked databases
     Db {
         #[command(subcommand)]
@@ -215,6 +221,27 @@ enum Command {
         /// Shell to generate completions for
         shell: Shell,
     },
+}
+
+#[derive(Subcommand)]
+enum SynonymAction {
+    /// Register an alias as a synonym for a canonical tag
+    Add {
+        /// Alias name (the synonym to add)
+        alias: String,
+        /// Canonical tag name (the tag the alias maps to)
+        canonical: String,
+    },
+
+    /// Remove a registered synonym
+    Remove {
+        /// Alias name to remove
+        alias: String,
+    },
+
+    /// List all registered synonyms
+    #[command(visible_alias = "ls")]
+    List,
 }
 
 #[derive(Subcommand)]
@@ -360,6 +387,7 @@ fn main() -> Result<()> {
             dry_run,
         } => cmd_merge(&cli, from.clone(), into.clone(), *force, *dry_run),
         Command::Info => cmd_info(&cli),
+        Command::Synonym { action } => cmd_synonym(&cli, action),
         Command::Db { action } => cmd_db(&cli, action),
         Command::Completions { shell } => cmd_completions(*shell),
     }
@@ -1172,38 +1200,20 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
 
 fn cmd_mv(cli: &Cli, from: String, to: String) -> Result<()> {
     let (conn, _root) = open_db(cli)?;
-
-    // Check source exists
-    let from_id: i64 = conn
-        .query_row(
-            "SELECT id FROM tags WHERE name = ?1",
-            rusqlite::params![&from],
-            |r| r.get(0),
-        )
-        .with_context(|| format!("tag '{}' not found", from))?;
-
-    // Check target doesn't exist
-    let target_exists = conn
-        .query_row(
-            "SELECT id FROM tags WHERE name = ?1",
-            rusqlite::params![&to],
-            |r| r.get::<_, i64>(0),
-        )
-        .is_ok();
-
-    if target_exists {
-        anyhow::bail!(
-            "tag '{}' already exists (use 'filetag merge' to combine tags)",
-            to
-        );
+    match db::rename_tag(&conn, &from, &to)? {
+        db::RenameOutcome::Renamed => {
+            info!(cli, "Renamed '{}' -> '{}'", from, to);
+        }
+        db::RenameOutcome::Merged { assignments } => {
+            info!(
+                cli,
+                "Merged '{}' into '{}' ({} assignment(s) moved)", from, to, assignments
+            );
+        }
+        db::RenameOutcome::NotFound => {
+            anyhow::bail!("tag '{}' not found", from);
+        }
     }
-
-    conn.execute(
-        "UPDATE tags SET name = ?1 WHERE id = ?2",
-        rusqlite::params![&to, from_id],
-    )?;
-
-    info!(cli, "Renamed '{}' -> '{}'", from, to);
     Ok(())
 }
 
@@ -1299,6 +1309,46 @@ fn cmd_info(cli: &Cli) -> Result<()> {
 
 fn cmd_completions(shell: Shell) -> Result<()> {
     clap_complete::generate(shell, &mut Cli::command(), "filetag", &mut io::stdout());
+    Ok(())
+}
+
+fn cmd_synonym(cli: &Cli, action: &SynonymAction) -> Result<()> {
+    let (conn, _root) = open_db(cli)?;
+    match action {
+        SynonymAction::Add { alias, canonical } => {
+            db::add_synonym(&conn, alias, canonical)?;
+            info!(cli, "Added synonym '{}' → '{}'", alias, canonical);
+        }
+        SynonymAction::Remove { alias } => {
+            if db::remove_synonym(&conn, alias)? {
+                info!(cli, "Removed synonym '{}'", alias);
+            } else {
+                anyhow::bail!("synonym '{}' not found", alias);
+            }
+        }
+        SynonymAction::List => {
+            let synonyms = db::list_synonyms(&conn)?;
+            if synonyms.is_empty() {
+                if !cli.quiet {
+                    eprintln!("No synonyms registered.");
+                }
+                return Ok(());
+            }
+            if cli.json {
+                let j: Vec<serde_json::Value> = synonyms
+                    .iter()
+                    .map(|(alias, canonical)| {
+                        serde_json::json!({ "alias": alias, "canonical": canonical })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string(&j)?);
+            } else {
+                for (alias, canonical) in &synonyms {
+                    println!("{alias} → {canonical}");
+                }
+            }
+        }
+    }
     Ok(())
 }
 

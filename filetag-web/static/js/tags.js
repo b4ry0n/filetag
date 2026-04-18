@@ -27,7 +27,7 @@ function renderTags() {
             const prefix = tag.name.slice(0, slash);
             const suffix = tag.name.slice(slash + 1);
             if (!groups[prefix]) groups[prefix] = { root: null, children: [] };
-            groups[prefix].children.push({ suffix, fullName: tag.name, count: tag.count, color: tag.color });
+            groups[prefix].children.push({ suffix, fullName: tag.name, count: tag.count, color: tag.color, synonyms: tag.synonyms || [] });
         } else {
             standalone.push(tag);
         }
@@ -80,8 +80,9 @@ function renderTags() {
             <div class="tag-group-items${expanded ? ' open' : ''}">`;
         for (const item of items) {
             const active = state.activeTags.has(item.fullName) ? ' active' : '';
+            const synBadge = item.synonyms.length ? ` <span class="tag-synonym-badge" title="Synonyms: ${item.synonyms.map(esc).join(', ')}">≡</span>` : '';
             html += `<button class="tag-item${active}" onclick="toggleTagFilter('${jesc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${jesc(item.fullName)}')">
-                ${colorDot(item.color)}${esc(item.suffix)} <span class="count">${item.count}</span>
+                ${colorDot(item.color)}${esc(item.suffix)}${synBadge} <span class="count">${item.count}</span>
             </button>`;
         }
         html += '</div></div>';
@@ -90,8 +91,9 @@ function renderTags() {
     // Standalone tags (those that are not a prefix of any group)
     for (const tag of trulyStandalone.sort((a, b) => a.name.localeCompare(b.name))) {
         const active = state.activeTags.has(tag.name) ? ' active' : '';
+        const synBadge = (tag.synonyms || []).length ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">≡</span>` : '';
         html += `<button class="tag-item tag-standalone${active}" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event, '${jesc(tag.name)}')">
-            ${colorDot(tag.color)}${esc(tag.name)} <span class="count">${tag.count}</span>
+            ${colorDot(tag.color)}${esc(tag.name)}${synBadge} <span class="count">${tag.count}</span>
         </button>`;
     }
 
@@ -121,11 +123,26 @@ function showTagMenu(e, tagName) {
     const menu = document.createElement('div');
     menu.id = 'tag-context-menu';
     menu.className = 'tag-context-menu';
+
+    const synonyms = tag?.synonyms || [];
+    const synonymRows = synonyms.map(a =>
+        `<span class="tag-menu-synonym-row">${esc(a)}<button class="tag-menu-synonym-remove" onclick="removeSynonym('${jesc(tagName)}','${jesc(a)}')" title="Remove synonym">✕</button></span>`
+    ).join('');
+
     menu.innerHTML = `
         <div class="tag-menu-header" id="tag-menu-header">${esc(tagName)}</div>
         <div class="tag-menu-section">
             <div class="tag-menu-label">Color</div>
             <div class="tag-menu-swatches">${swatches}</div>
+        </div>
+        <div class="tag-menu-divider"></div>
+        <div class="tag-menu-section">
+            <div class="tag-menu-label">Synonyms${synonyms.length ? '' : ' <span style="font-weight:normal;opacity:.6">(none)</span>'}</div>
+            ${synonymRows ? `<div class="tag-menu-synonyms">${synonymRows}</div>` : ''}
+            <div class="tag-menu-synonym-add">
+                <input id="tag-menu-synonym-input" class="tag-menu-rename-input" type="text" placeholder="Add alias…" onclick="event.stopPropagation()">
+                <button class="tag-menu-action" onclick="addSynonymFromInput('${jesc(tagName)}')">Add</button>
+            </div>
         </div>
         <div class="tag-menu-divider"></div>
         <button class="tag-menu-action" onclick="startTagRename('${jesc(tagName)}')">Rename tag</button>
@@ -205,12 +222,34 @@ async function renameTag(oldName, newName) {
     if (!newName || newName === oldName) { closeTagMenu(); return; }
     closeTagMenu();
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
-    if (res && res.ok === false) {
-        alert(`Could not rename tag "${oldName}".`);
-        return;
+    if (res && res.merged) {
+        showToast(`Tags merged into "${newName}".`);
     }
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    render();
+}
+
+async function addSynonymFromInput(canonical) {
+    const input = document.getElementById('tag-menu-synonym-input');
+    const alias = input ? input.value.trim() : '';
+    if (!alias) return;
+    closeTagMenu();
+    try {
+        await apiPost('/api/synonym/add', { alias, canonical, dir: currentAbsDir() });
+        showToast(`Added synonym "${alias}" → "${canonical}".`);
+    } catch (e) {
+        alert(`Could not add synonym: ${e.message || e}`);
+    }
+    await loadTags();
+    render();
+}
+
+async function removeSynonym(canonical, alias) {
+    closeTagMenu();
+    await apiPost('/api/synonym/remove', { alias, dir: currentAbsDir() });
+    showToast(`Removed synonym "${alias}".`);
+    await loadTags();
     render();
 }
 

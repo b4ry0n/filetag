@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -217,6 +217,15 @@ fn migrate(conn: &Connection) -> Result<()> {
              );",
         )?;
     }
+    if version < 7 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tag_synonyms (
+                 alias        TEXT NOT NULL,
+                 canonical_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                 PRIMARY KEY (alias)
+             );",
+        )?
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -366,13 +375,89 @@ fn get_file_id(_meta: &std::fs::Metadata) -> Option<String> {
 
 /// Get or create a tag, returning its id.
 pub fn get_or_create_tag(conn: &Connection, name: &str) -> Result<i64> {
+    // Check existing tag first.
     if let Ok(id) = conn.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
         r.get::<_, i64>(0)
     }) {
         return Ok(id);
     }
+    // Check if this name is a registered synonym; if so return the canonical tag.
+    if let Ok(canonical_id) = conn
+        .prepare_cached("SELECT canonical_id FROM tag_synonyms WHERE alias = ?1")?
+        .query_row(params![name], |r| r.get::<_, i64>(0))
+    {
+        return Ok(canonical_id);
+    }
     conn.execute("INSERT INTO tags (name) VALUES (?1)", params![name])?;
     Ok(conn.last_insert_rowid())
+}
+
+// ---------------------------------------------------------------------------
+// Tag synonyms
+// ---------------------------------------------------------------------------
+
+/// Register `alias` as a synonym for the tag named `canonical`.
+///
+/// * The canonical tag is created if it does not yet exist.
+/// * Returns an error if `alias` is itself already a tag name in the `tags`
+///   table (a tag cannot simultaneously be a canonical tag and an alias).
+pub fn add_synonym(conn: &Connection, alias: &str, canonical: &str) -> Result<()> {
+    if conn
+        .query_row("SELECT id FROM tags WHERE name = ?1", params![alias], |r| {
+            r.get::<_, i64>(0)
+        })
+        .is_ok()
+    {
+        anyhow::bail!(
+            "'{}' is already a tag name; remove it first before using it as a synonym",
+            alias
+        );
+    }
+    let canonical_id = get_or_create_tag(conn, canonical)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO tag_synonyms (alias, canonical_id) VALUES (?1, ?2)",
+        params![alias, canonical_id],
+    )?;
+    Ok(())
+}
+
+/// Remove a synonym.  Returns `false` if the alias did not exist.
+pub fn remove_synonym(conn: &Connection, alias: &str) -> Result<bool> {
+    let changed = conn.execute("DELETE FROM tag_synonyms WHERE alias = ?1", params![alias])?;
+    Ok(changed > 0)
+}
+
+/// Return all registered synonyms as `(alias, canonical_name)` pairs, ordered
+/// by canonical name then alias.
+pub fn list_synonyms(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT ts.alias, t.name \
+         FROM tag_synonyms ts JOIN tags t ON t.id = ts.canonical_id \
+         ORDER BY t.name, ts.alias",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// Return all alias names for the tag named `canonical`.
+pub fn synonyms_for_tag(conn: &Connection, canonical: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT ts.alias FROM tag_synonyms ts \
+         JOIN tags t ON t.id = ts.canonical_id \
+         WHERE t.name = ?1 ORDER BY ts.alias",
+    )?;
+    let rows = stmt.query_map(params![canonical], |r| r.get::<_, String>(0))?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
 }
 
 /// Apply a tag (with optional value) to a file.
@@ -459,21 +544,77 @@ pub fn set_tag_color(conn: &Connection, name: &str, color: Option<&str>) -> Resu
     Ok(changed > 0)
 }
 
-/// Rename a tag. Returns `false` if the tag does not exist.
-/// Errors if a tag with `new_name` already exists.
-pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<bool> {
-    let exists: bool = conn
+/// Outcome of a [`rename_tag`] operation.
+pub enum RenameOutcome {
+    /// The tag was simply renamed in-place.
+    Renamed,
+    /// The source tag was merged: all its file-tag assignments were moved to the
+    /// target (or converted to the given key=value form). `assignments` is the
+    /// number of file_tags rows that were inserted.
+    Merged { assignments: usize },
+    /// The source tag was not found.
+    NotFound,
+}
+
+/// Rename a tag.
+///
+/// * If `new_name` does not yet exist as a plain name, the tag is renamed in-place.
+/// * If `new_name` already exists, the source is merged into it: all file-tag
+///   assignments are moved and the source tag is deleted.
+/// * If `new_name` contains `=` (e.g. `rating=5`), every file that held the
+///   source tag is assigned `key=value` instead; the source tag is deleted.
+///   If the derived key equals an existing plain tag, the two coexist normally
+///   because the schema distinguishes assignments by value.
+pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<RenameOutcome> {
+    let from_id: Option<i64> = conn
         .prepare_cached("SELECT id FROM tags WHERE name = ?1")?
-        .query_row(params![new_name], |r| r.get::<_, i64>(0))
-        .is_ok();
-    if exists {
-        anyhow::bail!("tag '{}' already exists", new_name);
+        .query_row(params![name], |r| r.get(0))
+        .ok();
+    let Some(from_id) = from_id else {
+        return Ok(RenameOutcome::NotFound);
+    };
+
+    // --- key=value target: convert all source assignments to key=value ----------
+    if let Some(eq_pos) = new_name.find('=') {
+        let key = &new_name[..eq_pos];
+        let value = &new_name[eq_pos + 1..];
+        let key_id = get_or_create_tag(conn, key)?;
+        // One row per file (files may have multiple source values; all collapse to
+        // the single target value).
+        let moved = conn.execute(
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at) \
+             SELECT file_id, ?1, ?2, MIN(created_at) \
+             FROM file_tags WHERE tag_id = ?3 GROUP BY file_id",
+            params![key_id, value, from_id],
+        )?;
+        conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![from_id])?;
+        conn.execute("DELETE FROM tags WHERE id = ?1", params![from_id])?;
+        return Ok(RenameOutcome::Merged { assignments: moved });
     }
-    let changed = conn.execute(
-        "UPDATE tags SET name = ?1 WHERE name = ?2",
-        params![new_name, name],
+
+    // --- plain rename or merge --------------------------------------------------
+    let to_id: Option<i64> = conn
+        .prepare_cached("SELECT id FROM tags WHERE name = ?1")?
+        .query_row(params![new_name], |r| r.get(0))
+        .ok();
+    if let Some(to_id) = to_id {
+        // Target already exists: merge all source assignments into it.
+        let moved = conn.execute(
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at) \
+             SELECT file_id, ?1, value, created_at FROM file_tags WHERE tag_id = ?2",
+            params![to_id, from_id],
+        )?;
+        conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![from_id])?;
+        conn.execute("DELETE FROM tags WHERE id = ?1", params![from_id])?;
+        return Ok(RenameOutcome::Merged { assignments: moved });
+    }
+
+    // Simple rename in-place.
+    conn.execute(
+        "UPDATE tags SET name = ?1 WHERE id = ?2",
+        params![new_name, from_id],
     )?;
-    Ok(changed > 0)
+    Ok(RenameOutcome::Renamed)
 }
 
 /// Delete a tag entirely: removes all file_tags rows and the tag itself.

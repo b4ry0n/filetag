@@ -397,10 +397,55 @@ impl QueryBuilder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Alias resolution
+// ---------------------------------------------------------------------------
+
+/// Walk `expr` and replace any tag name (or key name in a `TagValue`) that is
+/// registered as a synonym with its canonical tag name.  Glob patterns are
+/// left unchanged because they may expand to multiple tags.
+fn resolve_aliases(conn: &Connection, expr: Expr) -> Result<Expr> {
+    Ok(match expr {
+        Expr::Tag(name) => Expr::Tag(canonical_name(conn, &name)?),
+        Expr::TagValue(name, op, val) => Expr::TagValue(canonical_name(conn, &name)?, op, val),
+        Expr::Glob(p) => Expr::Glob(p),
+        Expr::FileType(k) => Expr::FileType(k),
+        Expr::And(a, b) => Expr::And(
+            Box::new(resolve_aliases(conn, *a)?),
+            Box::new(resolve_aliases(conn, *b)?),
+        ),
+        Expr::Or(a, b) => Expr::Or(
+            Box::new(resolve_aliases(conn, *a)?),
+            Box::new(resolve_aliases(conn, *b)?),
+        ),
+        Expr::Not(inner) => Expr::Not(Box::new(resolve_aliases(conn, *inner)?)),
+    })
+}
+
+/// Look up the canonical tag name for `name`.  Returns `name` unchanged when
+/// it is not registered as a synonym.
+fn canonical_name(conn: &Connection, name: &str) -> Result<String> {
+    use rusqlite::params;
+    let canonical: Option<String> = conn
+        .prepare_cached(
+            "SELECT t.name FROM tag_synonyms ts \
+             JOIN tags t ON t.id = ts.canonical_id \
+             WHERE ts.alias = ?1",
+        )?
+        .query_row(params![name], |r| r.get(0))
+        .ok();
+    Ok(canonical.unwrap_or_else(|| name.to_string()))
+}
+
 /// Execute a query expression and return matching file paths.
+///
+/// Tag names and key names in the expression are resolved through the synonym
+/// table before the SQL is generated, so searching for an alias produces the
+/// same results as searching for the canonical tag name.
 pub fn execute(conn: &Connection, expr: &Expr) -> Result<Vec<String>> {
+    let resolved = resolve_aliases(conn, expr.clone())?;
     let mut qb = QueryBuilder::new();
-    let condition = qb.build_condition(expr);
+    let condition = qb.build_condition(&resolved);
     let sql = format!(
         "SELECT f.path FROM files f WHERE {} ORDER BY f.path",
         condition

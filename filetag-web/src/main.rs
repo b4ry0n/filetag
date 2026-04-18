@@ -192,6 +192,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/tag-color", post(api::api_tag_color))
         .route("/api/rename-tag", post(api::api_rename_tag))
         .route("/api/delete-tag", post(api::api_delete_tag))
+        .route("/api/synonym/add", post(api::api_add_synonym))
+        .route("/api/synonym/remove", post(api::api_remove_synonym))
         .route("/api/zip/pages", get(archive::api_zip_pages))
         .route("/api/zip/page", get(archive::api_zip_page))
         .route("/api/zip/thumb", get(archive::api_zip_thumb))
