@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "filetag"
-version = "0.8.12"
+version = "0.8.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "filetag-lib"
-version = "0.8.12"
+version = "0.8.13"
 dependencies = [
  "anyhow",
  "dirs",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "filetag-web"
-version = "0.8.12"
+version = "0.8.13"
 dependencies = [
  "anyhow",
  "axum",
