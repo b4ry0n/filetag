@@ -89,6 +89,41 @@ fn tiff_walk_ifd(
     if next_off != 0 { Some(next_off) } else { None }
 }
 
+/// Read the EXIF Orientation tag (0x0112) from TIFF IFD0.
+/// Returns the raw orientation value (1–8) or 1 (no rotation) on failure.
+pub fn raw_tiff_orientation(data: &[u8]) -> u8 {
+    let le = match data.get(0..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return 1,
+    };
+    if tiff_u16(data, 2, le) != Some(42) {
+        return 1;
+    }
+    let ifd0_off = match tiff_u32(data, 4, le) {
+        Some(v) => v as usize,
+        None => return 1,
+    };
+    let count = match tiff_u16(data, ifd0_off, le) {
+        Some(v) => v as usize,
+        None => return 1,
+    };
+    let base = ifd0_off + 2;
+    if data.get(base..base + count * 12).is_none() {
+        return 1;
+    }
+    for i in 0..count {
+        let e = base + i * 12;
+        let tag = tiff_u16(data, e, le).unwrap_or(0);
+        if tag == 0x0112 {
+            // Type is SHORT (3); value fits directly in the value field.
+            let val = tiff_u16(data, e + 8, le).unwrap_or(1);
+            return if (1..=8).contains(&val) { val as u8 } else { 1 };
+        }
+    }
+    1
+}
+
 /// Extract an embedded JPEG preview from a TIFF-family RAW file.
 /// Covers NEF, CR2, ARW, ORF, DNG, PEF, SRW, RW2 and most other TIFF-based
 /// formats. Prefers the largest JPEG found (full preview over tiny thumbnail).

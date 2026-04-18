@@ -221,14 +221,24 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding to {}", addr))?;
 
     // Build parent index for the tree display.
-    let n = state.roots.len();
+    // Sort roots: shallower paths first (so parents always precede children),
+    // then alphabetically by name within the same depth.
+    let mut sorted_roots: Vec<_> = state.roots.iter().collect();
+    sorted_roots.sort_by(|a, b| {
+        let da = a.root.components().count();
+        let db = b.root.components().count();
+        da.cmp(&db)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    let n = sorted_roots.len();
     let mut parent_idx: Vec<Option<usize>> = vec![None; n];
     for (i, entry) in parent_idx.iter_mut().enumerate().skip(1) {
         let mut best: Option<usize> = None;
         let mut best_depth = 0usize;
         for j in 0..i {
-            let comp = state.roots[j].root.components().count();
-            if state.roots[i].root.starts_with(&state.roots[j].root) && comp > best_depth {
+            let comp = sorted_roots[j].root.components().count();
+            if sorted_roots[i].root.starts_with(&sorted_roots[j].root) && comp > best_depth {
                 best_depth = comp;
                 best = Some(j);
             }
@@ -237,8 +247,28 @@ async fn main() -> anyhow::Result<()> {
     }
     let top_level_count = parent_idx.iter().filter(|p| p.is_none()).count();
 
+    // Build children lists so we can print in DFS order.
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, parent) in parent_idx.iter().enumerate().take(n) {
+        if let Some(p) = parent {
+            children[*p].push(i);
+        }
+    }
+
+    // Collect print order via iterative DFS from each top-level root.
+    let mut print_order: Vec<usize> = Vec::with_capacity(n);
+    let roots_iter: Vec<usize> = (0..n).filter(|&i| parent_idx[i].is_none()).collect();
+    let mut stack: Vec<usize> = roots_iter.iter().rev().copied().collect();
+    while let Some(i) = stack.pop() {
+        print_order.push(i);
+        for &c in children[i].iter().rev() {
+            stack.push(c);
+        }
+    }
+
     println!("filetag-web at http://{}", addr);
-    for i in 0..n {
+    for &i in &print_order {
+        // Rebuild the ancestor chain for i using parent_idx.
         let mut chain: Vec<usize> = Vec::new();
         let mut cur = i;
         while let Some(p) = parent_idx[cur] {
@@ -250,16 +280,25 @@ async fn main() -> anyhow::Result<()> {
 
         let mut prefix = String::new();
         let cont_end = depth.saturating_sub(1);
-        for &anc in &chain[..cont_end] {
-            let anc_is_last = (anc + 1..n).all(|j| parent_idx[j] != parent_idx[anc]);
-            if anc_is_last {
+        for k in 0..cont_end {
+            // Draw │ if the ancestor's sibling group (same parent) has more
+            // entries after chain[k+1].
+            let path_child = chain[k + 1];
+            let parent_of_child = chain[k];
+            let sibs = &children[parent_of_child];
+            let child_is_last = sibs.last() == Some(&path_child);
+            if child_is_last {
                 prefix.push_str("   ");
             } else {
                 prefix.push_str("│  ");
             }
         }
 
-        let is_last = (i + 1..n).all(|j| parent_idx[j] != parent_idx[i]);
+        let is_last = if let Some(p) = parent_idx[i] {
+            children[p].last() == Some(&i)
+        } else {
+            roots_iter.last() == Some(&i)
+        };
         let connector = if depth == 0 && top_level_count == 1 {
             ""
         } else if is_last {
@@ -270,8 +309,8 @@ async fn main() -> anyhow::Result<()> {
 
         let label = format!(
             "{} ({})",
-            state.roots[i].name,
-            state.roots[i].root.display()
+            sorted_roots[i].name,
+            sorted_roots[i].root.display()
         );
         println!("  {}{}{}", prefix, connector, label);
     }
