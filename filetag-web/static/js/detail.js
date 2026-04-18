@@ -535,12 +535,13 @@ function _thumbReplace(el, blobUrl) {
     }
 }
 
-/** Replace a pending-thumb element with a type-appropriate icon placeholder. */
+/** Replace a pending-thumb element with a type-appropriate icon placeholder.
+ * Uses card-icon so the card automatically switches to the stacked light layout. */
 function _thumbShowFailed(el) {
     const name = el.dataset.name || '';
     const icon = fileIcon(name);
     const div = document.createElement('div');
-    div.className = 'card-thumb-failed';
+    div.className = 'card-icon';
     div.innerHTML = icon;
     el.replaceWith(div);
 }
@@ -563,7 +564,7 @@ async function _thumbRun() {
         try {
             const resp = await fetch(src);
             if (!el.isConnected) continue;
-            if (resp.ok) {
+            if (resp.ok && resp.status !== 204) {
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
                 _thumbCache.set(src, url);
@@ -575,9 +576,9 @@ async function _thumbRun() {
                     _thumbObserver.observe(el);
                 }
             } else {
-                // Permanent failure (e.g. 422 — feature disabled): show a
-                // type-appropriate icon placeholder and cache null so future
-                // renders skip the fetch without retrying.
+                // 204 (thumbnail not available) or other permanent failure:
+                // show a type-appropriate icon placeholder and cache null so
+                // future renders skip the fetch without retrying.
                 _thumbCache.set(src, null);
                 if (el.isConnected) _thumbShowFailed(el);
             }
