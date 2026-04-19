@@ -678,9 +678,13 @@ const AI_IMAGE_EXTS = new Set([
 
 const AI_ARCHIVE_EXTS = new Set(['zip','cbz','rar','cbr','7z','cb7']);
 
+const AI_VIDEO_EXTS = new Set([
+    'mp4','mov','avi','mkv','wmv','m4v','webm','flv','mpg','mpeg','m2ts','mts','ts','3gp','f4v',
+]);
+
 function isAiImage(path) {
     const ext = (path || '').split('.').pop().toLowerCase();
-    return AI_IMAGE_EXTS.has(ext) || AI_ARCHIVE_EXTS.has(ext);
+    return AI_IMAGE_EXTS.has(ext) || AI_ARCHIVE_EXTS.has(ext) || AI_VIDEO_EXTS.has(ext);
 }
 
 // ---------------------------------------------------------------------------
