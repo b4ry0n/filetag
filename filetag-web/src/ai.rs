@@ -55,15 +55,11 @@ pub const AI_VIDEO_EXTS: &[&str] = &[
 ];
 
 const AI_VIDEO_PROMPT: &str = "\
-You are analysing a video file. \
-You are given a contact-sheet image containing evenly-spaced frames sampled from throughout the video. \
-Based on these frames, output ONLY a JSON array of short descriptive tags \
-(English, lowercase) that describe the video as a whole. \
-Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\
-\n\
+Look at this video contact sheet. \
+Output ONLY a JSON array of short descriptive tags (English, lowercase). \
+Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\n\
 Good: [\"action\", \"outdoor\", \"sport\", \"location=beach\"]\n\
-Bad: any text outside the JSON array\n\
-\n\
+Bad: any text outside the JSON array\n\n\
 /no_think";
 
 const AI_ARCHIVE_PROMPT: &str = "\
@@ -506,11 +502,7 @@ async fn analyse_video(
     let sprite_bytes = tokio::fs::read(&sprite_path).await?;
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&sprite_bytes);
-    let base_prompt = format!(
-        "This video is shown as a contact sheet of {n} evenly-spaced frames.\n\n{}",
-        AI_VIDEO_PROMPT,
-    );
-    let prompt = build_ai_prompt(&base_prompt, existing_tags, kv_keys);
+    let prompt = build_ai_prompt(AI_VIDEO_PROMPT, existing_tags, kv_keys);
     let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
