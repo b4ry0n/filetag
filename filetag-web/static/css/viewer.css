@@ -419,6 +419,7 @@
 }
 /* Toggle rows — macOS-style: text left, pill toggle right */
 .toggle-row {
+    display: flex;
     flex-direction: row;
     align-items: flex-start;
     justify-content: space-between;
@@ -494,6 +495,7 @@
     word-break: break-word;
     font-family: inherit;
 }
+
 .modal-body small {
     font-size: 11px;
     color: var(--fg-dim);
