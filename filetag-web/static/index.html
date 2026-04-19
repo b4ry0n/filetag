@@ -201,6 +201,7 @@
                 <button class="modal-tab-btn active" data-tab="video" onclick="switchSettingsTab('video')">Video</button>
                 <button class="modal-tab-btn" data-tab="features" onclick="switchSettingsTab('features')">Features</button>
                 <button class="modal-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')">AI</button>
+                <button class="modal-tab-btn" data-tab="prompts" onclick="switchSettingsTab('prompts')">Prompts</button>
             </nav>
             <div class="modal-body">
                 <div id="settings-tab-video" class="modal-tab-panel">
@@ -219,26 +220,29 @@
                 </div>
                 <div id="settings-tab-features" class="modal-tab-panel" hidden>
                     <p class="settings-desc">Enable features that require external tools. All features are off by default for maximum portability.</p>
-                    <label class="feature-check">
+                    <label class="toggle-row">
                         <input type="checkbox" id="feat-video">
-                        <div>
-                            <span class="feature-name">Video</span>
+                        <div class="toggle-text">
+                            <span class="toggle-title">Video</span>
                             <small>Enables ffmpeg for transcoding, HLS streaming, trickplay sprites, and video thumbnails.</small>
                         </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
                     </label>
-                    <label class="feature-check">
+                    <label class="toggle-row">
                         <input type="checkbox" id="feat-imagemagick">
-                        <div>
-                            <span class="feature-name">ImageMagick</span>
+                        <div class="toggle-text">
+                            <span class="toggle-title">ImageMagick</span>
                             <small>Enables ImageMagick and sips for HEIC, PSD, and other exotic image formats.</small>
                         </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
                     </label>
-                    <label class="feature-check">
+                    <label class="toggle-row">
                         <input type="checkbox" id="feat-pdf">
-                        <div>
-                            <span class="feature-name">PDF thumbnails</span>
+                        <div class="toggle-text">
+                            <span class="toggle-title">PDF thumbnails</span>
                             <small>Enables PDF thumbnail generation via pdftoppm or ImageMagick with Ghostscript.</small>
                         </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
                     </label>
                     <div class="modal-actions">
                         <button onclick="saveFeaturesSettings()">Save</button>
@@ -246,12 +250,13 @@
                     </div>
                 </div>
                 <div id="settings-tab-ai" class="modal-tab-panel" hidden>
-                    <label class="feature-check ai-enabled-row">
+                    <label class="toggle-row">
                         <input type="checkbox" id="ai-enabled" onchange="aiToggleEnabled()">
-                        <div>
-                            <span class="feature-name">AI analysis</span>
+                        <div class="toggle-text">
+                            <span class="toggle-title">AI analysis</span>
                             <small>Enable AI-powered image analysis. Settings are preserved when disabled.</small>
                         </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
                     </label>
                     <div id="ai-settings-fields">
                     <label>Format
@@ -275,28 +280,6 @@
                     <label>Max tokens
                         <input type="number" id="ai-max-tokens" value="512" min="64" max="4096">
                     </label>
-                    <label>Collection description
-                        <textarea id="ai-subject" rows="2" placeholder="Describe what this collection contains, e.g. 'Holiday photos from Vietnam, 2023. Include recognisable location names.'"></textarea>
-                    </label>
-                    <details id="ai-type-prompts">
-                        <summary>Type instructions <small>(leave empty to use built-in defaults)</small></summary>
-                        <label>Image prompt
-                            <textarea id="ai-prompt-image" rows="3"></textarea>
-                            <button type="button" class="use-default-btn" onclick="aiUseDefault('image')">Use default</button>
-                        </label>
-                        <label>Video prompt
-                            <textarea id="ai-prompt-video" rows="3"></textarea>
-                            <button type="button" class="use-default-btn" onclick="aiUseDefault('video')">Use default</button>
-                        </label>
-                        <label>Archive prompt
-                            <textarea id="ai-prompt-archive" rows="3"></textarea>
-                            <button type="button" class="use-default-btn" onclick="aiUseDefault('archive')">Use default</button>
-                        </label>
-                        <details>
-                            <summary>Output format <small>(fixed, shown for reference)</small></summary>
-                            <pre id="ai-output-format" class="ai-output-format-pre"></pre>
-                        </details>
-                    </details>
                     <div class="modal-actions">
                         <button id="ai-test-btn" onclick="aiTestConnection()">Test connection</button>
                         <button onclick="aiSaveSettings()">Save</button>
@@ -304,6 +287,32 @@
                     </div>
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
                     </div><!-- #ai-settings-fields -->
+                </div>
+                <div id="settings-tab-prompts" class="modal-tab-panel" hidden>
+                    <p class="settings-desc">Describe what this collection is about, and customise how the AI introduces each media type. Leave type fields empty to use the built-in defaults.</p>
+                    <label>Collection description
+                        <textarea id="ai-subject" rows="2" placeholder="e.g. 'Holiday photos from Vietnam, 2023. Include recognisable location names and landmarks.'"></textarea>
+                    </label>
+                    <label>Image prompt
+                        <textarea id="ai-prompt-image" rows="3" placeholder="Look at this image."></textarea>
+                        <button type="button" class="use-default-btn" onclick="aiUseDefault('image')">Use default</button>
+                    </label>
+                    <label>Video prompt
+                        <textarea id="ai-prompt-video" rows="3" placeholder="Look at this video contact sheet."></textarea>
+                        <button type="button" class="use-default-btn" onclick="aiUseDefault('video')">Use default</button>
+                    </label>
+                    <label>Archive prompt
+                        <textarea id="ai-prompt-archive" rows="3" placeholder="Look at this archive's file listing and sample images."></textarea>
+                        <button type="button" class="use-default-btn" onclick="aiUseDefault('archive')">Use default</button>
+                    </label>
+                    <details>
+                        <summary>Output format <small>(fixed, shown for reference)</small></summary>
+                        <pre id="ai-output-format" class="ai-output-format-pre"></pre>
+                    </details>
+                    <div class="modal-actions">
+                        <button onclick="aiSaveSettings()">Save</button>
+                        <button onclick="closeSettings()">Cancel</button>
+                    </div>
                 </div>
             </div>
         </div>
