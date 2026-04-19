@@ -8,6 +8,36 @@ Use it to organise collections that don't fit neatly into folders: photos, music
 
 A web interface is included for browsing, previewing, searching, and tagging through a browser.
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+  - [init](#init)
+  - [tag / untag](#tag--untag)
+  - [tags / show](#tags--show)
+  - [find](#find)
+  - [view](#view-unix-only)
+  - [status / repair](#status--repair)
+  - [mv / merge](#mv--merge)
+  - [synonym](#synonym)
+  - [db](#db)
+  - [info / completions](#info--completions)
+- [Global options](#global-options)
+- [Query language](#query-language)
+- [Web interface](#web-interface)
+  - [Options](#options)
+  - [Authentication](#authentication)
+  - [Database scope](#database-scope-in-filetag-web)
+  - [File previews](#file-previews)
+  - [AI analysis](#ai-image-and-video-analysis)
+  - [Image and comic viewer](#image-and-comic-viewer)
+- [How it works](#how-it-works)
+  - [Child databases](#child-databases)
+  - [Global registry](#global-registry)
+- [License](#license)
+
 ## Features
 
 **Tagging and querying**
