@@ -91,7 +91,7 @@ struct AiConfig {
     tag_prefix: String,
     max_tokens: u32,
     format: String,
-    /// Free-text description of the collection (e.g. "holiday photos from Vietnam, 2023").
+    /// Free-text description of the collection (e.g. "family photos and videos" or "bird photography").
     /// Injected into every prompt so the model has collection context.
     subject: Option<String>,
     /// User override for the image-type intro sentence.
