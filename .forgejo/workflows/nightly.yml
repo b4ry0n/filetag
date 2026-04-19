@@ -1,0 +1,81 @@
+name: Nightly
+
+on:
+  push:
+    tags: ['nightly']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.artifact }})
+    runs-on: codeberg-small
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: filetag-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            artifact: filetag-linux-arm64
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v3
+
+      - name: Install Rust stable + target
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          ~/.cargo/bin/rustup target add ${{ matrix.target }}
+
+      - name: Install aarch64 cross-compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p filetag -p filetag-web
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          cd target/${{ matrix.target }}/release
+          tar czf "../../../${{ matrix.artifact }}-nightly-${COMMIT}.tar.gz" filetag filetag-web
+
+      - name: Publish to Forgejo pre-release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          REPO="${{ github.repository }}"
+          API="${{ github.server_url }}/api/v1"
+          ASSET="${{ matrix.artifact }}-nightly-${COMMIT}.tar.gz"
+
+          # Delete existing nightly release (ignore errors).
+          EXISTING=$(curl -s "$API/repos/$REPO/releases/tags/nightly" \
+            -H "Authorization: token $GITHUB_TOKEN")
+          EXISTING_ID=$(echo "$EXISTING" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || true)
+          if [ -n "$EXISTING_ID" ]; then
+            curl -s -X DELETE "$API/repos/$REPO/releases/$EXISTING_ID" \
+              -H "Authorization: token $GITHUB_TOKEN"
+          fi
+
+          # Create fresh pre-release.
+          BODY=$(curl -s -X POST "$API/repos/$REPO/releases" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"nightly\",
+              \"name\": \"nightly (${DATE} · ${COMMIT})\",
+              \"body\": \"Nightly build from commit \`${COMMIT}\` (${DATE}). Unofficial pre-release.\",
+              \"prerelease\": true,
+              \"draft\": false
+            }")
+          RELEASE_ID=$(echo "$BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+          # Upload asset.
+          curl -s -X POST "$API/repos/$REPO/releases/$RELEASE_ID/assets" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -F "attachment=@$ASSET"
