@@ -17,7 +17,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_read_entry};
-use crate::preview::{raw_cache_path, raw_extract_jpeg};
+use crate::preview::{file_cache_path, raw_cache_path, raw_extract_jpeg};
 use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
@@ -54,12 +54,12 @@ pub const AI_VIDEO_EXTS: &[&str] = &[
     "3gp", "f4v",
 ];
 
-/// Number of frames sampled from a video for AI analysis.
-const VIDEO_FRAME_COUNT: usize = 6;
+/// Number of trickplay frames in the sprite sheet generated for AI analysis.
+const AI_SPRITE_FRAMES: usize = 8;
 
 const AI_VIDEO_PROMPT: &str = "\
 You are analysing a video file. \
-You are given a series of frames sampled from throughout the video. \
+You are given a contact-sheet image containing evenly-spaced frames sampled from throughout the video. \
 Based on these frames, output ONLY a JSON array of short descriptive tags \
 (English, lowercase) that describe the video as a whole. \
 Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\
@@ -485,77 +485,97 @@ async fn analyse_image(
 /// Maximum number of sample images to extract from an archive for AI analysis.
 const ARCHIVE_SAMPLE_COUNT: usize = 4;
 
-/// Analyse a video by extracting evenly-spaced frames with ffmpeg and sending
-/// them to the VLM.  Uses `ffprobe` (via [`video_info`]) to determine the
-/// duration so that frames are spread across the full length of the video.
+/// Analyse a video by generating (or reusing) a trickplay sprite sheet and
+/// sending it as a single image to the VLM.
+///
+/// A sprite sheet is a single wide JPEG with [`AI_SPRITE_FRAMES`] tiles
+/// stacked horizontally.  Sending one image instead of N separate images
+/// keeps the request compact and avoids per-image limits on the VLM API.
+/// The cache is shared with the regular trickplay endpoint, so if the user
+/// has already hovered over the video card the sprite is available for free.
 async fn analyse_video(
     config: &AiConfig,
     abs: &Path,
+    root: &Path,
     existing_tags: &[String],
     kv_keys: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
-    // Determine video duration so we can spread frames evenly.
-    let duration = video_info(abs).await.map(|i| i.duration).unwrap_or(0.0);
+    let n = AI_SPRITE_FRAMES;
+    let sprite_name = format!("sprite{n}x1.jpg");
 
-    let n = VIDEO_FRAME_COUNT;
-    // Seek positions: evenly spaced, avoiding the very first and last second
-    // to skip black leader/credits.
-    let offsets: Vec<f64> = if duration > 2.0 {
-        (0..n)
-            .map(|i| 1.0 + (duration - 2.0) * (i as f64) / ((n - 1) as f64))
-            .collect()
+    // Try to reuse the cached trickplay sprite.
+    let cache_path = file_cache_path(abs, root, "vthumbs", &sprite_name);
+
+    let sprite_bytes: Vec<u8> = if let Some(ref p) = cache_path
+        && let Ok(data) = tokio::fs::read(p).await
+    {
+        data
     } else {
-        // Very short clip: just use equal fractions.
-        (0..n)
-            .map(|i| duration * (i as f64 + 0.5) / n as f64)
-            .collect()
-    };
+        // Generate sprite with ffmpeg hstack — same approach as api_vthumbs.
+        let info = video_info(abs)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
 
-    let mut sample_b64: Vec<String> = Vec::new();
-    for ss in &offsets {
-        let out = tokio::process::Command::new("nice")
-            .args(["-n", "10", "ffmpeg", "-ss", &format!("{ss:.3}"), "-i"])
-            .arg(abs)
+        let positions: Vec<f64> = (0..n)
+            .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
+            .collect();
+
+        let mut cmd = tokio::process::Command::new("nice");
+        cmd.args(["-n", "10", "ffmpeg"]);
+        for t in &positions {
+            cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
+        }
+
+        let scale_parts: Vec<String> = (0..n)
+            .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+            .collect();
+        let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+        let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+
+        let out = cmd
             .args([
-                "-vf",
-                "scale='if(gt(iw,ih),800,-2)':'if(gt(iw,ih),-2,800)':flags=lanczos",
-                "-vframes",
+                "-filter_complex",
+                &filter,
+                "-map",
+                "[out]",
+                "-frames:v",
                 "1",
-                "-map_metadata",
-                "-1",
+                "-q:v",
+                "4",
                 "-f",
                 "image2pipe",
                 "-vcodec",
                 "mjpeg",
-                "-q:v",
-                "4",
                 "pipe:1",
             ])
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
             .output()
-            .await;
-        if let Ok(o) = out
-            && o.status.success()
-            && o.stdout.starts_with(&[0xFF, 0xD8])
-        {
-            sample_b64.push(base64::engine::general_purpose::STANDARD.encode(&o.stdout));
+            .await
+            .map_err(|e| anyhow::anyhow!("ffmpeg spawn failed: {e}"))?;
+
+        if !out.status.success() || !out.stdout.starts_with(&[0xFF, 0xD8]) {
+            anyhow::bail!("ffmpeg could not generate sprite sheet — is ffmpeg installed?");
         }
-    }
 
-    if sample_b64.is_empty() {
-        anyhow::bail!("could not extract any frames from video");
-    }
+        // Persist to cache so subsequent calls (and the trickplay UI) reuse it.
+        if let Some(ref p) = cache_path {
+            if let Some(parent) = p.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let _ = tokio::fs::write(p, &out.stdout).await;
+        }
 
+        out.stdout
+    };
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&sprite_bytes);
     let base_prompt = format!(
-        "This video is {:.0} seconds long. {} frames have been sampled from it.\n\n{}",
-        duration,
-        sample_b64.len(),
+        "This video is shown as a contact sheet of {n} evenly-spaced frames.\n\n{}",
         AI_VIDEO_PROMPT,
     );
     let prompt = build_ai_prompt(&base_prompt, existing_tags, kv_keys);
-    let b64_refs: Vec<&str> = sample_b64.iter().map(|s| s.as_str()).collect();
-    let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
+    let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
     Ok((raw, tags))
@@ -994,7 +1014,7 @@ pub async fn api_ai_analyse(
             .map_err(AppError)?
     } else if is_video {
         let abs = effective_root.join(&rel);
-        analyse_video(&config, &abs, &existing_tags, &kv_keys)
+        analyse_video(&config, &abs, &effective_root, &existing_tags, &kv_keys)
             .await
             .map_err(AppError)?
     } else {
@@ -1142,7 +1162,8 @@ pub async fn api_ai_analyse_batch(
                 }
             } else if is_video {
                 let abs = effective_root.join(&eff_rel);
-                match analyse_video(&config, &abs, &existing_tags, &kv_keys).await {
+                match analyse_video(&config, &abs, &effective_root, &existing_tags, &kv_keys).await
+                {
                     Ok(t) => t,
                     Err(_) => continue,
                 }
