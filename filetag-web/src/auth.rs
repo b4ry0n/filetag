@@ -103,6 +103,24 @@ fn random_token() -> String {
     })
 }
 
+/// Generate a human-friendly random password: 4 groups of 4 alphanumeric characters
+/// separated by hyphens (e.g. `a3Kx-9mRp-Zq2w-Lf7v`). Easy to read and type across
+/// devices while still providing ~95 bits of entropy.
+pub fn random_password() -> String {
+    const CHARS: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let bytes: [u8; 16] = rand::rng().random();
+    bytes
+        .chunks(4)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .map(|&b| CHARS[b as usize % CHARS.len()] as char)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 /// Extract the session token from the `Cookie` header.
 fn extract_token(req: &Request<Body>) -> Option<String> {
     let cookie_header = req.headers().get(header::COOKIE)?.to_str().ok()?;

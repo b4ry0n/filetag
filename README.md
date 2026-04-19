@@ -174,8 +174,11 @@ filetag-web ~/Music --port 8080
 # Bind to all interfaces (e.g. for LAN access)
 filetag-web --bind 0.0.0.0
 
-# Read the password from a file (recommended, see Authentication section below)
+# Read the password from a file (recommended for regular use, see Authentication below)
 filetag-web --password-file ~/.filetag-password
+
+# Generate a random password for ad-hoc access (printed to the terminal)
+filetag-web --generate-password --bind 0.0.0.0
 
 # Suppress automatic ancestor database discovery
 filetag-web --no-parents
@@ -189,7 +192,14 @@ By default filetag-web binds to `127.0.0.1` (loopback only) and requires no pass
 
 To require a password, use one of these options. `--password-file` takes precedence over `--password` and `$FILETAG_PASSWORD`.
 
-**Password file (recommended).** The password never appears in your shell history or process listing. Create the file with your editor, or type the password interactively:
+**Generated password (easiest for ad-hoc use).** filetag-web generates a random password and prints it to the terminal. Valid for the current session only.
+
+```sh
+filetag-web --generate-password --bind 0.0.0.0
+# Generated password: a3Kx-9mRp-Zq2w-Lf7v
+```
+
+**Password file (recommended for regular use).** The password never appears in your shell history or process listing. Create the file with your editor, or type the password interactively:
 
 ```sh
 # Type the password without it appearing on screen; press Enter when done.
