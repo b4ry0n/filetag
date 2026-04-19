@@ -121,14 +121,14 @@ filetag completions fish > ~/.config/fish/completions/filetag.fish
 
 ## Global options
 
-```
---json              JSON Lines output (one object per line)
---color <WHEN>      auto | always | never (default: auto)
--q, --quiet         Suppress informational messages
--v, --verbose       Extra detail
---db <PATH>         Use a specific database (override auto-detect)
---no-parents        Do not automatically include ancestor databases
-```
+| Option              | Description |
+| :------------------ | :---------- |
+| `--json`            | JSON Lines output (one object per line) |
+| `--color <WHEN>`    | `auto` \| `always` \| `never` (default: `auto`) |
+| `-q, --quiet`       | Suppress informational messages |
+| `-v, --verbose`     | Extra detail |
+| `--db <PATH>`       | Use a specific database (override auto-detect) |
+| `--no-parents`      | Do not automatically include ancestor databases |
 
 `tags` and `find` include all linked child databases and ancestor databases by default. Use `-i`/`--isolated` on those commands to query only the current database (no children, no ancestors).
 
@@ -165,32 +165,28 @@ type:audio and genre/*            # find tagged audio files
 `filetag-web` provides a browser-based file manager with tag sidebar, search, grid/list views, and file previews.
 
 ```sh
-# Start in the current directory (must contain a .filetag database or a parent must)
-filetag-web
-
-# Specify a directory and port
-filetag-web ~/Music --port 8080
-
-# Bind to all interfaces (e.g. for LAN access)
-filetag-web --bind 0.0.0.0
-
-# Read the password from a file (recommended for regular use, see Authentication below)
-filetag-web --password-file ~/.filetag-password
-
-# Generate a random password for ad-hoc access (printed to the terminal)
-filetag-web -P --bind 0.0.0.0
-
-# Suppress automatic ancestor database discovery
-filetag-web --no-parents
+filetag-web [PATH] [OPTIONS]
 ```
 
 Open `http://127.0.0.1:3000` (default) in your browser. The full query language works in the search bar.
+
+### Options
+
+| Option                      | Default       | Description |
+| :-------------------------- | :------------ | :---------- |
+| `PATH`                      | `.`           | Directory to serve (must contain a `.filetag` database, or a parent must) |
+| `-p, --port <PORT>`         | `3000`        | Port to listen on |
+| `-b, --bind <ADDR>`         | `127.0.0.1`   | Address to bind to (`0.0.0.0` for all interfaces) |
+| `--password <SECRET>`       |               | Require a password (also `$FILETAG_PASSWORD`); see Authentication below |
+| `--password-file <PATH>`    |               | Read the password from a file; takes precedence over `--password` |
+| `-P, --generate-password`   |               | Generate a random password and print it; useful for ad-hoc access |
+| `--no-parents`              |               | Do not include ancestor databases in the session |
 
 ### Authentication
 
 By default filetag-web binds to `127.0.0.1` (loopback only) and requires no password. When you bind to a non-loopback address without a password, a warning is printed at startup.
 
-To require a password, use one of these options. `--password-file` takes precedence over `--password` and `$FILETAG_PASSWORD`.
+`--password-file` takes precedence over `--password` and `$FILETAG_PASSWORD`.
 
 **Generated password (easiest for ad-hoc use).** filetag-web generates a random password and prints it to the terminal. Valid for the current session only.
 
