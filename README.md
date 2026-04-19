@@ -174,11 +174,7 @@ filetag-web ~/Music --port 8080
 # Bind to all interfaces (e.g. for LAN access)
 filetag-web --bind 0.0.0.0
 
-# Protect with a password (also accepts FILETAG_PASSWORD env var)
-filetag-web --password mysecret
-
-# Read the password from a file (recommended: keeps it out of history and ps)
-echo 'mysecret' > ~/.filetag-password && chmod 600 ~/.filetag-password
+# Read the password from a file (recommended, see Authentication section below)
 filetag-web --password-file ~/.filetag-password
 
 # Suppress automatic ancestor database discovery
@@ -191,21 +187,36 @@ Open `http://127.0.0.1:3000` (default) in your browser. The full query language 
 
 By default filetag-web binds to `127.0.0.1` (loopback only) and requires no password. When you bind to a non-loopback address without a password, a warning is printed at startup.
 
-To require a password, use one of these options (in order of preference):
+To require a password, use one of these options. `--password-file` takes precedence over `--password` and `$FILETAG_PASSWORD`.
+
+**Password file (recommended).** The password never appears in your shell history or process listing. Create the file with your editor, or type the password interactively:
 
 ```sh
-# 1. Password file — recommended. Stays out of shell history and process listings.
-echo 'mysecret' > ~/.filetag-password && chmod 600 ~/.filetag-password
+# Type the password without it appearing on screen; press Enter when done.
+read -rs FTPW && printf '%s' "$FTPW" > ~/.filetag-password && unset FTPW
+chmod 600 ~/.filetag-password
+
 filetag-web --password-file ~/.filetag-password
-
-# 2. Environment variable — useful in systemd units or Docker.
-FILETAG_PASSWORD=mysecret filetag-web
-
-# 3. Command-line flag — convenient but visible in shell history and `ps`.
-filetag-web --password mysecret
 ```
 
-`--password-file` takes precedence over `--password` and `$FILETAG_PASSWORD`.
+**Environment variable.** Useful in systemd units (via `EnvironmentFile=`) or Docker (`--env-file`). Do not assign it inline on the command line — that ends up in history too.
+
+```sh
+# In a systemd unit (EnvironmentFile=/etc/filetag.env):
+#   FILETAG_PASSWORD=mysecret
+# Then:
+filetag-web --bind 0.0.0.0
+
+# Interactive: type without echo, export, then run.
+read -rs FILETAG_PASSWORD && export FILETAG_PASSWORD
+filetag-web
+```
+
+**Command-line flag.** Convenient for quick tests, but visible in shell history and `ps aux`.
+
+```sh
+filetag-web --password mysecret
+```
 
 When a password is set:
 
