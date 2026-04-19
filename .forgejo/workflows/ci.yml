@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*', 'nightly']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
 
   release:
     name: Release binaries (${{ matrix.artifact }})
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/tags/nightly'
     needs: [check, test]
     runs-on: codeberg-small
     strategy:
@@ -81,10 +81,12 @@ jobs:
           ASSET="${{ matrix.artifact }}.tar.gz"
 
           # Create release (ignore error if it already exists).
+          IS_NIGHTLY="false"
+          if [ "$TAG" = "nightly" ]; then IS_NIGHTLY="true"; fi
           RELEASE=$(curl -s -w "\n%{http_code}" -X POST "$API/repos/$REPO/releases" \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"$TAG\", \"name\": \"$TAG\", \"draft\": false}")
+            -d "{\"tag_name\": \"$TAG\", \"name\": \"$TAG\", \"draft\": false, \"prerelease\": $IS_NIGHTLY}")
           HTTP_CODE=$(echo "$RELEASE" | tail -1)
           BODY=$(echo "$RELEASE" | head -1)
 
