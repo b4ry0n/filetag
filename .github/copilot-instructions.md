@@ -48,8 +48,10 @@ indicatif = "0.17"
 # filetag-web only
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["fs"] }
-clap = { version = "4", features = ["derive"] }
+tower-http = { version = "0.5", features = ["fs", "set-header", "limit"] }
+clap = { version = "4", features = ["derive", "env"] }
+rand = { version = "0.9", features = ["std"] }
+sha2 = "0.10"
 ```
 
 ## Source Files
@@ -119,16 +121,32 @@ Features: stdin pipe support (auto-detect), NUL-delimited I/O (`-0`), JSON Lines
 `db` subcommand with `DbAction` enum: List, Add, Remove, Prune, Push, Pull, Register, Unregister, Registered.
 Helper functions: `parse_tag_args()`, `expand_recursive()`, `format_size()`, `collect_files()`, `open_db()`.
 
-### filetag-web/src/main.rs (~266 lines)
+### filetag-web/src/main.rs
 Entry point, CLI `Args`, database discovery, router setup, tree display. Delegates to modules below.
-CLI: `filetag-web [--port 3000] [--bind 127.0.0.1] [--no-parents] [path]`.
+CLI: `filetag-web [--port 3000] [--bind 127.0.0.1] [--no-parents] [--password SECRET] [path]`.
+`--password` also reads from `$FILETAG_PASSWORD` env var (clap `env` feature). When no password is set, auth middleware is a no-op.
 Frontend: grid/list file browser, tag sidebar (grouped by prefix, color dots, right-click context menu for color + delete), search bar (full query language), detail panel with preview + tag management.
 Static files embedded via `include_str!` from `filetag-web/static/`.
+Security layers: `SetResponseHeaderLayer` (X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, CSP), `RequestBodyLimitLayer` (32 MiB), auth middleware.
 
-### filetag-web/src/state.rs (~265 lines)
+### filetag-web/src/auth.rs
+Optional password authentication module.
+- `SessionStore { tokens: Mutex<HashSet<String>>, password_hash: Option<String> }` — lives in `AppState`
+- `SessionStore::disabled()` — auth off (middleware is no-op)
+- `SessionStore::with_password(pw)` — SHA-256 hash stored, random 32-byte hex tokens
+- `SessionStore::is_enabled() -> bool`
+- `SessionStore::authenticate(&str) -> Option<String>` — verify pw, return token
+- `SessionStore::is_valid(&str) -> bool`, `SessionStore::revoke(&str)`
+- `auth_middleware` — Axum middleware: checks `ft_session` cookie; `/login` and `/favicon.svg` always pass; API paths return 401; page paths redirect to `/login`
+- `login_page` (GET /login) — inline HTML login form
+- `login_submit` (POST /login) — sets `ft_session` HttpOnly SameSite=Strict cookie, Max-Age=86400
+- `logout` (POST /logout) — clears cookie, revokes token, redirects to /login
+- Cookie name: `ft_session`. No `Secure` flag (local HTTPS not guaranteed).
+
+### filetag-web/src/state.rs
 Core application state and helpers.
 - `TagRoot` struct (name, root, db_path, dev, entry_point)
-- `AppState` (roots, ai_progress)
+- `AppState` (roots, ai_progress, sessions)
 - `AppError` (anyhow → 500)
 - `open_conn(db_root)` — open DB with WAL + busy_timeout PRAGMAs
 - `open_for_file_op(db_root, rel_path)` — **mandatory** gateway for file operations; finds correct DB (child or root) for a given path
@@ -143,31 +161,41 @@ All API request/response structs (~20 structs). No logic.
 
 **Root resolution convention:** All request types use `dir: Option<String>` (absolute filesystem path of the currently browsed directory). The backend calls `root_for_dir(state, abs)` to find the correct root. Numeric root IDs are never sent between frontend and backend. `ApiDirEntry` uses `root_path: Option<String>` instead of `root_id` for virtual-root tile entries. `RenameDbRequest` uses `dir: String`. `ReorderRootsRequest` uses `order: Vec<String>` (root paths).
 
-### filetag-web/src/preview.rs (~1406 lines)
+### filetag-web/src/preview.rs
 File preview/serving, RAW/HEIC conversion, thumbnailing, video transcoding, trickplay.
 - `preview_handler`, `thumb_handler` — main Axum handlers
 - `thumb_cached` — deduplicates cache-check-permit-generate-serve pattern
 - `serve_file_bytes`, `serve_file_range`, `serve_transcoded_mp4`
 - `raw_extract_jpeg`, `image_thumb_jpeg`, `pdf_thumb_jpeg`
-- `video_info`, `video_thumb_strip`, `api_vthumbs`, `api_vthumbs_pregen`
 - `api_dir_thumbs` — batch thumbnail generation for a directory listing
+
+### filetag-web/src/video.rs
+Video-specific logic (extracted from preview.rs).
+- `video_info`, `video_thumb_strip` — video metadata + contact-sheet thumbnail
+- `api_vthumbs`, `api_vthumbs_pregen` — trickplay sprite serving and pre-generation
+- `generate_ai_sprite(abs, root, n)` — generate an AI-specific sprite sheet (separate cache subdirectory `ai_sprites/` from trickplay `vthumbs/`)
+- `sprites_for_duration(duration_secs, min_n, max_n)` — 1 sprite per 30 s, clamped to [min_n, max_n]
 
 ### filetag-web/src/archive.rs (~713 lines)
 ZIP/RAR/7z archive handling (via `zip`, `unrar`, `sevenz_rust`).
 - `archive_cover_image`, `archive_image_entries`, `archive_read_entry`, `archive_list_entries_raw`
 - `api_dir_images`, `api_zip_pages`, `api_zip_page`, `api_zip_thumb`, `api_zip_entries`
 
-### filetag-web/src/ai.rs (~1112 lines)
-AI/VLM image analysis (OpenAI-compatible + Ollama).
-- `AiConfig`, `AiProgress`, `load_ai_config`
+### filetag-web/src/ai.rs
+AI/VLM image, video, and archive analysis (OpenAI-compatible + Ollama).
+- `AiConfig` — loaded from settings: endpoint, model, api_key, tag_prefix, max_tokens, format, subject (collection description), prompt_image, prompt_video, prompt_archive
+- Constants: `AI_IMAGE_INTRO`, `AI_VIDEO_INTRO`, `AI_ARCHIVE_INTRO` (per-type intro sentences; user-overridable), `AI_OUTPUT_FORMAT` (fixed JSON instruction; not configurable)
+- `AiProgress`, `load_ai_config`
 - `ai_prepare_jpeg`, `ai_prepare_jpeg_from_bytes`, `vlm_call`, `vlm_call_multi`, `analyse_image`, `analyse_archive`, `parse_ai_tags`
 - `apply_ai_tags`, `remove_prefixed_tags`
-- `api_ai_analyse` (handles both images and archives), `api_ai_analyse_batch`, `api_ai_status`, `api_ai_clear_tags`
+- `api_ai_analyse` (handles images, videos, and archives), `api_ai_analyse_batch`, `api_ai_status`, `api_ai_clear_tags`
 - `api_ai_config_get`, `api_ai_config_set`
+- Video analysis: calls `generate_ai_sprite` from `video.rs` to produce a contact-sheet JPEG; frame count derived from duration via `sprites_for_duration(dur, min, max)`. AI sprites cached separately in `.filetag/cache/ai_sprites/` (not in `vthumbs/`)
 - Archive analysis: lists entries, picks sample images, sends entry listing + images to VLM
 
-### filetag-web/src/api.rs (~800 lines)
+### filetag-web/src/api.rs
 Core CRUD API handlers + static file serving.
+- `api_auth_status` (GET /api/auth/status) — returns `{"auth": bool}` so the frontend knows whether to show the logout button
 - `api_roots`, `api_reorder_roots`, `api_rename_db`, `api_info`, `api_cache_clear`
 - `api_tags`, `api_files`, `api_search`, `api_file_detail`
 - `api_tag`, `api_untag` — use `open_for_file_op` for correct child-DB routing

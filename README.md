@@ -22,7 +22,8 @@ A web interface is included for browsing, previewing, searching, and tagging thr
 - Hierarchical child databases with push/pull transfer
 - Cross-database queries across child and ancestor databases; optional global registry
 - Shell completions for bash, zsh, and fish
-- Web interface with grid/list browser, image/video/PDF previews, trickplay hover animation, and optional AI image analysis
+- Web interface with grid/list browser, image/video/PDF previews, trickplay hover animation, and optional AI image and video analysis
+- Optional password authentication for the web interface (`--password` or `$FILETAG_PASSWORD`)
 
 ## Install
 
@@ -173,11 +174,34 @@ filetag-web ~/Music --port 8080
 # Bind to all interfaces (e.g. for LAN access)
 filetag-web --bind 0.0.0.0
 
+# Protect with a password (also accepts FILETAG_PASSWORD env var)
+filetag-web --password mysecret
+
 # Suppress automatic ancestor database discovery
 filetag-web --no-parents
 ```
 
 Open `http://127.0.0.1:3000` (default) in your browser. The full query language works in the search bar.
+
+### Authentication
+
+By default filetag-web binds to `127.0.0.1` (loopback only) and requires no password. When you bind to a non-loopback address without a password, a warning is printed at startup.
+
+To require a password, pass `--password` on the command line or set the `FILETAG_PASSWORD` environment variable:
+
+```sh
+filetag-web --password mysecret
+# or:
+FILETAG_PASSWORD=mysecret filetag-web --bind 0.0.0.0
+```
+
+When a password is set:
+
+- A login page is served at `/login`.
+- Successful login sets an `HttpOnly`, `SameSite=Strict` session cookie (`ft_session`).
+- API requests without a valid session cookie receive `401 Unauthorized`; page requests are redirected to `/login`.
+- A logout button appears in the toolbar.
+- Session tokens are kept in memory and lost on server restart (users must log in again).
 
 ### Database scope in filetag-web
 
@@ -207,14 +231,37 @@ Double-clicking a file in the grid or list opens a preview. Supported types:
 
 **Thumbnail cache.** All generated thumbnails (resized images, RAW previews, video contact sheets) are written to `.filetag/cache/thumbs/` or `.filetag/cache/raw/`. They are keyed by mtime and file size, so stale entries accumulate when files are replaced. Use the refresh button (↺) in the toolbar to clear the cache for the current directory, or the drop-down next to it to clear the entire cache.
 
-**Settings.** The gear icon in the toolbar opens the settings dialog, which has three tabs:
+**Settings.** The gear icon in the toolbar opens the settings dialog, which has four tabs:
 
 - **Video:** configures the trickplay sprite count. The number of frames is computed automatically from video duration (1 frame per 30 seconds), clamped to the configured minimum and maximum. Lower values generate faster; defaults are min 8, max 16.
 - **Features:** opt-in feature flags for functionality that requires external tools. All are off by default. Settings are saved per database root.
   - *Video* — enables `ffmpeg` for video transcoding, HLS streaming, trickplay sprite generation, and video/image thumbnail fallback.
   - *ImageMagick* — enables `magick`/`convert` for exotic image formats (PSD, XCF, EPS, ...) and `sips` (macOS built-in) for HEIC/HEIF files including HEVC-encoded dynamic wallpapers. Also enables `dcraw` as a RAW extraction fallback.
   - *PDF thumbnails* — enables `pdftoppm` (poppler) or ImageMagick+Ghostscript for PDF thumbnail generation.
-- **AI:** connection settings for the optional AI image analysis feature (endpoint URL, model, tag prefix, and prompt). Accessible via the "Analyse images (AI)" option in the cache drop-down.
+- **AI:** connection settings for the optional AI image analysis feature. Configure the endpoint URL, API format, model, API key, tag prefix, and max tokens here. Use the "Test connection" button to verify the setup. Accessible via the "Analyse images (AI)" option in the cache drop-down.
+- **Prompts:** customise how the AI interprets your files.
+  - *Collection description* — free-text description of what this collection contains (e.g. "Holiday photos from Vietnam, 2023"). Injected into every analysis prompt as context.
+  - *Type instructions* — per-type opening sentence sent before the output-format instruction. Separate overrides for images, videos, and archives. Leave empty to use the built-in defaults. Use the "Use default" button to restore a type's default.
+  - *Output format* — the fixed JSON output instruction appended to every prompt (shown for reference; not editable).
+
+### AI image and video analysis
+
+filetag-web can send files to any OpenAI-compatible or Ollama VLM endpoint and apply the returned tags to the database automatically. To use it:
+
+1. Open Settings (gear icon) and go to the **AI** tab.
+2. Configure the endpoint URL, API format (`openai` or `ollama`), model name, and tag prefix. For local models (llama.cpp, LM Studio, Ollama) no API key is needed.
+3. Optionally go to the **Prompts** tab to describe the collection and customise per-type instructions.
+4. Click "Analyse images (AI)" in the cache drop-down to analyse all image files in the current directory, or right-click a single file in the detail panel and choose "Analyse with AI".
+
+**What gets analysed:**
+
+| File type    | How it is sent to the model |
+| :----------- | :-------------------------- |
+| JPEG, PNG, WebP, HEIC, RAW, … | Resized to max 800 px, stripped of metadata, sent as a base64 JPEG |
+| Video (MP4, MKV, MOV, …) | A trickplay-style contact sheet of evenly-spaced frames is generated and sent as a JPEG. The number of frames is derived from video duration (1 per 30 s), clamped to the sprite min/max from Video settings. AI sprite sheets are cached separately in `.filetag/cache/ai_sprites/` and do not interfere with the trickplay cache in `.filetag/cache/vthumbs/`. |
+| ZIP / CBZ / RAR / 7z | The archive's file listing plus up to five sample images extracted from it are sent together |
+
+The model is instructed to return a JSON array of tags (`["tag1", "key=value", …]`). The configured tag prefix (default `ai/`) is prepended to each returned tag before it is applied to the file. Use "Clear AI tags" to remove all tags with that prefix from the current directory.
 
 ### Image and comic viewer
 
