@@ -597,7 +597,7 @@ pub async fn api_vthumbs(
 
 /// Number of trickplay sprites for a given video duration: 1 per 30 s,
 /// clamped to [min_n, max_n].
-fn sprites_for_duration(duration_secs: f64, min_n: usize, max_n: usize) -> usize {
+pub fn sprites_for_duration(duration_secs: f64, min_n: usize, max_n: usize) -> usize {
     let n = (duration_secs / 30.0).round() as usize;
     n.clamp(min_n, max_n)
 }

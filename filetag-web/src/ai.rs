@@ -22,7 +22,7 @@ use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
-use crate::video::video_info;
+use crate::video::{sprites_for_duration, video_info};
 
 // ---------------------------------------------------------------------------
 // AI concurrency + constants
@@ -53,9 +53,6 @@ pub const AI_VIDEO_EXTS: &[&str] = &[
     "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
     "3gp", "f4v",
 ];
-
-/// Number of trickplay frames in the sprite sheet generated for AI analysis.
-const AI_SPRITE_FRAMES: usize = 8;
 
 const AI_VIDEO_PROMPT: &str = "\
 You are analysing a video file. \
@@ -488,11 +485,10 @@ const ARCHIVE_SAMPLE_COUNT: usize = 4;
 /// Analyse a video by generating (or reusing) a trickplay sprite sheet and
 /// sending it as a single image to the VLM.
 ///
-/// A sprite sheet is a single wide JPEG with [`AI_SPRITE_FRAMES`] tiles
-/// stacked horizontally.  Sending one image instead of N separate images
-/// keeps the request compact and avoids per-image limits on the VLM API.
-/// The cache is shared with the regular trickplay endpoint, so if the user
-/// has already hovered over the video card the sprite is available for free.
+/// The number of frames is determined by `sprites_for_duration` (1 frame per
+/// 30 s, clamped to 8..16), matching the trickplay endpoint so the cache is
+/// shared.  Sending one image instead of N separate images keeps the request
+/// compact and avoids per-image limits on the VLM API.
 async fn analyse_video(
     config: &AiConfig,
     abs: &Path,
@@ -500,7 +496,13 @@ async fn analyse_video(
     existing_tags: &[String],
     kv_keys: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
-    let n = AI_SPRITE_FRAMES;
+    // Fetch video metadata first — duration is needed to derive the correct
+    // frame count (same formula as the trickplay endpoint).
+    let info = video_info(abs)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
+
+    let n = sprites_for_duration(info.duration, 8, 16);
     let sprite_name = format!("sprite{n}x1.jpg");
 
     // Try to reuse the cached trickplay sprite.
@@ -512,10 +514,6 @@ async fn analyse_video(
         data
     } else {
         // Generate sprite with ffmpeg hstack — same approach as api_vthumbs.
-        let info = video_info(abs)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
-
         let positions: Vec<f64> = (0..n)
             .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
             .collect();
