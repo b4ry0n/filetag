@@ -66,7 +66,7 @@ struct Args {
     /// Generate a random password, print it to stderr, and start with authentication enabled.
     /// Useful for ad-hoc access from another device on the local network.
     /// The password is only valid for the current server session.
-    #[arg(long)]
+    #[arg(long, short = 'P')]
     generate_password: bool,
 }
 
