@@ -83,6 +83,12 @@ pub static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const
 /// thumbnail queue (which has only 1 permit).
 pub static VTHUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
+/// Semaphore for full video transcoding (serve_transcoded_mp4 slow path).
+/// Kept separate from THUMB_LIMITER so that a long-running transcode (e.g.
+/// a video playing in picture-in-picture mode) does not block thumbnail
+/// generation for the rest of the session.
+pub static TRANSCODE_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
 // ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------

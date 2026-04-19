@@ -17,7 +17,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
-    AppState, THUMB_LIMITER, VTHUMB_LIMITER, load_features_for, resolve_preview, root_for_dir,
+    AppState, THUMB_LIMITER, TRANSCODE_LIMITER, VTHUMB_LIMITER, load_features_for, resolve_preview,
+    root_for_dir,
 };
 
 // ---------------------------------------------------------------------------
@@ -213,7 +214,7 @@ pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap)
     }
 
     // Acquire concurrency permit.
-    let permit = match THUMB_LIMITER.acquire().await {
+    let permit = match TRANSCODE_LIMITER.acquire().await {
         Ok(p) => p,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
     };
