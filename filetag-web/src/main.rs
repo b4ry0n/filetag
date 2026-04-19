@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
             // (scripts are separate files), inline styles permitted for dynamic UI.
             HeaderValue::from_static(
                 "default-src 'self'; \
-                 script-src 'self'; \
+                 script-src 'self' 'unsafe-inline'; \
                  style-src 'self' 'unsafe-inline'; \
                  img-src 'self' data: blob:; \
                  media-src 'self' blob:; \
