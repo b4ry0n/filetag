@@ -728,7 +728,10 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
         document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
         const pre = document.getElementById('ai-output-format');
-        if (pre) pre.textContent = cfg.output_format || '';
+        if (pre) {
+            pre.value = cfg.output_format || '';
+            pre.placeholder = cfg.default_output_format || '';
+        }
         document.getElementById('ai-format').value = cfg.format || 'openai';
         const enabled = cfg.enabled !== false; // default true if key absent
         document.getElementById('ai-enabled').checked = enabled;
@@ -795,6 +798,11 @@ function aiToggleEnabled() {
 }
 
 function aiUseDefault(type) {
+    if (type === 'output-format') {
+        const el = document.getElementById('ai-output-format');
+        if (el) el.value = el.placeholder;
+        return;
+    }
     const el = document.getElementById('ai-prompt-' + type);
     if (el) el.value = el.placeholder;
 }
@@ -807,6 +815,7 @@ async function aiSaveSettings() {
         prompt_image: document.getElementById('ai-prompt-image').value,
         prompt_video: document.getElementById('ai-prompt-video').value,
         prompt_archive: document.getElementById('ai-prompt-archive').value,
+        output_format: document.getElementById('ai-output-format').value,
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,

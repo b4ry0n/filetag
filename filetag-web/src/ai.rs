@@ -38,9 +38,9 @@ pub const AI_IMAGE_INTRO: &str = "Look at this image.";
 pub const AI_VIDEO_INTRO: &str = "Look at this video contact sheet.";
 pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and sample images.";
 
-/// Fixed output-format instruction appended to every prompt.
-/// Not user-configurable to prevent breaking JSON parsing.
-const AI_OUTPUT_FORMAT: &str = "\
+/// Default output-format instruction appended to every prompt.
+/// Users can override this via `ai.output_format` in the settings.
+pub const AI_OUTPUT_FORMAT: &str = "\
 Output ONLY a JSON array of short descriptive tags (English, lowercase). \
 Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\n\
 Good: [\"dog\", \"beach\", \"sunny\", \"color=blue\", \"year=2023\"]\n\
@@ -100,6 +100,8 @@ struct AiConfig {
     prompt_video: Option<String>,
     /// User override for the archive-type intro sentence.
     prompt_archive: Option<String>,
+    /// User override for the output format instruction.
+    output_format: Option<String>,
 }
 
 fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
@@ -157,6 +159,10 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .filter(|s| !s.is_empty());
+    let output_format = db::get_setting(conn, "ai.output_format")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
     Some(AiConfig {
         endpoint,
         model,
@@ -168,6 +174,7 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         prompt_image,
         prompt_video,
         prompt_archive,
+        output_format,
     })
 }
 
@@ -471,7 +478,12 @@ fn build_full_prompt(
         parts.push(format!("Collection context: {s}"));
     }
 
-    parts.push(AI_OUTPUT_FORMAT.to_string());
+    let output_fmt = config
+        .output_format
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(AI_OUTPUT_FORMAT);
+    parts.push(output_fmt.to_string());
 
     if !existing_tags.is_empty() {
         let list = existing_tags
@@ -1215,6 +1227,8 @@ pub(crate) struct AiConfigRequest {
     prompt_video: Option<String>,
     /// Type-specific intro override for archives.
     prompt_archive: Option<String>,
+    /// User override for the output format instruction.
+    output_format: Option<String>,
     /// Legacy single-prompt field — treated as `prompt_image` when
     /// `prompt_image` is not present in the same request.
     prompt: Option<String>,
@@ -1264,6 +1278,9 @@ pub async fn api_ai_config_set(
     }
     if let Some(v) = &body.prompt_archive {
         db::set_setting(&conn, "ai.prompt_archive", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.output_format {
+        db::set_setting(&conn, "ai.output_format", v).map_err(AppError)?;
     }
     // Legacy: old clients send `prompt` (treated as prompt_image when the
     // new per-type field is absent).
@@ -1373,6 +1390,7 @@ pub async fn api_ai_config_get(
         "default_prompt_image": AI_IMAGE_INTRO,
         "default_prompt_video": AI_VIDEO_INTRO,
         "default_prompt_archive": AI_ARCHIVE_INTRO,
-        "output_format": AI_OUTPUT_FORMAT,
+        "output_format": g("ai.output_format"),
+        "default_output_format": AI_OUTPUT_FORMAT,
     })))
 }
