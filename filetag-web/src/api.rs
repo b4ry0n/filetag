@@ -835,6 +835,16 @@ pub async fn api_delete_tag(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
+pub async fn api_prune_tags(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DirBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let removed = db::prune_unused_tags(&conn).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
 /// `GET /api/settings` — read per-root settings (trickplay counts + feature flags).
 pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,

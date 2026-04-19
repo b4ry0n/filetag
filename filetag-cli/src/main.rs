@@ -204,6 +204,18 @@ enum Command {
     /// Show database statistics
     Info,
 
+    /// Remove all tags that have no file assignments
+    #[command(name = "prune-tags")]
+    PruneTags {
+        /// Only show what would be removed, don't modify
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
+
     /// Manage tag synonyms (aliases)
     Synonym {
         #[command(subcommand)]
@@ -387,6 +399,7 @@ fn main() -> Result<()> {
             dry_run,
         } => cmd_merge(&cli, from.clone(), into.clone(), *force, *dry_run),
         Command::Info => cmd_info(&cli),
+        Command::PruneTags { dry_run, force } => cmd_prune_tags(&cli, *dry_run, *force),
         Command::Synonym { action } => cmd_synonym(&cli, action),
         Command::Db { action } => cmd_db(&cli, action),
         Command::Completions { shell } => cmd_completions(*shell),
@@ -1303,6 +1316,49 @@ fn cmd_info(cli: &Cli) -> Result<()> {
         println!("Tags:          {}", tag_count);
         println!("Assignments:   {}", assignment_count);
         println!("Total size:    {}", format_size(total_size));
+    }
+    Ok(())
+}
+
+fn cmd_prune_tags(cli: &Cli, dry_run: bool, force: bool) -> Result<()> {
+    let (conn, _root) = open_db(cli)?;
+
+    // Count unused tags first.
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM file_tags)",
+        [],
+        |r| r.get(0),
+    )?;
+
+    if count == 0 {
+        info!(cli, "No unused tags found.");
+        return Ok(());
+    }
+
+    if dry_run {
+        if cli.json {
+            println!("{}", serde_json::json!({ "would_remove": count }));
+        } else {
+            println!("Would remove {count} unused tag(s).");
+        }
+        return Ok(());
+    }
+
+    if !force {
+        eprint!("Remove {count} unused tag(s)? [y/N] ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let removed = db::prune_unused_tags(&conn)?;
+    if cli.json {
+        println!("{}", serde_json::json!({ "removed": removed }));
+    } else {
+        info!(cli, "Removed {} unused tag(s).", removed);
     }
     Ok(())
 }
