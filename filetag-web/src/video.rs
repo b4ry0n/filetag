@@ -453,6 +453,74 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// Trickplay sprite generation
+// ---------------------------------------------------------------------------
+
+/// Generate (or reuse from cache) a trickplay sprite sheet for `abs`.
+///
+/// Returns the path to the cached JPEG on success.  The file is guaranteed to
+/// exist when `Ok` is returned.  The frame count `n` and video `duration_secs`
+/// must already be known by the caller (via [`video_info`] + [`sprites_for_duration`]).
+pub async fn generate_sprite_cached(
+    abs: &Path,
+    root: &Path,
+    n: usize,
+    duration_secs: f64,
+) -> anyhow::Result<PathBuf> {
+    let cache_path = file_cache_path(abs, root, "vthumbs", &format!("sprite{n}x1.jpg"))
+        .ok_or_else(|| anyhow::anyhow!("cannot compute cache path for {}", abs.display()))?;
+
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let positions: Vec<f64> = (0..n)
+        .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
+        .collect();
+
+    let scale_parts: Vec<String> = (0..n)
+        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+        .collect();
+    let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+    let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+
+    let mut cmd = tokio::process::Command::new("nice");
+    cmd.args(["-n", "10", "ffmpeg"]);
+    for t in &positions {
+        cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
+    }
+    let ok = cmd
+        .args([
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[out]",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "4",
+            "-y",
+        ])
+        .arg(&cache_path)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !ok || !cache_path.exists() {
+        anyhow::bail!("ffmpeg could not generate sprite sheet — is ffmpeg installed?");
+    }
+
+    Ok(cache_path)
+}
+
+// ---------------------------------------------------------------------------
 // Video trickplay thumbnails
 // ---------------------------------------------------------------------------
 
@@ -513,7 +581,7 @@ pub async fn api_vthumbs(
             None => return (StatusCode::INTERNAL_SERVER_ERROR, "Cache path error").into_response(),
         };
 
-    if !cache_path.exists() {
+    let cache_path = if !cache_path.exists() {
         // Use the dedicated vthumb semaphore (4 permits) so sprite generation
         // does not block the shared thumbnail queue (1 permit).
         let _permit = match VTHUMB_LIMITER.try_acquire() {
@@ -523,12 +591,14 @@ pub async fn api_vthumbs(
             }
         };
 
-        if !cache_path.exists() {
-            let info = if let Some(i) = prefetched_info {
-                i
+        if cache_path.exists() {
+            cache_path
+        } else {
+            let dur = if let Some(ref i) = prefetched_info {
+                i.duration
             } else {
                 match video_info(&abs).await {
-                    Some(i) => i,
+                    Some(i) => i.duration,
                     None => {
                         return (
                             StatusCode::UNPROCESSABLE_ENTITY,
@@ -539,55 +609,20 @@ pub async fn api_vthumbs(
                 }
             };
 
-            if let Some(parent) = cache_path.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-
-            let positions: Vec<f64> = (0..n)
-                .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
-                .collect();
-
-            let mut cmd = tokio::process::Command::new("nice");
-            cmd.args(["-n", "10", "ffmpeg"]);
-            for t in &positions {
-                cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
-            }
-
-            let scale_parts: Vec<String> = (0..n)
-                .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
-                .collect();
-            let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
-            let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
-
-            let ok = cmd
-                .args([
-                    "-filter_complex",
-                    &filter,
-                    "-map",
-                    "[out]",
-                    "-frames:v",
-                    "1",
-                    "-q:v",
-                    "4",
-                    "-y",
-                ])
-                .arg(&cache_path)
-                .stderr(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .status()
-                .await
-                .map(|s| s.success())
-                .unwrap_or(false);
-
-            if !ok {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "Video trickplay unavailable — install ffmpeg",
-                )
-                    .into_response();
+            match generate_sprite_cached(&abs, &cache_root, n, dur).await {
+                Ok(p) => p,
+                Err(_) => {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "Video trickplay unavailable — install ffmpeg",
+                    )
+                        .into_response();
+                }
             }
         }
-    }
+    } else {
+        cache_path
+    };
 
     match tokio::fs::read(&cache_path).await {
         Ok(data) => ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response(),
