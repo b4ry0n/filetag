@@ -1,6 +1,7 @@
 mod ai;
 mod api;
 mod archive;
+mod auth;
 mod extract;
 mod preview;
 mod state;
@@ -14,6 +15,7 @@ use anyhow::Context;
 use axum::{
     Router,
     http::{HeaderValue, header},
+    middleware,
     routing::{get, post},
 };
 use clap::Parser;
@@ -22,6 +24,7 @@ use rusqlite::Connection;
 use tower_http::{limit::RequestBodyLimitLayer, set_header::SetResponseHeaderLayer};
 
 use ai::AiProgress;
+use auth::SessionStore;
 use filetag_lib::db::TagRoot;
 use state::{AppState, resolve_names, terminal_width};
 
@@ -46,6 +49,12 @@ struct Args {
     /// Do not automatically include ancestor databases (stop at the current root)
     #[arg(long)]
     no_parents: bool,
+
+    /// Password to protect the web interface.
+    /// Can also be set via the FILETAG_PASSWORD environment variable.
+    /// When not set, the interface is unauthenticated (loopback-only by default).
+    #[arg(long, env = "FILETAG_PASSWORD")]
+    password: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -157,9 +166,15 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("no databases found");
     }
 
+    let sessions = match args.password.as_deref() {
+        Some(pw) if !pw.is_empty() => SessionStore::with_password(pw),
+        _ => SessionStore::disabled(),
+    };
+
     let state = Arc::new(AppState {
         roots,
         ai_progress: std::sync::Mutex::new(AiProgress::default()),
+        sessions,
     });
 
     let app = Router::new()
@@ -181,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/js/main.js", get(api::js_main))
         .route("/favicon.svg", get(api::favicon))
         .route("/api/roots", get(api::api_roots))
+        .route("/api/auth/status", get(api::api_auth_status))
         .route("/api/roots/reorder", post(api::api_reorder_roots))
         .route("/api/db/rename", post(api::api_rename_db))
         .route("/api/info", get(api::api_info))
@@ -215,7 +231,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/ai/config", post(ai::api_ai_config_set))
         .route("/api/settings", get(api::api_settings_get))
         .route("/api/settings", post(api::api_settings_set))
+        // Authentication routes (always available so login/logout work).
+        .route("/login", get(auth::login_page))
+        .route("/login", post(auth::login_submit))
+        .route("/logout", post(auth::logout))
         .with_state(state.clone())
+        // Auth middleware runs before security headers and body limit.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
         // Deny framing and MIME-sniffing; restrict to same-origin requests only.
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -249,14 +274,20 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = format!("{}:{}", args.bind, args.port);
 
-    // Warn when binding to a non-loopback address: the web UI has no
-    // authentication and exposes local files.
+    // Warn when binding to a non-loopback address without authentication.
     let is_loopback = matches!(args.bind.as_str(), "127.0.0.1" | "::1" | "localhost");
-    if !is_loopback {
+    let auth_enabled = state.sessions.is_enabled();
+    if !is_loopback && !auth_enabled {
         eprintln!(
-            "WARNING: filetag-web is bound to {} — the interface has no authentication. \
-             Make sure access is restricted at the network level.",
+            "WARNING: filetag-web is bound to {} without a password. \
+             Set --password or $FILETAG_PASSWORD, or restrict access at the network level.",
             args.bind
+        );
+    }
+    if auth_enabled {
+        eprintln!(
+            "Authentication enabled. Visit http://{}/login to sign in.",
+            addr
         );
     }
 
