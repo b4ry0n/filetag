@@ -359,21 +359,39 @@ function _trickplayAttach(img, path) {
         if (!spriteEl || !cacheEntry) return;
         const popupH = parseFloat(spriteEl.style.height);
         const popupW = parseFloat(spriteEl.style.width);
-        const scale  = popupH / cacheEntry.natH;
-        const tileW  = (cacheEntry.natW / cacheEntry.n) * scale;
+        const frameW = cacheEntry.natW / cacheEntry.n;
+        const frameH = cacheEntry.natH;
+        // Cover scaling: ensure the tile fully covers the popup so adjacent
+        // frames never bleed in from the sides or top/bottom.
+        const scale  = Math.max(popupW / frameW, popupH / frameH);
+        const bsW    = Math.round(cacheEntry.natW * scale);
+        const bsH    = Math.round(cacheEntry.natH * scale);
+        const tileW  = frameW * scale;
+        const tileH  = frameH * scale;
         const x      = popupW / 2 - tileW * (idx + 0.5);
-        spriteEl.style.backgroundPosition = `${x.toFixed(1)}px 0`;
+        const y      = (popupH - tileH) / 2;
+        spriteEl.style.backgroundSize     = `${bsW}px ${bsH}px`;
+        spriteEl.style.backgroundPosition = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
     }
 
     /** Jump to a discrete frame in the inline pinned element. */
     function showPinnedFrame(idx) {
         if (!pinnedEl || !cacheEntry) return;
-        const h = wrap.offsetHeight || 140;
-        const w = wrap.offsetWidth  || 140;
-        const scale = h / cacheEntry.natH;
-        const tileW = (cacheEntry.natW / cacheEntry.n) * scale;
-        const x = w / 2 - tileW * (idx + 0.5);
-        pinnedEl.style.backgroundPosition = `${x.toFixed(1)}px 0`;
+        const h      = wrap.offsetHeight || 140;
+        const w      = wrap.offsetWidth  || 140;
+        const frameW = cacheEntry.natW / cacheEntry.n;
+        const frameH = cacheEntry.natH;
+        // Cover scaling: ensure the tile fully covers the card area so adjacent
+        // frames never bleed in from the sides or top/bottom.
+        const scale  = Math.max(w / frameW, h / frameH);
+        const bsW    = Math.round(cacheEntry.natW * scale);
+        const bsH    = Math.round(cacheEntry.natH * scale);
+        const tileW  = frameW * scale;
+        const tileH  = frameH * scale;
+        const x      = w / 2 - tileW * (idx + 0.5);
+        const y      = (h - tileH) / 2;
+        pinnedEl.style.backgroundSize     = `${bsW}px ${bsH}px`;
+        pinnedEl.style.backgroundPosition = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
     }
 
     /** Update frame from a MouseEvent. Uses the card rect, not the
@@ -927,7 +945,7 @@ function renderDetail() {
             </div>`
         : `<div class="uncovered-notice">This file is on a different filesystem. Tags cannot be added here.</div>`;
 
-    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip');
+    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip' || type_ === 'video');
     const isAnalysing = state.aiAnalysing.has(f.path);
     const aiClearBtn = hasAiTags
         ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Verwijder ai/-tags</button>`

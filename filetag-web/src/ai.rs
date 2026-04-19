@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_read_entry};
 use crate::preview::{raw_cache_path, raw_extract_jpeg};
 use crate::state::Features;
+use crate::video::video_info;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
@@ -46,6 +47,27 @@ pub const AI_IMAGE_EXTS: &[&str] = &[
 
 /// Archive extensions that can be analysed by sampling their image entries.
 pub const ARCHIVE_EXTS: &[&str] = &["zip", "cbz", "rar", "cbr", "7z", "cb7"];
+
+/// Video extensions that can be analysed by sampling frames.
+pub const AI_VIDEO_EXTS: &[&str] = &[
+    "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg",
+    "m2ts", "mts", "ts", "3gp", "f4v",
+];
+
+/// Number of frames sampled from a video for AI analysis.
+const VIDEO_FRAME_COUNT: usize = 6;
+
+const AI_VIDEO_PROMPT: &str = "\
+You are analysing a video file. \
+You are given a series of frames sampled from throughout the video. \
+Based on these frames, output ONLY a JSON array of short descriptive tags \
+(English, lowercase) that describe the video as a whole. \
+Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\
+\n\
+Good: [\"action\", \"outdoor\", \"sport\", \"location=beach\"]\n\
+Bad: any text outside the JSON array\n\
+\n\
+/no_think";
 
 const AI_ARCHIVE_PROMPT: &str = "\
 You are analysing the contents of an archive file. \
@@ -463,6 +485,84 @@ async fn analyse_image(
 /// Maximum number of sample images to extract from an archive for AI analysis.
 const ARCHIVE_SAMPLE_COUNT: usize = 4;
 
+/// Analyse a video by extracting evenly-spaced frames with ffmpeg and sending
+/// them to the VLM.  Uses `ffprobe` (via [`video_info`]) to determine the
+/// duration so that frames are spread across the full length of the video.
+async fn analyse_video(
+    config: &AiConfig,
+    abs: &Path,
+    existing_tags: &[String],
+    kv_keys: &[String],
+) -> anyhow::Result<(String, Vec<String>)> {
+    // Determine video duration so we can spread frames evenly.
+    let duration = video_info(abs)
+        .await
+        .map(|i| i.duration)
+        .unwrap_or(0.0);
+
+    let n = VIDEO_FRAME_COUNT;
+    // Seek positions: evenly spaced, avoiding the very first and last second
+    // to skip black leader/credits.
+    let offsets: Vec<f64> = if duration > 2.0 {
+        (0..n)
+            .map(|i| 1.0 + (duration - 2.0) * (i as f64) / ((n - 1) as f64))
+            .collect()
+    } else {
+        // Very short clip: just use equal fractions.
+        (0..n)
+            .map(|i| duration * (i as f64 + 0.5) / n as f64)
+            .collect()
+    };
+
+    let mut sample_b64: Vec<String> = Vec::new();
+    for ss in &offsets {
+        let out = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg", "-ss", &format!("{ss:.3}"), "-i"])
+            .arg(abs)
+            .args([
+                "-vf",
+                "scale='if(gt(iw,ih),800,-2)':'if(gt(iw,ih),-2,800)':flags=lanczos",
+                "-vframes",
+                "1",
+                "-map_metadata",
+                "-1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-q:v",
+                "4",
+                "pipe:1",
+            ])
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await;
+        if let Ok(o) = out {
+            if o.status.success() && o.stdout.starts_with(&[0xFF, 0xD8]) {
+                sample_b64.push(base64::engine::general_purpose::STANDARD.encode(&o.stdout));
+            }
+        }
+    }
+
+    if sample_b64.is_empty() {
+        anyhow::bail!("could not extract any frames from video");
+    }
+
+    let base_prompt = format!(
+        "This video is {:.0} seconds long. {} frames have been sampled from it.\n\n{}",
+        duration,
+        sample_b64.len(),
+        AI_VIDEO_PROMPT,
+    );
+    let prompt = build_ai_prompt(&base_prompt, existing_tags, kv_keys);
+    let b64_refs: Vec<&str> = sample_b64.iter().map(|s| s.as_str()).collect();
+    let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
+    let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
+    let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
+    Ok((raw, tags))
+}
+
 /// Analyse an archive by inspecting its contents listing and sample images.
 async fn analyse_archive(
     config: &AiConfig,
@@ -876,9 +976,10 @@ pub async fn api_ai_analyse(
     };
     let (conn, effective_root, rel) = open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
-    // Detect archive files.
+    // Detect archive or video files.
     let ext = body.path.rsplit('.').next().unwrap_or("").to_lowercase();
     let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
+    let is_video   = AI_VIDEO_EXTS.contains(&ext.as_str());
 
     let _permit = AI_LIMITER
         .acquire()
@@ -891,6 +992,11 @@ pub async fn api_ai_analyse(
     let (raw_response, tags) = if is_archive {
         let abs = effective_root.join(&rel);
         analyse_archive(&config, &abs, &existing_tags, &kv_keys)
+            .await
+            .map_err(AppError)?
+    } else if is_video {
+        let abs = effective_root.join(&rel);
+        analyse_video(&config, &abs, &existing_tags, &kv_keys)
             .await
             .map_err(AppError)?
     } else {
@@ -945,7 +1051,9 @@ pub async fn api_ai_analyse_batch(
         .into_iter()
         .filter(|p| {
             let ext = p.rsplit('.').next().unwrap_or("").to_lowercase();
-            AI_IMAGE_EXTS.contains(&ext.as_str()) || ARCHIVE_EXTS.contains(&ext.as_str())
+            AI_IMAGE_EXTS.contains(&ext.as_str())
+                || ARCHIVE_EXTS.contains(&ext.as_str())
+                || AI_VIDEO_EXTS.contains(&ext.as_str())
         })
         .collect();
 
@@ -1021,6 +1129,7 @@ pub async fn api_ai_analyse_batch(
 
             let ext = rel_path.rsplit('.').next().unwrap_or("").to_lowercase();
             let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
+            let is_video   = AI_VIDEO_EXTS.contains(&ext.as_str());
 
             let _permit = match AI_LIMITER.acquire().await {
                 Ok(p) => p,
@@ -1030,6 +1139,12 @@ pub async fn api_ai_analyse_batch(
             let (_raw, tags) = if is_archive {
                 let abs = effective_root.join(&eff_rel);
                 match analyse_archive(&config, &abs, &existing_tags, &kv_keys).await {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                }
+            } else if is_video {
+                let abs = effective_root.join(&eff_rel);
+                match analyse_video(&config, &abs, &existing_tags, &kv_keys).await {
                     Ok(t) => t,
                     Err(_) => continue,
                 }
