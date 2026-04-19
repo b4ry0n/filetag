@@ -311,8 +311,9 @@
                         </label>
                     </details>
                     <details>
-                        <summary>Output format <small>(fixed, shown for reference)</small></summary>
-                        <pre id="ai-output-format" class="ai-output-format-pre"></pre>
+                        <summary>Output format <small>(leave empty to use built-in default)</small></summary>
+                        <textarea id="ai-output-format" rows="6" placeholder="Output ONLY a JSON array of short descriptive tags…"></textarea>
+                        <button type="button" class="use-default-btn" onclick="aiUseDefault('output-format')">Use default</button>
                     </details>
                     <div class="modal-actions">
                         <button onclick="aiSaveSettings()">Save</button>
