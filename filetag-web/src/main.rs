@@ -62,6 +62,12 @@ struct Args {
     /// Takes precedence over --password and FILETAG_PASSWORD.
     #[arg(long)]
     password_file: Option<PathBuf>,
+
+    /// Generate a random password, print it to stderr, and start with authentication enabled.
+    /// Useful for ad-hoc access from another device on the local network.
+    /// The password is only valid for the current server session.
+    #[arg(long)]
+    generate_password: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("no databases found");
     }
 
-    // Resolve password: --password-file takes precedence over --password / env var.
+    // Resolve password: --password-file > --generate-password > --password / env var.
     let resolved_password: Option<String> = if let Some(ref path) = args.password_file {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading password file {}", path.display()))?;
@@ -181,6 +187,11 @@ async fn main() -> anyhow::Result<()> {
         if pw.is_empty() {
             anyhow::bail!("password file {} is empty", path.display());
         }
+        Some(pw)
+    } else if args.generate_password {
+        use crate::auth::random_password;
+        let pw = random_password();
+        eprintln!("Generated password: {pw}");
         Some(pw)
     } else {
         args.password.filter(|s| !s.is_empty())
