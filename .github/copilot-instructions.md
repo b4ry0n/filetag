@@ -123,8 +123,8 @@ Helper functions: `parse_tag_args()`, `expand_recursive()`, `format_size()`, `co
 
 ### filetag-web/src/main.rs
 Entry point, CLI `Args`, database discovery, router setup, tree display. Delegates to modules below.
-CLI: `filetag-web [--port 3000] [--bind 127.0.0.1] [--no-parents] [--password SECRET] [path]`.
-`--password` also reads from `$FILETAG_PASSWORD` env var (clap `env` feature). When no password is set, auth middleware is a no-op.
+CLI: `filetag-web [--port 3000] [--bind 127.0.0.1] [--no-parents] [--password SECRET] [--password-file PATH] [path]`.
+`--password` also reads from `$FILETAG_PASSWORD` env var (clap `env` feature). `--password-file` reads the password from a file (takes precedence over `--password`/env). When no password is set, auth middleware is a no-op.
 Frontend: grid/list file browser, tag sidebar (grouped by prefix, color dots, right-click context menu for color + delete), search bar (full query language), detail panel with preview + tag management.
 Static files embedded via `include_str!` from `filetag-web/static/`.
 Security layers: `SetResponseHeaderLayer` (X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, CSP), `RequestBodyLimitLayer` (32 MiB), auth middleware.
