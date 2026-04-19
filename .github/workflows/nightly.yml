@@ -8,8 +8,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Create (or recreate) the rolling nightly release before build jobs start.
+  # Separating this into its own serial job prevents the parallel build jobs
+  # from racing to delete/recreate the release and wiping each other's assets.
+  create-release:
+    name: Create nightly release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Recreate rolling release
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          gh release delete nightly --yes 2>/dev/null || true
+          gh release create nightly \
+            --title "nightly (${DATE} · ${COMMIT})" \
+            --notes "Nightly build from commit \`${COMMIT}\` (${DATE}). Unofficial pre-release." \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
     name: Build (${{ matrix.artifact }})
+    needs: create-release
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -63,21 +86,10 @@ jobs:
           Compress-Archive -Path filetag.exe, filetag-web.exe `
             -DestinationPath "../../../${{ matrix.artifact }}-nightly-${COMMIT}.zip"
 
-      - name: Publish to GitHub pre-release
+      - name: Upload asset
         shell: bash
         run: |
           COMMIT=$(git rev-parse --short HEAD)
-          DATE=$(date -u +%Y-%m-%d)
-          ASSET="${{ matrix.artifact }}-nightly-${COMMIT}.${{ matrix.ext }}"
-
-          # Delete and recreate the rolling nightly release so assets stay fresh.
-          gh release delete nightly --yes 2>/dev/null || true
-          gh release create nightly \
-            --title "nightly (${DATE} · ${COMMIT})" \
-            --notes "Nightly build from commit \`${COMMIT}\` (${DATE}). Unofficial pre-release." \
-            --prerelease \
-            2>/dev/null || true
-
-          gh release upload nightly "$ASSET" --clobber
+          gh release upload nightly "${{ matrix.artifact }}-nightly-${COMMIT}.${{ matrix.ext }}" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
