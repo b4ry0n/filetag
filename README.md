@@ -35,85 +35,154 @@ cargo install --path filetag-web           # Web interface (binary: filetag-web)
 ## Quick start
 
 ```sh
-# Initialize a database in the current directory
 filetag init
-
-# Tag files (comma-separated or repeated -t)
 filetag tag photo.jpg -t vacation,beach,year=2024
-filetag tag *.mp3 -t genre/rock -t year=2024
-filetag tag -r ./Music -t collection/main
+filetag find 'vacation and year=2024'
+filetag tags
+```
 
-# Pipe file paths from other tools
+## Commands
+
+| Command       | Alias | Description |
+| :------------ | :---- | :---------- |
+| `init`        |       | Create a database in the current directory |
+| `tag`         | `t`   | Add tags to files |
+| `untag`       | `u`   | Remove tags from files |
+| `tags`        | `ls`  | List tags (all, or for specific files) |
+| `show`        | `s`   | Show detailed file information |
+| `find`        | `f`   | Find files matching a tag query |
+| `view`        |       | Generate a symlink view (Unix only) |
+| `status`      |       | Show missing, modified, and untagged files |
+| `repair`      |       | Recover moved files by file identity or name+size |
+| `mv`          |       | Rename a tag |
+| `merge`       |       | Merge a tag into another (destructive) |
+| `synonym`     |       | Manage tag synonyms |
+| `db`          |       | Manage linked databases |
+| `info`        |       | Show database statistics |
+| `completions` |       | Generate shell completions |
+
+### init
+
+```sh
+filetag init [--register]
+```
+
+| Option       | Description |
+| :----------- | :---------- |
+| `--register` | Also register in the global database registry |
+
+### tag / untag
+
+```sh
+filetag tag FILE... -t TAG[,TAG...]
+filetag untag FILE... -t TAG[,TAG...]
 fd -e flac | filetag tag -t lossless
 find . -name '*.jpg' -print0 | filetag tag -0 -t photo
-find . -name '*.mp3' -print0 | filetag untag -0 -t genre
+```
 
-# List all tags
-filetag tags
+| Option             | Description |
+| :----------------- | :---------- |
+| `-t, --tags`       | Tags to add or remove, comma-separated; use `key=value` for values |
+| `-r, --recursive`  | Tag all files under the given directories (`tag` only) |
+| `-0, --null`       | Read NUL-delimited paths from stdin |
 
-# List tags for a specific file
-filetag tags song.mp3
+### tags / show
 
-# Detailed file info
-filetag show photo.jpg
+```sh
+filetag tags                    # all tags
+filetag tags song.mp3           # tags for a specific file
+filetag show photo.jpg          # full file info
+```
 
-# Find files by tag query
+| Option (`tags`)  | Description |
+| :--------------- | :---------- |
+| `-i, --isolated` | Query only the current database (no children, no ancestors) |
+| `--all-dbs`      | Search across all globally registered databases |
+
+### find
+
+```sh
 filetag find genre/rock
-filetag find 'genre/rock and year>=2020'
-filetag find 'genre/* and not live' --with-tags
-filetag find vacation --count        # or: -c
+filetag find 'genre/rock and year>=2020' --with-tags
+filetag find vacation --count
 filetag find vacation -0 | xargs -0 ls -l
+```
 
-# JSON output
-filetag find 'genre/rock' --json
-filetag tags --json
-filetag info --json
+| Option           | Description |
+| :--------------- | :---------- |
+| `--with-tags`    | Include tags alongside file paths in output |
+| `-c, --count`    | Print only the number of matches |
+| `-0, --null`     | NUL-delimited output (for `xargs -0`) |
+| `-i, --isolated` | Query only the current database |
+| `--all-dbs`      | Search across all globally registered databases |
 
-# Generate a symlink view (Unix only)
-filetag view genre/rock -o ~/Views/rock
+### view (Unix only)
 
-# Check for missing/modified/untagged files
+```sh
+filetag view 'genre/rock and year>=2020' -o ~/Views/rock
+```
+
+| Option               | Default  | Description |
+| :------------------- | :------- | :---------- |
+| `-o, --output <DIR>` | `_.tags` | Output directory for the generated symlinks |
+
+### status / repair
+
+```sh
 filetag status
-filetag status ./Music       # Limit to a subdirectory
-
-# Find moved files by file identity or name+size
+filetag status ./Music          # limit to a subdirectory
 filetag repair
-filetag repair ./Music       # Limit to a subdirectory
-filetag repair -n            # Dry run (alias: --dry-run)
+filetag repair ./Music -n       # dry run, limit to a subdirectory
+```
 
-# Rename a tag
+| Option (`repair`) | Description |
+| :---------------- | :---------- |
+| `-n, --dry-run`   | Show what would change without modifying anything |
+
+### mv / merge
+
+```sh
 filetag mv old-tag new-tag
-
-# Merge a tag into another (destructive: removes source tag)
 filetag merge old-tag target-tag
-filetag merge -n old-tag target-tag   # Dry run (alias: --dry-run)
-filetag merge -f old-tag target-tag   # Skip confirmation prompt (alias: --force)
+```
 
-# Child database management
-filetag db add ./Music                # Register a child database
-filetag db ls                         # List registered children
-filetag db push ./Music               # Transfer tags to child DB
-filetag db push ./Music -n            # Dry run
-filetag db pull ./Music               # Transfer tags back to parent DB
-filetag db prune                      # Remove dead registrations
+| Option (`merge`) | Description |
+| :--------------- | :---------- |
+| `-f, --force`    | Skip the confirmation prompt |
+| `-n, --dry-run`  | Show what would change without modifying anything |
 
-# Cross-database queries
-filetag tags                          # Tags from current DB and all linked databases
-filetag find genre/rock               # Search current DB and all linked databases
-filetag tags --isolated               # Tags from current database only (or: -i)
-filetag find genre/rock --isolated    # Search current database only (or: -i)
+### synonym
 
-# Global database registry
-filetag db register                   # Add current DB to global registry
-filetag db unregister                 # Remove from global registry
-filetag db registered                 # List all globally registered databases
-filetag tags --all-dbs                # Tags across all registered databases
-filetag find genre/rock --all-dbs     # Search across all registered databases
+Synonyms map an alias to a canonical tag. When a file is tagged with the alias, the canonical tag is applied instead.
 
-# Database statistics
+```sh
+filetag synonym add pic image     # 'pic' is an alias for 'image'
+filetag synonym remove pic
+filetag synonym ls
+```
+
+### db
+
+Linked databases are separate `.filetag` roots that are queried together.
+
+| Subcommand          | Description |
+| :------------------ | :---------- |
+| `db ls`             | List all linked databases |
+| `db add <PATH>`     | Register a database root as a child |
+| `db remove <PATH>`  | Remove a child registration |
+| `db prune`          | Remove registrations for databases that no longer exist |
+| `db push <PATH>`    | Copy tags for files under PATH from this DB to the child |
+| `db pull <PATH>`    | Copy tags from the child DB back to this DB |
+| `db register`       | Add this database to the global registry |
+| `db unregister`     | Remove from the global registry |
+| `db registered`     | List all globally registered databases |
+
+`db push` and `db pull` accept `-n`/`--dry-run`.
+
+### info / completions
+
+```sh
 filetag info
-
-# Shell completions
 filetag completions zsh  > ~/.zfunc/_filetag
 filetag completions bash > ~/.bash_completion.d/filetag
 filetag completions fish > ~/.config/fish/completions/filetag.fish
@@ -121,26 +190,16 @@ filetag completions fish > ~/.config/fish/completions/filetag.fish
 
 ## Global options
 
-| Option              | Description |
-| :------------------ | :---------- |
-| `--json`            | JSON Lines output (one object per line) |
-| `--color <WHEN>`    | `auto` \| `always` \| `never` (default: `auto`) |
-| `-q, --quiet`       | Suppress informational messages |
-| `-v, --verbose`     | Extra detail |
-| `--db <PATH>`       | Use a specific database (override auto-detect) |
-| `--no-parents`      | Do not automatically include ancestor databases |
+| Option           | Description |
+| :--------------- | :---------- |
+| `--json`         | JSON Lines output (one object per line) |
+| `--color <WHEN>` | `auto` \| `always` \| `never` (default: `auto`) |
+| `-q, --quiet`    | Suppress informational messages |
+| `-v, --verbose`  | Extra detail |
+| `--db <PATH>`    | Use a specific database (override auto-detect) |
+| `--no-parents`   | Do not automatically include ancestor databases |
 
-`tags` and `find` include all linked child databases and ancestor databases by default. Use `-i`/`--isolated` on those commands to query only the current database (no children, no ancestors).
-
-## Command aliases
-
-| Command | Alias |
-| :------ | :---- |
-| `tag`   | `t`   |
-| `untag` | `u`   |
-| `tags`  | `ls`  |
-| `show`  | `s`   |
-| `find`  | `f`   |
+`tags` and `find` include all linked child databases and ancestor databases by default. Use `-i`/`--isolated` to query only the current database (no children, no ancestors).
 
 ## Query language
 
