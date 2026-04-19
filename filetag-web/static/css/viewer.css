@@ -417,6 +417,36 @@
     color: var(--fg-dim);
     margin: 0 0 12px;
 }
+.settings-desc-inline {
+    display: block;
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin: 2px 0 6px;
+    font-weight: normal;
+}
+.prompt-type-details {
+    margin: 12px 0 8px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+.prompt-type-details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg-dim);
+    padding: 4px 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.prompt-type-details > summary::before {
+    content: '▶';
+    font-size: 9px;
+    transition: transform .15s;
+    display: inline-block;
+}
+.prompt-type-details[open] > summary::before { transform: rotate(90deg); }
+.prompt-type-details label { margin-top: 10px; }
 /* Toggle rows — macOS-style: text left, pill toggle right */
 .toggle-row {
     display: flex;

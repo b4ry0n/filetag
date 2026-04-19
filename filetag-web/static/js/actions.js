@@ -921,11 +921,13 @@ async function aiAnalyseSingle(path) {
     // Re-render so the button shows "Analysing…" immediately (also persists on navigate-away & back)
     if (state.selectedFile?.path === path) renderDetail();
     const toast = showToast(`AI: analysing…`, 0);
+    const framesEl = document.getElementById('ai-frames-input');
+    const n_frames = framesEl ? (parseInt(framesEl.value, 10) || null) : null;
     try {
         const res = await fetch('/api/ai/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, dir: currentAbsDir() }),
+            body: JSON.stringify({ path, dir: currentAbsDir(), ...(n_frames ? { n_frames } : {}) }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);

@@ -520,6 +520,71 @@ pub async fn generate_sprite_cached(
     Ok(cache_path)
 }
 
+/// Generate (or reuse from cache) an AI analysis sprite sheet for `abs`.
+///
+/// Uses a separate cache subdirectory (`ai_sprites`) from the trickplay sprites
+/// so the frame count can be adjusted independently without invalidating trickplay.
+pub async fn generate_ai_sprite(
+    abs: &Path,
+    root: &Path,
+    n: usize,
+    duration_secs: f64,
+) -> anyhow::Result<PathBuf> {
+    let cache_path =
+        file_cache_path(abs, root, "ai_sprites", &format!("ai{n}x1.jpg")).ok_or_else(|| {
+            anyhow::anyhow!("cannot compute AI sprite cache path for {}", abs.display())
+        })?;
+
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let positions: Vec<f64> = (0..n)
+        .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
+        .collect();
+
+    let scale_parts: Vec<String> = (0..n)
+        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+        .collect();
+    let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+    let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+
+    let mut cmd = tokio::process::Command::new("nice");
+    cmd.args(["-n", "10", "ffmpeg"]);
+    for t in &positions {
+        cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
+    }
+    let ok = cmd
+        .args([
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[out]",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "4",
+            "-y",
+        ])
+        .arg(&cache_path)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !ok || !cache_path.exists() {
+        anyhow::bail!("ffmpeg could not generate AI sprite sheet — is ffmpeg installed?");
+    }
+
+    Ok(cache_path)
+}
+
 // ---------------------------------------------------------------------------
 // Video trickplay thumbnails
 // ---------------------------------------------------------------------------
