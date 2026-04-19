@@ -17,12 +17,12 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_read_entry};
-use crate::preview::{file_cache_path, raw_cache_path, raw_extract_jpeg};
+use crate::preview::{raw_cache_path, raw_extract_jpeg};
 use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
-use crate::video::{sprites_for_duration, video_info};
+use crate::video::{generate_sprite_cached, sprites_for_duration, video_info};
 
 // ---------------------------------------------------------------------------
 // AI concurrency + constants
@@ -496,76 +496,14 @@ async fn analyse_video(
     existing_tags: &[String],
     kv_keys: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
-    // Fetch video metadata first — duration is needed to derive the correct
-    // frame count (same formula as the trickplay endpoint).
     let info = video_info(abs)
         .await
         .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
 
     let n = sprites_for_duration(info.duration, 8, 16);
-    let sprite_name = format!("sprite{n}x1.jpg");
 
-    // Try to reuse the cached trickplay sprite.
-    let cache_path = file_cache_path(abs, root, "vthumbs", &sprite_name);
-
-    let sprite_bytes: Vec<u8> = if let Some(ref p) = cache_path
-        && let Ok(data) = tokio::fs::read(p).await
-    {
-        data
-    } else {
-        // Generate sprite with ffmpeg hstack — same approach as api_vthumbs.
-        let positions: Vec<f64> = (0..n)
-            .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
-            .collect();
-
-        let mut cmd = tokio::process::Command::new("nice");
-        cmd.args(["-n", "10", "ffmpeg"]);
-        for t in &positions {
-            cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
-        }
-
-        let scale_parts: Vec<String> = (0..n)
-            .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
-            .collect();
-        let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
-        let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
-
-        let out = cmd
-            .args([
-                "-filter_complex",
-                &filter,
-                "-map",
-                "[out]",
-                "-frames:v",
-                "1",
-                "-q:v",
-                "4",
-                "-f",
-                "image2pipe",
-                "-vcodec",
-                "mjpeg",
-                "pipe:1",
-            ])
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .output()
-            .await
-            .map_err(|e| anyhow::anyhow!("ffmpeg spawn failed: {e}"))?;
-
-        if !out.status.success() || !out.stdout.starts_with(&[0xFF, 0xD8]) {
-            anyhow::bail!("ffmpeg could not generate sprite sheet — is ffmpeg installed?");
-        }
-
-        // Persist to cache so subsequent calls (and the trickplay UI) reuse it.
-        if let Some(ref p) = cache_path {
-            if let Some(parent) = p.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            let _ = tokio::fs::write(p, &out.stdout).await;
-        }
-
-        out.stdout
-    };
+    let sprite_path = generate_sprite_cached(abs, root, n, info.duration).await?;
+    let sprite_bytes = tokio::fs::read(&sprite_path).await?;
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&sprite_bytes);
     let base_prompt = format!(
