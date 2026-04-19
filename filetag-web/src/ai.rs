@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_read_entry};
 use crate::preview::{raw_cache_path, raw_extract_jpeg};
 use crate::state::Features;
-use crate::video::video_info;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
+use crate::video::video_info;
 
 // ---------------------------------------------------------------------------
 // AI concurrency + constants
@@ -50,8 +50,8 @@ pub const ARCHIVE_EXTS: &[&str] = &["zip", "cbz", "rar", "cbr", "7z", "cb7"];
 
 /// Video extensions that can be analysed by sampling frames.
 pub const AI_VIDEO_EXTS: &[&str] = &[
-    "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg",
-    "m2ts", "mts", "ts", "3gp", "f4v",
+    "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
+    "3gp", "f4v",
 ];
 
 /// Number of frames sampled from a video for AI analysis.
@@ -495,10 +495,7 @@ async fn analyse_video(
     kv_keys: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
     // Determine video duration so we can spread frames evenly.
-    let duration = video_info(abs)
-        .await
-        .map(|i| i.duration)
-        .unwrap_or(0.0);
+    let duration = video_info(abs).await.map(|i| i.duration).unwrap_or(0.0);
 
     let n = VIDEO_FRAME_COUNT;
     // Seek positions: evenly spaced, avoiding the very first and last second
@@ -538,10 +535,11 @@ async fn analyse_video(
             .kill_on_drop(true)
             .output()
             .await;
-        if let Ok(o) = out {
-            if o.status.success() && o.stdout.starts_with(&[0xFF, 0xD8]) {
-                sample_b64.push(base64::engine::general_purpose::STANDARD.encode(&o.stdout));
-            }
+        if let Ok(o) = out
+            && o.status.success()
+            && o.stdout.starts_with(&[0xFF, 0xD8])
+        {
+            sample_b64.push(base64::engine::general_purpose::STANDARD.encode(&o.stdout));
         }
     }
 
@@ -979,7 +977,7 @@ pub async fn api_ai_analyse(
     // Detect archive or video files.
     let ext = body.path.rsplit('.').next().unwrap_or("").to_lowercase();
     let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
-    let is_video   = AI_VIDEO_EXTS.contains(&ext.as_str());
+    let is_video = AI_VIDEO_EXTS.contains(&ext.as_str());
 
     let _permit = AI_LIMITER
         .acquire()
@@ -1129,7 +1127,7 @@ pub async fn api_ai_analyse_batch(
 
             let ext = rel_path.rsplit('.').next().unwrap_or("").to_lowercase();
             let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
-            let is_video   = AI_VIDEO_EXTS.contains(&ext.as_str());
+            let is_video = AI_VIDEO_EXTS.contains(&ext.as_str());
 
             let _permit = match AI_LIMITER.acquire().await {
                 Ok(p) => p,
