@@ -240,7 +240,7 @@ Double-clicking a file in the grid or list opens a preview. Supported types:
   - *PDF thumbnails* — enables `pdftoppm` (poppler) or ImageMagick+Ghostscript for PDF thumbnail generation.
 - **AI:** connection settings for the optional AI image analysis feature. Configure the endpoint URL, API format, model, API key, tag prefix, and max tokens here. Use the "Test connection" button to verify the setup. Accessible via the "Analyse images (AI)" option in the cache drop-down.
 - **Prompts:** customise how the AI interprets your files.
-  - *Collection description* — free-text description of what this collection contains (e.g. "Holiday photos from Vietnam, 2023"). Injected into every analysis prompt as context.
+  - *Collection description* — free-text description of what this collection contains (e.g. "Family photos and videos, 2010–present" or "Bird photography: species identification, behaviour, and habitat"). Injected into every analysis prompt as context.
   - *Type instructions* — per-type opening sentence sent before the output-format instruction. Separate overrides for images, videos, and archives. Leave empty to use the built-in defaults. Use the "Use default" button to restore a type's default.
   - *Output format* — the fixed JSON output instruction appended to every prompt (shown for reference; not editable).
 
