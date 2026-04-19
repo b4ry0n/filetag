@@ -178,7 +178,7 @@ filetag-web --bind 0.0.0.0
 filetag-web --password-file ~/.filetag-password
 
 # Generate a random password for ad-hoc access (printed to the terminal)
-filetag-web --generate-password --bind 0.0.0.0
+filetag-web -P --bind 0.0.0.0
 
 # Suppress automatic ancestor database discovery
 filetag-web --no-parents
@@ -195,7 +195,7 @@ To require a password, use one of these options. `--password-file` takes precede
 **Generated password (easiest for ad-hoc use).** filetag-web generates a random password and prints it to the terminal. Valid for the current session only.
 
 ```sh
-filetag-web --generate-password --bind 0.0.0.0
+filetag-web -P --bind 0.0.0.0
 # Generated password: a3Kx-9mRp-Zq2w-Lf7v
 ```
 
