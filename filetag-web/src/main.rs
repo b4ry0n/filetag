@@ -55,6 +55,13 @@ struct Args {
     /// When not set, the interface is unauthenticated (loopback-only by default).
     #[arg(long, env = "FILETAG_PASSWORD")]
     password: Option<String>,
+
+    /// Read the password from a file instead of the command line.
+    /// The file must contain the password as plain text (leading/trailing
+    /// whitespace is stripped). Use `chmod 600` to restrict access.
+    /// Takes precedence over --password and FILETAG_PASSWORD.
+    #[arg(long)]
+    password_file: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +173,22 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("no databases found");
     }
 
-    let sessions = match args.password.as_deref() {
-        Some(pw) if !pw.is_empty() => SessionStore::with_password(pw),
-        _ => SessionStore::disabled(),
+    // Resolve password: --password-file takes precedence over --password / env var.
+    let resolved_password: Option<String> = if let Some(ref path) = args.password_file {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("reading password file {}", path.display()))?;
+        let pw = raw.trim().to_owned();
+        if pw.is_empty() {
+            anyhow::bail!("password file {} is empty", path.display());
+        }
+        Some(pw)
+    } else {
+        args.password.filter(|s| !s.is_empty())
+    };
+
+    let sessions = match resolved_password.as_deref() {
+        Some(pw) => SessionStore::with_password(pw),
+        None => SessionStore::disabled(),
     };
 
     let state = Arc::new(AppState {

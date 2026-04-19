@@ -177,6 +177,10 @@ filetag-web --bind 0.0.0.0
 # Protect with a password (also accepts FILETAG_PASSWORD env var)
 filetag-web --password mysecret
 
+# Read the password from a file (recommended: keeps it out of history and ps)
+echo 'mysecret' > ~/.filetag-password && chmod 600 ~/.filetag-password
+filetag-web --password-file ~/.filetag-password
+
 # Suppress automatic ancestor database discovery
 filetag-web --no-parents
 ```
@@ -187,13 +191,21 @@ Open `http://127.0.0.1:3000` (default) in your browser. The full query language 
 
 By default filetag-web binds to `127.0.0.1` (loopback only) and requires no password. When you bind to a non-loopback address without a password, a warning is printed at startup.
 
-To require a password, pass `--password` on the command line or set the `FILETAG_PASSWORD` environment variable:
+To require a password, use one of these options (in order of preference):
 
 ```sh
+# 1. Password file — recommended. Stays out of shell history and process listings.
+echo 'mysecret' > ~/.filetag-password && chmod 600 ~/.filetag-password
+filetag-web --password-file ~/.filetag-password
+
+# 2. Environment variable — useful in systemd units or Docker.
+FILETAG_PASSWORD=mysecret filetag-web
+
+# 3. Command-line flag — convenient but visible in shell history and `ps`.
 filetag-web --password mysecret
-# or:
-FILETAG_PASSWORD=mysecret filetag-web --bind 0.0.0.0
 ```
+
+`--password-file` takes precedence over `--password` and `$FILETAG_PASSWORD`.
 
 When a password is set:
 
