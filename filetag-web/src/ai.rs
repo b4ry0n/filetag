@@ -31,8 +31,17 @@ use crate::video::{generate_sprite_cached, sprites_for_duration, video_info};
 /// Limit concurrent AI analysis calls to one at a time.
 static AI_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
-const AI_DEFAULT_PROMPT: &str = "\
-Look at this image. Output ONLY a JSON array of short descriptive tags (English, lowercase). \
+/// Type-specific introductions — tell the model what it is looking at.
+/// Users can override these per-type via `ai.prompt_image`, `ai.prompt_video`,
+/// and `ai.prompt_archive` in the settings.
+pub const AI_IMAGE_INTRO: &str = "Look at this image.";
+pub const AI_VIDEO_INTRO: &str = "Look at this video contact sheet.";
+pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and sample images.";
+
+/// Fixed output-format instruction appended to every prompt.
+/// Not user-configurable to prevent breaking JSON parsing.
+const AI_OUTPUT_FORMAT: &str = "\
+Output ONLY a JSON array of short descriptive tags (English, lowercase). \
 Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\n\
 Good: [\"dog\", \"beach\", \"sunny\", \"color=blue\", \"year=2023\"]\n\
 Bad: any text outside the JSON array\n\n\
@@ -53,26 +62,6 @@ pub const AI_VIDEO_EXTS: &[&str] = &[
     "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
     "3gp", "f4v",
 ];
-
-const AI_VIDEO_PROMPT: &str = "\
-Look at this video contact sheet. \
-Output ONLY a JSON array of short descriptive tags (English, lowercase). \
-Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\n\
-Good: [\"action\", \"outdoor\", \"sport\", \"location=beach\"]\n\
-Bad: any text outside the JSON array\n\n\
-/no_think";
-
-const AI_ARCHIVE_PROMPT: &str = "\
-You are analysing the contents of an archive file. \
-You are given a listing of all filenames inside and a few sample images extracted from it. \
-Based on the filenames and the sample images, output ONLY a JSON array of short descriptive tags \
-(English, lowercase) that describe the archive as a whole.\
-Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\
-\n\
-Good: [\"manga\", \"action\", \"black and white\", \"language=japanese\"]\n\
-Bad: any text outside the JSON array\n\
-\n\
-/no_think";
 
 // ---------------------------------------------------------------------------
 // Progress tracking
@@ -102,7 +91,15 @@ struct AiConfig {
     tag_prefix: String,
     max_tokens: u32,
     format: String,
-    prompt: Option<String>,
+    /// Free-text description of the collection (e.g. "holiday photos from Vietnam, 2023").
+    /// Injected into every prompt so the model has collection context.
+    subject: Option<String>,
+    /// User override for the image-type intro sentence.
+    prompt_image: Option<String>,
+    /// User override for the video-type intro sentence.
+    prompt_video: Option<String>,
+    /// User override for the archive-type intro sentence.
+    prompt_archive: Option<String>,
 }
 
 fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
@@ -137,7 +134,26 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .unwrap_or_else(|| "openai".to_string());
-    let prompt = db::get_setting(conn, "ai.prompt")
+    let subject = db::get_setting(conn, "ai.subject")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+    // Backward compat: if the per-type key is absent, fall back to the legacy
+    // ai.prompt key (which previously acted as the image prompt).
+    let legacy_prompt = db::get_setting(conn, "ai.prompt")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+    let prompt_image = db::get_setting(conn, "ai.prompt_image")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .or_else(|| legacy_prompt.clone());
+    let prompt_video = db::get_setting(conn, "ai.prompt_video")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+    let prompt_archive = db::get_setting(conn, "ai.prompt_archive")
         .ok()
         .flatten()
         .filter(|s| !s.is_empty());
@@ -148,7 +164,10 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         tag_prefix,
         max_tokens,
         format,
-        prompt,
+        subject,
+        prompt_image,
+        prompt_video,
+        prompt_archive,
     })
 }
 
@@ -423,8 +442,36 @@ fn filter_bare_kv_keys(tags: Vec<String>, kv_keys: &[String], prefix: &str) -> V
         .collect()
 }
 
-fn build_ai_prompt(base_prompt: &str, existing_tags: &[String], kv_keys: &[String]) -> String {
-    let mut prefix_lines: Vec<String> = Vec::new();
+/// Assemble the full prompt sent to the VLM.
+///
+/// The prompt has four layers, in order:
+/// 1. An optional data prefix supplied by the caller (e.g. archive file listing).
+/// 2. The type-specific intro (user-overridable; describes what the model is looking at).
+/// 3. An optional collection subject from the database settings.
+/// 4. The fixed output-format instruction (JSON array, examples, /no_think).
+///
+/// After the fixed section, dynamic per-file context is appended when present:
+/// existing tags and known key=value keys.
+fn build_full_prompt(
+    intro: &str,
+    config: &AiConfig,
+    existing_tags: &[String],
+    kv_keys: &[String],
+    data_prefix: Option<&str>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(prefix) = data_prefix.filter(|s| !s.is_empty()) {
+        parts.push(prefix.to_string());
+    }
+
+    parts.push(intro.to_string());
+
+    if let Some(s) = config.subject.as_deref().filter(|s| !s.is_empty()) {
+        parts.push(format!("Collection context: {s}"));
+    }
+
+    parts.push(AI_OUTPUT_FORMAT.to_string());
 
     if !existing_tags.is_empty() {
         let list = existing_tags
@@ -432,7 +479,7 @@ fn build_ai_prompt(base_prompt: &str, existing_tags: &[String], kv_keys: &[Strin
             .map(|t| format!("\"{t}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        prefix_lines.push(format!(
+        parts.push(format!(
             "The file already has these tags: [{list}]. Only suggest additional tags that complement these; do not repeat them."
         ));
     }
@@ -443,7 +490,7 @@ fn build_ai_prompt(base_prompt: &str, existing_tags: &[String], kv_keys: &[Strin
             .map(|k| format!("\"{k}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        prefix_lines.push(format!(
+        parts.push(format!(
             "The following key=value tag keys are already in use in this collection: [{keys_list}]. \
 For each key where you can determine a specific value for this file, include it as a \"key=value\" entry in your output. \
 Do NOT output a bare key without a value (e.g. output \"name=alice\", never just \"name\"). \
@@ -451,13 +498,7 @@ If you cannot determine a value for a key, omit that key entirely."
         ));
     }
 
-    if prefix_lines.is_empty() {
-        return base_prompt.to_string();
-    }
-    format!(
-        "{prefix}\n\n{base_prompt}",
-        prefix = prefix_lines.join("\n")
-    )
+    parts.join("\n\n")
 }
 
 async fn analyse_image(
@@ -467,8 +508,8 @@ async fn analyse_image(
     kv_keys: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
-    let base = config.prompt.as_deref().unwrap_or(AI_DEFAULT_PROMPT);
-    let prompt = build_ai_prompt(base, existing_tags, kv_keys);
+    let intro = config.prompt_image.as_deref().unwrap_or(AI_IMAGE_INTRO);
+    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
     let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
@@ -502,7 +543,8 @@ async fn analyse_video(
     let sprite_bytes = tokio::fs::read(&sprite_path).await?;
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&sprite_bytes);
-    let prompt = build_ai_prompt(AI_VIDEO_PROMPT, existing_tags, kv_keys);
+    let intro = config.prompt_video.as_deref().unwrap_or(AI_VIDEO_INTRO);
+    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
     let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
@@ -556,15 +598,16 @@ async fn analyse_archive(
         }
     }
 
-    // Build the prompt.
-    let base_prompt = format!(
-        "This archive contains {} files ({} images).\n\nFile listing:\n{}\n\n{}",
+    // Build the prompt — the archive listing is passed as a data prefix so
+    // the model sees it before the type intro and collection context.
+    let data_prefix = format!(
+        "This archive contains {} files ({} images).\n\nFile listing:\n{}",
         all_entries.len(),
         image_names.len(),
         listing,
-        AI_ARCHIVE_PROMPT,
     );
-    let prompt = build_ai_prompt(&base_prompt, existing_tags, kv_keys);
+    let intro = config.prompt_archive.as_deref().unwrap_or(AI_ARCHIVE_INTRO);
+    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, Some(&data_prefix));
 
     let b64_refs: Vec<&str> = sample_b64.iter().map(|s| s.as_str()).collect();
     let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
@@ -1147,6 +1190,16 @@ pub(crate) struct AiConfigRequest {
     endpoint: Option<String>,
     model: Option<String>,
     api_key: Option<String>,
+    /// Free-text description of the collection.
+    subject: Option<String>,
+    /// Type-specific intro override for images.
+    prompt_image: Option<String>,
+    /// Type-specific intro override for video.
+    prompt_video: Option<String>,
+    /// Type-specific intro override for archives.
+    prompt_archive: Option<String>,
+    /// Legacy single-prompt field — treated as `prompt_image` when
+    /// `prompt_image` is not present in the same request.
     prompt: Option<String>,
     tag_prefix: Option<String>,
     max_tokens: Option<u32>,
@@ -1176,8 +1229,26 @@ pub async fn api_ai_config_set(
     if let Some(v) = &body.api_key {
         db::set_setting(&conn, "ai.api_key", v).map_err(AppError)?;
     }
-    if let Some(v) = &body.prompt {
-        db::set_setting(&conn, "ai.prompt", v).map_err(AppError)?;
+    if let Some(v) = &body.subject {
+        db::set_setting(&conn, "ai.subject", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.prompt_image {
+        db::set_setting(&conn, "ai.prompt_image", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.prompt_video {
+        db::set_setting(&conn, "ai.prompt_video", v).map_err(AppError)?;
+    }
+    if let Some(v) = &body.prompt_archive {
+        db::set_setting(&conn, "ai.prompt_archive", v).map_err(AppError)?;
+    }
+    // Legacy: old clients send `prompt` (treated as prompt_image when the
+    // new per-type field is absent).
+    if body.prompt_image.is_none()
+        && body.prompt_video.is_none()
+        && body.prompt_archive.is_none()
+        && let Some(v) = &body.prompt
+    {
+        db::set_setting(&conn, "ai.prompt_image", v).map_err(AppError)?;
     }
     if let Some(v) = &body.tag_prefix {
         db::set_setting(&conn, "ai.tag_prefix", v).map_err(AppError)?;
@@ -1246,16 +1317,29 @@ pub async fn api_ai_config_get(
     } else {
         format_raw
     };
+    // Backward compat: if ai.prompt_image is unset, fall back to legacy ai.prompt.
+    let prompt_image_raw = g("ai.prompt_image");
+    let prompt_image = if prompt_image_raw.is_empty() {
+        g("ai.prompt")
+    } else {
+        prompt_image_raw
+    };
 
     Ok(Json(serde_json::json!({
         "endpoint": g("ai.endpoint"),
         "model": g("ai.model"),
         "api_key": api_key_masked,
-        "prompt": g("ai.prompt"),
+        "subject": g("ai.subject"),
+        "prompt_image": prompt_image,
+        "prompt_video": g("ai.prompt_video"),
+        "prompt_archive": g("ai.prompt_archive"),
         "tag_prefix": tag_prefix,
         "max_tokens": max_tokens,
         "format": format,
         "enabled": g("ai.enabled") != "0",
-        "default_prompt": AI_DEFAULT_PROMPT,
+        "default_prompt_image": AI_IMAGE_INTRO,
+        "default_prompt_video": AI_VIDEO_INTRO,
+        "default_prompt_archive": AI_ARCHIVE_INTRO,
+        "output_format": AI_OUTPUT_FORMAT,
     })))
 }
