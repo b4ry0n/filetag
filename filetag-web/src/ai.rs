@@ -1238,6 +1238,13 @@ pub async fn api_ai_config_set(
     let conn = open_conn(db_root).map_err(AppError)?;
 
     if let Some(v) = &body.endpoint {
+        // Only http/https endpoints are accepted to prevent SSRF via other schemes.
+        let scheme = v.split(':').next().unwrap_or("").to_ascii_lowercase();
+        if scheme != "http" && scheme != "https" {
+            return Err(AppError(anyhow::anyhow!(
+                "endpoint must use http:// or https://"
+            )));
+        }
         db::set_setting(&conn, "ai.endpoint", v).map_err(AppError)?;
     }
     if let Some(v) = &body.model {
@@ -1268,12 +1275,21 @@ pub async fn api_ai_config_set(
         db::set_setting(&conn, "ai.prompt_image", v).map_err(AppError)?;
     }
     if let Some(v) = &body.tag_prefix {
+        // Reject tag prefixes containing path-traversal sequences.
+        if v.contains("../") || v.contains("..\\") || v.starts_with('/') {
+            return Err(AppError(anyhow::anyhow!("invalid tag prefix")));
+        }
         db::set_setting(&conn, "ai.tag_prefix", v).map_err(AppError)?;
     }
     if let Some(v) = body.max_tokens {
         db::set_setting(&conn, "ai.max_tokens", &v.to_string()).map_err(AppError)?;
     }
     if let Some(v) = &body.format {
+        if v != "openai" && v != "ollama" {
+            return Err(AppError(anyhow::anyhow!(
+                "format must be 'openai' or 'ollama'"
+            )));
+        }
         db::set_setting(&conn, "ai.format", v).map_err(AppError)?;
     }
     if let Some(v) = body.enabled {

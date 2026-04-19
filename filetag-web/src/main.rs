@@ -13,11 +13,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::{
     Router,
+    http::{HeaderValue, header},
     routing::{get, post},
 };
 use clap::Parser;
 use filetag_lib::db;
 use rusqlite::Connection;
+use tower_http::{limit::RequestBodyLimitLayer, set_header::SetResponseHeaderLayer};
 
 use ai::AiProgress;
 use filetag_lib::db::TagRoot;
@@ -213,9 +215,51 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/ai/config", post(ai::api_ai_config_set))
         .route("/api/settings", get(api::api_settings_get))
         .route("/api/settings", post(api::api_settings_set))
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // Deny framing and MIME-sniffing; restrict to same-origin requests only.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_SECURITY_POLICY,
+            // Tighten: allow same-origin for everything except images (data: for
+            // base64 thumbs) and media (blob: for HLS).  No eval, no inline JS
+            // (scripts are separate files), inline styles permitted for dynamic UI.
+            HeaderValue::from_static(
+                "default-src 'self'; \
+                 script-src 'self'; \
+                 style-src 'self' 'unsafe-inline'; \
+                 img-src 'self' data: blob:; \
+                 media-src 'self' blob:; \
+                 connect-src 'self'; \
+                 frame-ancestors 'none'",
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        ))
+        // Limit JSON/form request bodies to 32 MiB (prevents OOM from huge uploads).
+        .layer(RequestBodyLimitLayer::new(32 * 1024 * 1024));
 
     let addr = format!("{}:{}", args.bind, args.port);
+
+    // Warn when binding to a non-loopback address: the web UI has no
+    // authentication and exposes local files.
+    let is_loopback = matches!(args.bind.as_str(), "127.0.0.1" | "::1" | "localhost");
+    if !is_loopback {
+        eprintln!(
+            "WARNING: filetag-web is bound to {} — the interface has no authentication. \
+             Make sure access is restricted at the network level.",
+            args.bind
+        );
+    }
+
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding to {}", addr))?;
