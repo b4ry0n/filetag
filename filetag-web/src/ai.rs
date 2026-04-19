@@ -22,7 +22,7 @@ use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
-use crate::video::{generate_sprite_cached, sprites_for_duration, video_info};
+use crate::video::{generate_ai_sprite, sprites_for_duration, video_info};
 
 // ---------------------------------------------------------------------------
 // AI concurrency + constants
@@ -519,27 +519,26 @@ async fn analyse_image(
 /// Maximum number of sample images to extract from an archive for AI analysis.
 const ARCHIVE_SAMPLE_COUNT: usize = 4;
 
-/// Analyse a video by generating (or reusing) a trickplay sprite sheet and
-/// sending it as a single image to the VLM.
-///
-/// The number of frames is determined by `sprites_for_duration` (1 frame per
-/// 30 s, clamped to 8..16), matching the trickplay endpoint so the cache is
-/// shared.  Sending one image instead of N separate images keeps the request
-/// compact and avoids per-image limits on the VLM API.
+/// Analyse a video by generating a dedicated AI sprite sheet and sending it
+/// as a single image to the VLM.  Uses a separate cache key from the trickplay
+/// sprites so frame count can differ independently.
 async fn analyse_video(
     config: &AiConfig,
     abs: &Path,
     root: &Path,
     existing_tags: &[String],
     kv_keys: &[String],
+    n_frames: Option<u32>,
 ) -> anyhow::Result<(String, Vec<String>)> {
     let info = video_info(abs)
         .await
         .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
 
-    let n = sprites_for_duration(info.duration, 8, 16);
+    let n = n_frames
+        .map(|v| (v as usize).clamp(2, 64))
+        .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 16));
 
-    let sprite_path = generate_sprite_cached(abs, root, n, info.duration).await?;
+    let sprite_path = generate_ai_sprite(abs, root, n, info.duration).await?;
     let sprite_bytes = tokio::fs::read(&sprite_path).await?;
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&sprite_bytes);
@@ -944,6 +943,9 @@ pub(crate) struct AiAnalyseRequest {
     dir: Option<String>,
     #[serde(default)]
     dry_run: bool,
+    /// Number of frames to sample from a video for AI analysis.
+    /// Defaults to `sprites_for_duration` if not specified.
+    n_frames: Option<u32>,
 }
 
 /// Analyse a single image (or archive) with the configured VLM, optionally apply tags.
@@ -985,9 +987,16 @@ pub async fn api_ai_analyse(
             .map_err(AppError)?
     } else if is_video {
         let abs = effective_root.join(&rel);
-        analyse_video(&config, &abs, &effective_root, &existing_tags, &kv_keys)
-            .await
-            .map_err(AppError)?
+        analyse_video(
+            &config,
+            &abs,
+            &effective_root,
+            &existing_tags,
+            &kv_keys,
+            body.n_frames,
+        )
+        .await
+        .map_err(AppError)?
     } else {
         let jpeg = prepare_jpeg_for_analysis(&effective_root, &rel)
             .await
@@ -1133,7 +1142,15 @@ pub async fn api_ai_analyse_batch(
                 }
             } else if is_video {
                 let abs = effective_root.join(&eff_rel);
-                match analyse_video(&config, &abs, &effective_root, &existing_tags, &kv_keys).await
+                match analyse_video(
+                    &config,
+                    &abs,
+                    &effective_root,
+                    &existing_tags,
+                    &kv_keys,
+                    None,
+                )
+                .await
                 {
                     Ok(t) => t,
                     Err(_) => continue,

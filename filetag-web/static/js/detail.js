@@ -951,7 +951,16 @@ function renderDetail() {
         ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Verwijder ai/-tags</button>`
         : '';
     const aiBtn = isAnalysable || hasAiTags
-        ? `<div class="ai-analyse-row">${isAnalysable ? `<button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? 'Analyseren…' : '✨ Analyse (AI)'}</button>` : ''}${aiClearBtn}</div>`
+        ? `<div class="ai-analyse-row">
+            ${isAnalysable ? `
+            <div class="ai-analyse-controls">
+                <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? 'Analyseren…' : '✨ Analyse (AI)'}</button>
+                ${type_ === 'video' ? `<label class="ai-frames-label" title="Number of frames sampled from the video"><input type="number" id="ai-frames-input" class="ai-frames-input" value="12" min="2" max="64" step="1"><span>frames</span></label>` : ''}
+                <button class="ai-settings-btn" onclick="openSettings('prompts')" title="AI prompt settings">⚙</button>
+            </div>
+            <small class="ai-analyse-note">${type_ === 'video' ? 'Analysis is based on sampled frames, not the full video.' : ''}</small>` : ''}
+            ${aiClearBtn}
+           </div>`
         : '';
 
     panel.innerHTML = `
