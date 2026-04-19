@@ -720,8 +720,15 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-api-key').placeholder = cfg.api_key || 'Leave empty for local models';
         document.getElementById('ai-tag-prefix').value = cfg.tag_prefix || 'ai/';
         document.getElementById('ai-max-tokens').value = cfg.max_tokens || 512;
-        document.getElementById('ai-prompt').value = cfg.prompt || '';
-        document.getElementById('ai-prompt').placeholder = cfg.default_prompt || '';
+        document.getElementById('ai-subject').value = cfg.subject || '';
+        document.getElementById('ai-prompt-image').value = cfg.prompt_image || '';
+        document.getElementById('ai-prompt-image').placeholder = cfg.default_prompt_image || '';
+        document.getElementById('ai-prompt-video').value = cfg.prompt_video || '';
+        document.getElementById('ai-prompt-video').placeholder = cfg.default_prompt_video || '';
+        document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
+        document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
+        const pre = document.getElementById('ai-output-format');
+        if (pre) pre.textContent = cfg.output_format || '';
         document.getElementById('ai-format').value = cfg.format || 'openai';
         const enabled = cfg.enabled !== false; // default true if key absent
         document.getElementById('ai-enabled').checked = enabled;
@@ -787,8 +794,8 @@ function aiToggleEnabled() {
     document.getElementById('ai-settings-fields').hidden = !enabled;
 }
 
-function aiUseDefaultPrompt() {
-    const el = document.getElementById('ai-prompt');
+function aiUseDefault(type) {
+    const el = document.getElementById('ai-prompt-' + type);
     if (el) el.value = el.placeholder;
 }
 
@@ -796,7 +803,10 @@ async function aiSaveSettings() {
     const body = {
         endpoint: document.getElementById('ai-endpoint').value.trim(),
         model: document.getElementById('ai-model').value.trim(),
-        prompt: document.getElementById('ai-prompt').value,
+        subject: document.getElementById('ai-subject').value,
+        prompt_image: document.getElementById('ai-prompt-image').value,
+        prompt_video: document.getElementById('ai-prompt-video').value,
+        prompt_archive: document.getElementById('ai-prompt-archive').value,
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,

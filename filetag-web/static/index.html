@@ -275,10 +275,28 @@
                     <label>Max tokens
                         <input type="number" id="ai-max-tokens" value="512" min="64" max="4096">
                     </label>
-                    <label>Prompt
-                        <textarea id="ai-prompt" rows="8" placeholder="Leave empty for default prompt"></textarea>
-                        <button type="button" class="use-default-btn" onclick="aiUseDefaultPrompt()" title="Vul het standaard-prompt in zodat je het kunt bekijken of aanpassen">Gebruik standaard</button>
+                    <label>Collection description
+                        <textarea id="ai-subject" rows="2" placeholder="Describe what this collection contains, e.g. 'Holiday photos from Vietnam, 2023. Include recognisable location names.'"></textarea>
                     </label>
+                    <details id="ai-type-prompts">
+                        <summary>Type instructions <small>(leave empty to use built-in defaults)</small></summary>
+                        <label>Image prompt
+                            <textarea id="ai-prompt-image" rows="3"></textarea>
+                            <button type="button" class="use-default-btn" onclick="aiUseDefault('image')">Use default</button>
+                        </label>
+                        <label>Video prompt
+                            <textarea id="ai-prompt-video" rows="3"></textarea>
+                            <button type="button" class="use-default-btn" onclick="aiUseDefault('video')">Use default</button>
+                        </label>
+                        <label>Archive prompt
+                            <textarea id="ai-prompt-archive" rows="3"></textarea>
+                            <button type="button" class="use-default-btn" onclick="aiUseDefault('archive')">Use default</button>
+                        </label>
+                        <details>
+                            <summary>Output format <small>(fixed, shown for reference)</small></summary>
+                            <pre id="ai-output-format" class="ai-output-format-pre"></pre>
+                        </details>
+                    </details>
                     <div class="modal-actions">
                         <button id="ai-test-btn" onclick="aiTestConnection()">Test connection</button>
                         <button onclick="aiSaveSettings()">Save</button>
