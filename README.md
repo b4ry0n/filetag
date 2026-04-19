@@ -10,20 +10,38 @@ A web interface is included for browsing, previewing, searching, and tagging thr
 
 ## Features
 
-- Per-directory SQLite database (`.filetag/db.sqlite3`) with relative paths — move the directory and everything still works
-- Boolean query language with `and`, `or`, `not`, glob patterns (`genre/*`), and value comparisons (`year>=2020`)
-- Symlink-based views for integration with other tools
-- JSON Lines output (`--json`) for composability with `jq` and scripts
-- Stdin support: pipe file paths from `fd`, `find`, or other queries
-- NUL-delimited I/O (`-0`) for safe handling of paths with special characters
-- Detects missing and untagged files
-- Repairs moved files by matching file identity (inode) or name+size
-- Tag renaming (`mv`) and merging (`merge`)
-- Hierarchical child databases with push/pull transfer
-- Cross-database queries across child and ancestor databases; optional global registry
-- Shell completions for bash, zsh, and fish
-- Web interface with grid/list browser, image/video/PDF previews, trickplay hover animation, and optional AI image and video analysis
-- Optional password authentication for the web interface (`--password` or `$FILETAG_PASSWORD`)
+**Tagging and querying**
+
+- Tags are stored in a SQLite database (`.filetag/db.sqlite3`) next to your files. Move the directory and everything still works.
+- Full boolean query language: `and`, `or`, `not`, glob patterns (`genre/*`), and value comparisons (`year>=2020 and not live`).
+- Hierarchical tags with `/` as separator: tag with `genre/rock`, query with `genre/*`.
+- Key=value tags for metadata: `year=2024`, `rating=5`.
+
+**Composability**
+
+- Pipe file paths in from `fd`, `find`, or any other tool. NUL-delimited I/O (`-0`) for paths with spaces or special characters.
+- JSON Lines output (`--json`) for use with `jq` and scripts.
+- Symlink views: generate a directory of symlinks matching a query for use with other tools.
+- Shell completions for bash, zsh, and fish.
+
+**Collection maintenance**
+
+- `status`: report missing, modified, and untagged files.
+- `repair`: recover moved files by matching file identity (inode) or name+size.
+- `mv` and `merge`: rename or consolidate tags across the entire database.
+
+**Multiple databases**
+
+- Link separate databases as children and query them together.
+- `push`/`pull` transfer tag records between parent and child databases.
+- Optional global registry for cross-collection queries with `--all-dbs`.
+
+**Web interface**
+
+- Grid and list file browser with tag sidebar, colour-coded tags, and right-click context menu.
+- Image, video, PDF, and archive previews. Trickplay hover animation for video.
+- Optional AI analysis (OpenAI-compatible or Ollama) to auto-tag images, videos, and archives.
+- Optional password authentication.
 
 ## Install
 
