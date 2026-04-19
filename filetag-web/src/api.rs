@@ -124,6 +124,13 @@ pub async fn favicon() -> impl IntoResponse {
 // Roots
 // ---------------------------------------------------------------------------
 
+/// `GET /api/auth/status` — returns whether password authentication is enabled.
+pub async fn api_auth_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "auth": state.sessions.is_enabled() }))
+}
+
+// ---------------------------------------------------------------------------
+
 /// `GET /api/roots` — list all loaded database roots.
 pub async fn api_roots(State(state): State<Arc<AppState>>) -> Json<Vec<ApiRoot>> {
     let mut entries: Vec<ApiRoot> = state

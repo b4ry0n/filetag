@@ -13,6 +13,8 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use filetag_lib::db;
+
+use crate::auth::SessionStore;
 use filetag_lib::db::TagRoot;
 use rusqlite::Connection;
 
@@ -99,6 +101,8 @@ pub struct AppState {
     pub roots: Vec<TagRoot>,
     /// Progress information for the current AI batch job (if any).
     pub ai_progress: std::sync::Mutex<AiProgress>,
+    /// Session store for optional password authentication.
+    pub sessions: SessionStore,
 }
 
 /// Returns true when `abs_path` is covered by any loaded database root.

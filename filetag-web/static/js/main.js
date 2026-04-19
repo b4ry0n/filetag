@@ -280,7 +280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const rootMeta = state.roots.find(r => r.path === baseToRestore || baseToRestore.startsWith(r.path + '/'));
         if (rootMeta) state.currentBasePath = baseToRestore;
     }
-    try { await Promise.all([loadInfo(), loadTags(), loadSettings()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }
+    try { await Promise.all([loadInfo(), loadTags(), loadSettings(), loadAuthStatus()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }
     // Attempt to restore the last-visited path. If that fails (e.g. because new
     // databases changed the root index mapping, or the directory was removed),
     // fall back to the root of the selected database so the page is never blank.

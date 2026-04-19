@@ -118,6 +118,14 @@ async function loadSettings() {
     }
 }
 
+async function loadAuthStatus() {
+    try {
+        const res = await api('/api/auth/status');
+        const btn = document.getElementById('logout-btn');
+        if (btn) btn.hidden = !res.auth;
+    } catch (_) { /* ignore */ }
+}
+
 async function loadTags() {
     state.tags = await api('/api/tags' + dirParam('?'));
 }

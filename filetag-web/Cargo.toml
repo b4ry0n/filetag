@@ -13,7 +13,7 @@ rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 axum = "0.8"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
@@ -23,6 +23,8 @@ sevenz-rust = { version = "0.6", default-features = false }
 unrar = { version = "0.5", optional = true }
 reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
 base64 = "0.22"
+rand = { version = "0.9", features = ["std"] }
+sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff", "gif", "bmp", "ico"] }
 
 [features]

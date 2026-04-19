@@ -1084,3 +1084,10 @@ function closeDetail() {
     renderDetail();
     restoreScrollAnchor(anchor);
 }
+
+async function doLogout() {
+    try {
+        await fetch('/logout', { method: 'POST' });
+    } catch (_) { /* ignore */ }
+    window.location.href = '/login';
+}
