@@ -383,6 +383,7 @@ function showTagManager(selectTag) {
         <div class="tm-modal" onclick="event.stopPropagation()">
             <div class="tm-header">
                 <span class="tm-title">Tag Manager</span>
+                <button class="tm-prune-btn" onclick="pruneUnusedTags()" title="Remove all tags with no file assignments">Prune unused</button>
                 <button class="tm-close" onclick="closeTagManager()" title="Close">\u2715</button>
             </div>
             <div class="tm-search-row">
@@ -415,6 +416,23 @@ function closeTagManager() {
     const el = document.getElementById('tag-manager-overlay');
     if (el) el.remove();
     _tmSelectedTag = null;
+}
+
+async function pruneUnusedTags() {
+    if (!confirm('Remove all tags that have no file assignments?')) return;
+    try {
+        const res = await apiPost('/api/prune-tags', { dir: currentAbsDir() });
+        const n = res.removed ?? 0;
+        if (n === 0) {
+            showToast('No unused tags found.');
+        } else {
+            showToast(`Removed ${n} unused tag${n === 1 ? '' : 's'}.`);
+            await loadTags();
+            renderTmList();
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
 }
 
 function tmSearch(q) {

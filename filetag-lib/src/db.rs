@@ -658,6 +658,16 @@ pub fn delete_tag(conn: &Connection, name: &str) -> Result<bool> {
     }
 }
 
+/// Delete all tags that have no file assignments.
+/// Returns the number of tags removed.
+pub fn prune_unused_tags(conn: &Connection) -> Result<usize> {
+    let n = conn.execute(
+        "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM file_tags)",
+        [],
+    )?;
+    Ok(n)
+}
+
 /// Look up a file record by relative path.
 pub fn file_by_path(conn: &Connection, rel_path: &str) -> Result<Option<FileRecord>> {
     let rec = conn

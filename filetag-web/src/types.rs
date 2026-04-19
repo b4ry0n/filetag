@@ -240,6 +240,13 @@ pub struct DeleteTagRequest {
     pub dir: Option<String>,
 }
 
+/// Minimal request body carrying only a directory.
+#[derive(Deserialize, Default)]
+pub struct DirBody {
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/cache/clear`.
 ///
 /// The active root is always determined from the `dir` query parameter.
