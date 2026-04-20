@@ -282,6 +282,20 @@
                     <label>Max tokens
                         <input type="number" id="ai-max-tokens" value="512" min="64" max="4096">
                     </label>
+                    <label>Video input mode
+                        <small class="settings-desc-inline">
+                            <b>Sprite</b>: contact-sheet JPEG (widely compatible).
+                            <b>Full video</b>: send the raw file; falls back to sprite if the file is too large or the backend rejects it.
+                        </small>
+                        <select id="ai-video-mode" onchange="aiVideoModeChanged()">
+                            <option value="sprite">Sprite (contact sheet)</option>
+                            <option value="full">Full video</option>
+                        </select>
+                    </label>
+                    <label id="ai-video-max-mb-row">Max video size (MiB)
+                        <small class="settings-desc-inline">Files larger than this fall back to sprite mode.</small>
+                        <input type="number" id="ai-video-max-mb" value="50" min="1" max="2048">
+                    </label>
                     <div class="modal-actions">
                         <button id="ai-test-btn" onclick="aiTestConnection()">Test connection</button>
                         <button onclick="aiSaveSettings()">Save</button>

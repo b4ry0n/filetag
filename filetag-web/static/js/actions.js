@@ -724,7 +724,14 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-prompt-image').value = cfg.prompt_image || '';
         document.getElementById('ai-prompt-image').placeholder = cfg.default_prompt_image || '';
         document.getElementById('ai-prompt-video').value = cfg.prompt_video || '';
-        document.getElementById('ai-prompt-video').placeholder = cfg.default_prompt_video || '';
+        // Placeholder reflects the mode-specific default intro.
+        const videoDefault = (cfg.video_mode === 'full')
+            ? (cfg.default_prompt_video_full || 'Look at this video.')
+            : (cfg.default_prompt_video || 'Look at this video contact sheet.');
+        document.getElementById('ai-prompt-video').placeholder = videoDefault;
+        document.getElementById('ai-video-mode').value = cfg.video_mode || 'sprite';
+        document.getElementById('ai-video-max-mb').value = cfg.video_max_mb ?? 50;
+        _updateVideoMaxMbVisibility();
         document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
         document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
         const pre = document.getElementById('ai-output-format');
@@ -792,6 +799,20 @@ async function saveFeaturesSettings() {
 function openAiSettings() { openSettings('ai'); }
 function closeAiSettings() { closeSettings(); }
 
+function _updateVideoMaxMbVisibility() {
+    const row = document.getElementById('ai-video-max-mb-row');
+    if (row) row.hidden = document.getElementById('ai-video-mode').value !== 'full';
+}
+
+function aiVideoModeChanged() {
+    _updateVideoMaxMbVisibility();
+    // Update video prompt placeholder to reflect the new mode default.
+    const el = document.getElementById('ai-prompt-video');
+    if (!el) return;
+    const isFull = document.getElementById('ai-video-mode').value === 'full';
+    el.placeholder = isFull ? 'Look at this video.' : 'Look at this video contact sheet.';
+}
+
 function aiToggleEnabled() {
     const enabled = document.getElementById('ai-enabled').checked;
     document.getElementById('ai-settings-fields').hidden = !enabled;
@@ -800,6 +821,12 @@ function aiToggleEnabled() {
 function aiUseDefault(type) {
     if (type === 'output-format') {
         const el = document.getElementById('ai-output-format');
+        if (el) el.value = el.placeholder;
+        return;
+    }
+    if (type === 'video') {
+        // Use the mode-specific placeholder as the default.
+        const el = document.getElementById('ai-prompt-video');
         if (el) el.value = el.placeholder;
         return;
     }
@@ -819,6 +846,8 @@ async function aiSaveSettings() {
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,
+        video_mode: document.getElementById('ai-video-mode').value,
+        video_max_mb: parseInt(document.getElementById('ai-video-max-mb').value, 10) || 50,
         enabled: document.getElementById('ai-enabled').checked,
         dir: currentAbsDir(),
     };
@@ -942,7 +971,11 @@ async function aiAnalyseSingle(path) {
         if (!res.ok) throw new Error(data.error || res.statusText);
         const n = (data.tags || []).length;
         dismissToast(toast);
-        showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} added`);
+        if (data.warning) {
+            showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} added (⚠ ${data.warning})`, 8000);
+        } else {
+            showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} added`);
+        }
         if (state.selectedFile?.path === path) {
             await loadFileDetail(path);
             await loadTags();
@@ -1001,7 +1034,10 @@ async function aiAnalyseBatch() {
                 if (!prog.running) {
                     clearInterval(poll);
                     dismissToast(toast);
-                    showToast(`AI done: ${prog.done} image${prog.done !== 1 ? 's' : ''} analysed`);
+                    const fb = prog.fallback_count || 0;
+                    const msg = `AI done: ${prog.done} file${prog.done !== 1 ? 's' : ''} analysed`
+                        + (fb > 0 ? ` (⚠ ${fb} video${fb !== 1 ? 's' : ''} fell back to sprite mode)` : '');
+                    showToast(msg, fb > 0 ? 8000 : 3000);
                     if (btn) btn.disabled = false;
                     await loadTags();
                 }

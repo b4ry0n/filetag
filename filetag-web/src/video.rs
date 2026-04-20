@@ -520,6 +520,52 @@ pub async fn generate_sprite_cached(
     Ok(cache_path)
 }
 
+/// Extract `n` evenly-spaced frames from `abs` and return them as individual
+/// JPEG byte vectors.  Uses ffmpeg; returns an error when ffmpeg is unavailable.
+pub async fn extract_video_frames(
+    abs: &Path,
+    n: usize,
+    duration_secs: f64,
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let positions: Vec<f64> = (0..n)
+        .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
+        .collect();
+
+    let mut frames = Vec::with_capacity(n);
+
+    for t in positions {
+        let output = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg", "-ss", &format!("{t:.2}"), "-i"])
+            .arg(abs)
+            .args([
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=512:-2",
+                "-q:v",
+                "5",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+                "-loglevel",
+                "error",
+            ])
+            .output()
+            .await?;
+        if output.status.success() && !output.stdout.is_empty() {
+            frames.push(output.stdout);
+        }
+    }
+
+    if frames.is_empty() {
+        anyhow::bail!("ffmpeg could not extract frames — is ffmpeg installed?");
+    }
+
+    Ok(frames)
+}
+
 /// Generate (or reuse from cache) an AI analysis sprite sheet for `abs`.
 ///
 /// Uses a separate cache subdirectory (`ai_sprites`) from the trickplay sprites
