@@ -88,12 +88,17 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.ref_name }}" = "nightly" ]; then
-            # Ensure the nightly pre-release exists (create or update).
-            gh release create "nightly" \
-              --title "Nightly build" \
-              --notes "Latest build from the main branch." \
-              --prerelease 2>/dev/null \
-            || gh release edit "nightly" --prerelease --title "Nightly build" 2>/dev/null \
+            # Determine the latest versioned tag so the changelog starts there.
+            latest_vtag=$(git tag --list 'v*' --sort=-version:refname | head -1)
+            note_args=(--title "Nightly build" --prerelease)
+            if [ -n "$latest_vtag" ]; then
+              note_args+=(--generate-notes --notes-start-tag "$latest_vtag")
+            else
+              note_args+=(--notes "Latest build from the main branch.")
+            fi
+            # Create or update the nightly pre-release, refreshing notes each time.
+            gh release create "nightly" "${note_args[@]}" 2>/dev/null \
+            || gh release edit "nightly" "${note_args[@]}" 2>/dev/null \
             || true
           else
             gh release create "${{ github.ref_name }}" --generate-notes 2>/dev/null || true
