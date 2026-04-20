@@ -22,7 +22,7 @@ use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
-use crate::video::{generate_ai_sprite, sprites_for_duration, video_info};
+use crate::video::{extract_video_frames, generate_ai_sprite, sprites_for_duration, video_info};
 
 // ---------------------------------------------------------------------------
 // AI concurrency + constants
@@ -36,6 +36,7 @@ static AI_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1)
 /// and `ai.prompt_archive` in the settings.
 pub const AI_IMAGE_INTRO: &str = "Look at this image.";
 pub const AI_VIDEO_INTRO: &str = "Look at this video contact sheet.";
+pub const AI_VIDEO_FULL_INTRO: &str = "Look at this video.";
 pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and sample images.";
 
 /// Default output-format instruction appended to every prompt.
@@ -78,6 +79,8 @@ pub struct AiProgress {
     pub total: usize,
     /// Relative path of the file currently being analysed.
     pub current: Option<String>,
+    /// Number of videos that fell back from full-video mode to sprite mode.
+    pub fallback_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +94,11 @@ struct AiConfig {
     tag_prefix: String,
     max_tokens: u32,
     format: String,
+    /// `"sprite"` (default) = contact-sheet JPEG; `"full"` = raw video bytes.
+    video_mode: String,
+    /// Maximum video file size in MiB for `video_mode = "full"`.
+    /// Files larger than this fall back to sprite mode automatically.
+    video_max_mb: u64,
     /// Free-text description of the collection (e.g. "family photos and videos" or "bird photography").
     /// Injected into every prompt so the model has collection context.
     subject: Option<String>,
@@ -136,6 +144,15 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .unwrap_or_else(|| "openai".to_string());
+    let video_mode = db::get_setting(conn, "ai.video_mode")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "sprite".to_string());
+    let video_max_mb = db::get_setting(conn, "ai.video_max_mb")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(50);
     let subject = db::get_setting(conn, "ai.subject")
         .ok()
         .flatten()
@@ -170,6 +187,8 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         tag_prefix,
         max_tokens,
         format,
+        video_mode,
+        video_max_mb,
         subject,
         prompt_image,
         prompt_video,
@@ -334,6 +353,28 @@ fn strip_think_blocks(text: &str) -> &str {
     }
 }
 
+/// Read the response body and then check the HTTP status.  Unlike
+/// `error_for_status()`, this preserves the body so the server's error message
+/// is included in the returned error.
+async fn response_text(resp: reqwest::Response) -> anyhow::Result<String> {
+    let status = resp.status();
+    let text = resp.text().await?;
+    if !status.is_success() {
+        let detail = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| {
+                v["error"]["message"]
+                    .as_str()
+                    .or_else(|| v["error"].as_str())
+                    .or_else(|| v["message"].as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| text.chars().take(300).collect());
+        anyhow::bail!("{status}: {detail}");
+    }
+    Ok(text)
+}
+
 /// Make a single VLM/LLM API call and return the assistant message content.
 async fn vlm_call(
     config: &AiConfig,
@@ -373,7 +414,7 @@ async fn vlm_call_multi(
         {
             req = req.header("Authorization", format!("Bearer {key}"));
         }
-        let raw = req.send().await?.error_for_status()?.text().await?;
+        let raw = response_text(req.send().await?).await?;
         let resp: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
         resp["message"]["content"]
             .as_str()
@@ -402,7 +443,7 @@ async fn vlm_call_multi(
         {
             req = req.header("Authorization", format!("Bearer {key}"));
         }
-        let raw = req.send().await?.error_for_status()?.text().await?;
+        let raw = response_text(req.send().await?).await?;
         let resp: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
         let content_str = resp["choices"][0]["message"]["content"]
             .as_str()
@@ -534,7 +575,7 @@ const ARCHIVE_SAMPLE_COUNT: usize = 4;
 /// Analyse a video by generating a dedicated AI sprite sheet and sending it
 /// as a single image to the VLM.  Uses a separate cache key from the trickplay
 /// sprites so frame count can differ independently.
-async fn analyse_video(
+async fn analyse_video_sprite(
     config: &AiConfig,
     abs: &Path,
     root: &Path,
@@ -560,6 +601,96 @@ async fn analyse_video(
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
     Ok((raw, tags))
+}
+
+/// Analyse a video by extracting individual frames and sending them as
+/// separate JPEG images to the VLM (like OpenWebUI does).  This is compatible
+/// with any vision model that accepts multiple images; it does NOT send raw
+/// video bytes.
+///
+/// If frame extraction fails, the caller falls back to sprite mode.
+async fn analyse_video_full(
+    config: &AiConfig,
+    abs: &Path,
+    existing_tags: &[String],
+    kv_keys: &[String],
+    n_frames: Option<u32>,
+) -> anyhow::Result<(String, Vec<String>)> {
+    let info = video_info(abs)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
+
+    let n = n_frames
+        .map(|v| (v as usize).clamp(2, 64))
+        .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 24));
+
+    let frames = extract_video_frames(abs, n, info.duration).await?;
+    let b64_frames: Vec<String> = frames
+        .iter()
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        .collect();
+    let b64_refs: Vec<&str> = b64_frames.iter().map(|s| s.as_str()).collect();
+
+    let intro = config
+        .prompt_video
+        .as_deref()
+        .unwrap_or(AI_VIDEO_FULL_INTRO);
+    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
+    let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
+    let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
+    let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
+    Ok((raw, tags))
+}
+
+/// Dispatch video analysis to the configured mode (`sprite` or `full`).
+///
+/// When `video_mode` is `"full"`, the raw video is sent to the VLM.  If the
+/// video exceeds the size limit or the API call fails, the function falls back
+/// to sprite mode automatically.
+///
+/// Returns `(raw_response, tags, warning)`.  `warning` is `Some` when a
+/// fallback occurred and describes why.
+async fn analyse_video(
+    config: &AiConfig,
+    abs: &Path,
+    root: &Path,
+    existing_tags: &[String],
+    kv_keys: &[String],
+    n_frames: Option<u32>,
+) -> anyhow::Result<(String, Vec<String>, Option<String>)> {
+    if config.video_mode == "full" {
+        let max_bytes = config.video_max_mb.saturating_mul(1024 * 1024);
+        if let Ok(meta) = std::fs::metadata(abs)
+            && meta.len() > max_bytes
+        {
+            let warning = format!(
+                "video is {} MiB, exceeds full-mode limit ({} MiB); fell back to sprite mode",
+                meta.len().div_ceil(1024 * 1024),
+                config.video_max_mb
+            );
+            eprintln!("[filetag-web] {warning}");
+            let (raw, tags) =
+                analyse_video_sprite(config, abs, root, existing_tags, kv_keys, n_frames).await?;
+            return Ok((raw, tags, Some(warning)));
+        }
+        match analyse_video_full(config, abs, existing_tags, kv_keys, n_frames).await {
+            Ok((raw, tags)) => return Ok((raw, tags, None)),
+            Err(e) => {
+                let warning = format!(
+                    "full-video analysis failed ({}); fell back to sprite mode",
+                    e
+                );
+                eprintln!("[filetag-web] {warning}");
+                let (raw, tags) =
+                    analyse_video_sprite(config, abs, root, existing_tags, kv_keys, n_frames)
+                        .await?;
+                return Ok((raw, tags, Some(warning)));
+            }
+        }
+    }
+    let (raw, tags) =
+        analyse_video_sprite(config, abs, root, existing_tags, kv_keys, n_frames).await?;
+    Ok((raw, tags, None))
 }
 
 /// Analyse an archive by inspecting its contents listing and sample images.
@@ -992,11 +1123,12 @@ pub async fn api_ai_analyse(
     let (existing_tags, kv_keys) =
         fetch_existing_tags(&conn, &effective_root, &rel, &config.tag_prefix);
 
-    let (raw_response, tags) = if is_archive {
+    let (raw_response, tags, warning) = if is_archive {
         let abs = effective_root.join(&rel);
-        analyse_archive(&config, &abs, &existing_tags, &kv_keys)
+        let (raw, tags) = analyse_archive(&config, &abs, &existing_tags, &kv_keys)
             .await
-            .map_err(AppError)?
+            .map_err(AppError)?;
+        (raw, tags, None)
     } else if is_video {
         let abs = effective_root.join(&rel);
         analyse_video(
@@ -1013,9 +1145,10 @@ pub async fn api_ai_analyse(
         let jpeg = prepare_jpeg_for_analysis(&effective_root, &rel)
             .await
             .ok_or_else(|| AppError(anyhow::anyhow!("Could not prepare image for analysis")))?;
-        analyse_image(&config, &jpeg, &existing_tags, &kv_keys)
+        let (raw, tags) = analyse_image(&config, &jpeg, &existing_tags, &kv_keys)
             .await
-            .map_err(AppError)?
+            .map_err(AppError)?;
+        (raw, tags, None)
     };
 
     let applied = if !body.dry_run && !tags.is_empty() {
@@ -1025,9 +1158,12 @@ pub async fn api_ai_analyse(
         false
     };
 
-    Ok(Json(
-        serde_json::json!({ "tags": tags, "applied": applied, "raw": if body.dry_run { raw_response } else { String::new() } }),
-    ))
+    Ok(Json(serde_json::json!({
+        "tags": tags,
+        "applied": applied,
+        "raw": if body.dry_run { raw_response } else { String::new() },
+        "warning": warning,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -1076,6 +1212,7 @@ pub async fn api_ai_analyse_batch(
             done: 0,
             total,
             current: None,
+            fallback_count: 0,
         };
     }
 
@@ -1146,10 +1283,10 @@ pub async fn api_ai_analyse_batch(
                 Err(_) => break,
             };
 
-            let (_raw, tags) = if is_archive {
+            let (_raw, tags, fallback) = if is_archive {
                 let abs = effective_root.join(&eff_rel);
                 match analyse_archive(&config, &abs, &existing_tags, &kv_keys).await {
-                    Ok(t) => t,
+                    Ok((raw, tags)) => (raw, tags, false),
                     Err(_) => continue,
                 }
             } else if is_video {
@@ -1164,7 +1301,7 @@ pub async fn api_ai_analyse_batch(
                 )
                 .await
                 {
-                    Ok(t) => t,
+                    Ok((raw, tags, warn)) => (raw, tags, warn.is_some()),
                     Err(_) => continue,
                 }
             } else {
@@ -1173,10 +1310,15 @@ pub async fn api_ai_analyse_batch(
                     None => continue,
                 };
                 match analyse_image(&config, &jpeg, &existing_tags, &kv_keys).await {
-                    Ok(t) => t,
+                    Ok((raw, tags)) => (raw, tags, false),
                     Err(_) => continue,
                 }
             };
+
+            if fallback {
+                let mut prog = state2.ai_progress.lock().unwrap();
+                prog.fallback_count += 1;
+            }
 
             if !tags.is_empty()
                 && let Ok((conn2, eff_root2, eff_rel2)) = open_for_file_op_under(&root, rel_path)
@@ -1195,12 +1337,17 @@ pub async fn api_ai_analyse_batch(
             }
         }
 
+        let fallback_count = {
+            let prog = state2.ai_progress.lock().unwrap();
+            prog.fallback_count
+        };
         let mut prog = state2.ai_progress.lock().unwrap();
         *prog = AiProgress {
             running: false,
             done: total,
             total,
             current: None,
+            fallback_count,
         };
     });
 
@@ -1235,6 +1382,10 @@ pub(crate) struct AiConfigRequest {
     tag_prefix: Option<String>,
     max_tokens: Option<u32>,
     format: Option<String>,
+    /// `"sprite"` (default) or `"full"` (raw video bytes with sprite fallback).
+    video_mode: Option<String>,
+    /// Maximum video file size in MiB before falling back to sprite mode.
+    video_max_mb: Option<u64>,
     enabled: Option<bool>,
     dir: Option<String>,
 }
@@ -1309,6 +1460,17 @@ pub async fn api_ai_config_set(
         }
         db::set_setting(&conn, "ai.format", v).map_err(AppError)?;
     }
+    if let Some(v) = &body.video_mode {
+        if v != "sprite" && v != "full" {
+            return Err(AppError(anyhow::anyhow!(
+                "video_mode must be 'sprite' or 'full'"
+            )));
+        }
+        db::set_setting(&conn, "ai.video_mode", v).map_err(AppError)?;
+    }
+    if let Some(v) = body.video_max_mb {
+        db::set_setting(&conn, "ai.video_max_mb", &v.to_string()).map_err(AppError)?;
+    }
     if let Some(v) = body.enabled {
         db::set_setting(&conn, "ai.enabled", if v { "1" } else { "0" }).map_err(AppError)?;
     }
@@ -1367,6 +1529,13 @@ pub async fn api_ai_config_get(
     } else {
         format_raw
     };
+    let video_mode_raw = g("ai.video_mode");
+    let video_mode = if video_mode_raw.is_empty() {
+        "sprite".to_string()
+    } else {
+        video_mode_raw
+    };
+    let video_max_mb = g("ai.video_max_mb").parse::<u64>().unwrap_or(50);
     // Backward compat: if ai.prompt_image is unset, fall back to legacy ai.prompt.
     let prompt_image_raw = g("ai.prompt_image");
     let prompt_image = if prompt_image_raw.is_empty() {
@@ -1386,9 +1555,12 @@ pub async fn api_ai_config_get(
         "tag_prefix": tag_prefix,
         "max_tokens": max_tokens,
         "format": format,
+        "video_mode": video_mode,
+        "video_max_mb": video_max_mb,
         "enabled": g("ai.enabled") != "0",
         "default_prompt_image": AI_IMAGE_INTRO,
         "default_prompt_video": AI_VIDEO_INTRO,
+        "default_prompt_video_full": AI_VIDEO_FULL_INTRO,
         "default_prompt_archive": AI_ARCHIVE_INTRO,
         "output_format": g("ai.output_format"),
         "default_output_format": AI_OUTPUT_FORMAT,
