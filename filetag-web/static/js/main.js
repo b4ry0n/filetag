@@ -162,8 +162,10 @@ function _kbMove(dir) {
 
 async function _selectAllFiles() {
     const allItems = state.mode === 'search' ? state.searchResults
-        : state.mode === 'zip' ? state.zipEntries.map(en => ({ path: state.zipPath + '::' + en.name, is_dir: false }))
-        : state.entries;
+        : state.mode === 'zip'
+            ? getZipDirContents(state.zipEntries, state.zipSubdir).files
+                .map(en => ({ path: state.zipPath + '::' + en.name, is_dir: false }))
+            : state.entries;
     const filePaths = (allItems || [])
         .filter(en => !en.is_dir)
         .map(en => (state.mode === 'search' || state.mode === 'zip') ? en.path : fullPath(en));
