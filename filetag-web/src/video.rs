@@ -566,69 +566,117 @@ pub async fn extract_video_frames(
     Ok(frames)
 }
 
-/// Generate (or reuse from cache) an AI analysis sprite sheet for `abs`.
+/// Generate one or more AI analysis sprite sheets for `abs`.
 ///
-/// Uses a separate cache subdirectory (`ai_sprites`) from the trickplay sprites
-/// so the frame count can be adjusted independently without invalidating trickplay.
-pub async fn generate_ai_sprite(
+/// Frames are sampled evenly across the full duration, then split into chunks
+/// (`max_frames_per_sheet`) so each output image stays compact for VLM input.
+/// Each sheet uses a near-square tile grid.
+pub async fn generate_ai_sprites(
     abs: &Path,
     root: &Path,
     n: usize,
     duration_secs: f64,
-) -> anyhow::Result<PathBuf> {
-    let cache_path =
-        file_cache_path(abs, root, "ai_sprites", &format!("ai{n}x1.jpg")).ok_or_else(|| {
-            anyhow::anyhow!("cannot compute AI sprite cache path for {}", abs.display())
-        })?;
-
-    if cache_path.exists() {
-        return Ok(cache_path);
+    max_frames_per_sheet: usize,
+) -> anyhow::Result<Vec<PathBuf>> {
+    if n == 0 {
+        anyhow::bail!("cannot generate AI sprites with zero frames");
     }
 
-    if let Some(parent) = cache_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
+    let max_per_sheet = max_frames_per_sheet.clamp(1, 256);
     let positions: Vec<f64> = (0..n)
         .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
         .collect();
 
-    let scale_parts: Vec<String> = (0..n)
-        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
-        .collect();
-    let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
-    let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+    let mut out_paths = Vec::new();
 
-    let mut cmd = tokio::process::Command::new("nice");
-    cmd.args(["-n", "10", "ffmpeg"]);
-    for t in &positions {
-        cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
+    for (sheet_idx, chunk) in positions.chunks(max_per_sheet).enumerate() {
+        let chunk_n = chunk.len();
+        let cols = (chunk_n as f64).sqrt().ceil().max(1.0) as usize;
+        let rows = chunk_n.div_ceil(cols);
+
+        let cache_path = file_cache_path(
+            abs,
+            root,
+            "ai_sprites",
+            &format!("ai{n}_s{:02}_{chunk_n}_{cols}x{rows}.jpg", sheet_idx + 1),
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!("cannot compute AI sprite cache path for {}", abs.display())
+        })?;
+
+        if cache_path.exists() {
+            out_paths.push(cache_path);
+            continue;
+        }
+
+        if let Some(parent) = cache_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let scale_parts: Vec<String> = (0..chunk_n)
+            .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+            .collect();
+
+        let mut filter_parts = scale_parts;
+        for row in 0..rows {
+            let start = row * cols;
+            let end = ((row + 1) * cols).min(chunk_n);
+            if start >= end {
+                continue;
+            }
+            let row_len = end - start;
+            if row_len == 1 {
+                filter_parts.push(format!("[f{start}]copy[r{row}]"));
+            } else {
+                let row_inputs: String = (start..end).map(|i| format!("[f{i}]")).collect();
+                filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
+            }
+        }
+        if rows == 1 {
+            filter_parts.push("[r0]copy[out]".to_string());
+        } else {
+            let row_inputs: String = (0..rows).map(|i| format!("[r{i}]")).collect();
+            filter_parts.push(format!("{row_inputs}vstack={rows}[out]"));
+        }
+        let filter = filter_parts.join(";");
+
+        let mut cmd = tokio::process::Command::new("nice");
+        cmd.args(["-n", "10", "ffmpeg"]);
+        for t in chunk {
+            cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
+        }
+        let ok = cmd
+            .args([
+                "-filter_complex",
+                &filter,
+                "-map",
+                "[out]",
+                "-frames:v",
+                "1",
+                "-q:v",
+                "4",
+                "-y",
+            ])
+            .arg(&cache_path)
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !ok || !cache_path.exists() {
+            anyhow::bail!("ffmpeg could not generate AI sprite sheet — is ffmpeg installed?");
+        }
+
+        out_paths.push(cache_path);
     }
-    let ok = cmd
-        .args([
-            "-filter_complex",
-            &filter,
-            "-map",
-            "[out]",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "4",
-            "-y",
-        ])
-        .arg(&cache_path)
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
 
-    if !ok || !cache_path.exists() {
+    if out_paths.is_empty() {
         anyhow::bail!("ffmpeg could not generate AI sprite sheet — is ffmpeg installed?");
     }
 
-    Ok(cache_path)
+    Ok(out_paths)
 }
 
 // ---------------------------------------------------------------------------

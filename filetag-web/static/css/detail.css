@@ -83,6 +83,12 @@
     width: 100%;
 }
 
+.detail-preview video {
+    max-height: min(52vh, 420px);
+    height: auto;
+    object-fit: contain;
+}
+
 .detail-preview .no-preview {
     padding: 32px;
     text-align: center;

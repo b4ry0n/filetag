@@ -731,6 +731,7 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-prompt-video').placeholder = videoDefault;
         document.getElementById('ai-video-mode').value = cfg.video_mode || 'sprite';
         document.getElementById('ai-video-max-mb').value = cfg.video_max_mb ?? 50;
+        document.getElementById('ai-video-sheet-max-frames').value = cfg.video_sheet_max_frames ?? 16;
         _updateVideoMaxMbVisibility();
         document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
         document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
@@ -848,6 +849,7 @@ async function aiSaveSettings() {
         format: document.getElementById('ai-format').value,
         video_mode: document.getElementById('ai-video-mode').value,
         video_max_mb: parseInt(document.getElementById('ai-video-max-mb').value, 10) || 50,
+        video_sheet_max_frames: parseInt(document.getElementById('ai-video-sheet-max-frames').value, 10) || 16,
         enabled: document.getElementById('ai-enabled').checked,
         dir: currentAbsDir(),
     };
@@ -959,8 +961,14 @@ async function aiAnalyseSingle(path) {
     // Re-render so the button shows "Analysing…" immediately (also persists on navigate-away & back)
     if (state.selectedFile?.path === path) renderDetail();
     const toast = showToast(`AI: analysing…`, 0);
+    const autoFramesEl = document.getElementById('ai-frames-auto');
+    if (autoFramesEl) aiSetVideoFramesAuto(autoFramesEl.checked);
     const framesEl = document.getElementById('ai-frames-input');
-    const n_frames = framesEl ? (parseInt(framesEl.value, 10) || null) : null;
+    const n_frames = state.aiVideoFramesAuto
+        ? null
+        : (framesEl
+            ? aiSetVideoFrames(framesEl.value)
+            : (Number.isFinite(state.aiVideoFrames) ? state.aiVideoFrames : null));
     try {
         const res = await fetch('/api/ai/analyse', {
             method: 'POST',
@@ -987,6 +995,21 @@ async function aiAnalyseSingle(path) {
         state.aiAnalysing.delete(path);
         if (state.selectedFile?.path === path) renderDetail();
     }
+}
+
+function aiSetVideoFrames(rawValue) {
+    const parsed = parseInt(rawValue, 10);
+    if (!Number.isFinite(parsed)) return state.aiVideoFrames;
+    const clamped = Math.max(2, Math.min(256, parsed));
+    state.aiVideoFrames = clamped;
+    return clamped;
+}
+
+function aiSetVideoFramesAuto(enabled) {
+    state.aiVideoFramesAuto = !!enabled;
+    const input = document.getElementById('ai-frames-input');
+    if (input) input.disabled = state.aiVideoFramesAuto;
+    return state.aiVideoFramesAuto;
 }
 
 async function aiAnalyseBatch() {
