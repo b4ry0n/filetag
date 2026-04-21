@@ -753,7 +753,7 @@ pub async fn generate_ai_sprites(
         for t in chunk {
             cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
         }
-        let ok = cmd
+        let out = cmd
             .args([
                 "-filter_complex",
                 &filter,
@@ -766,15 +766,18 @@ pub async fn generate_ai_sprites(
                 "-y",
             ])
             .arg(&cache_path)
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .output()
+            .await?;
 
-        if !ok || !cache_path.exists() {
-            anyhow::bail!("ffmpeg could not generate AI sprite sheet — is ffmpeg installed?");
+        if !out.status.success() || !cache_path.exists() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            anyhow::bail!(
+                "ffmpeg could not generate AI sprite sheet (filter: {}): {}",
+                filter,
+                stderr.trim()
+            );
         }
 
         out_paths.push(cache_path);
