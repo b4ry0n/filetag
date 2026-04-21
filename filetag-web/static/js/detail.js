@@ -31,6 +31,14 @@ async function openZipDir(zipPath) {
     document.getElementById('entry-count').textContent = '…';
     const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }) + dirParam('&'));
     state.zipEntries = data.entries || [];
+
+    // If archive root contains exactly one folder and no files, jump into it
+    // immediately. Users can still navigate back via the breadcrumb.
+    const rootContents = getZipDirContents(state.zipEntries, '');
+    if (rootContents.folders.length === 1 && rootContents.files.length === 0) {
+        state.zipSubdir = rootContents.folders[0] + '/';
+    }
+
     render();
 }
 
@@ -92,7 +100,7 @@ function renderZipGrid(entries) {
     for (const folder of folders) {
         const target = state.zipSubdir + folder + '/';
         html += `<div class="card folder" data-zip-folder="${esc(folder)}"
-            onclick="enterZipSubdir('${jesc(target)}')">
+            ondblclick="enterZipSubdir('${jesc(target)}')">
             <div class="card-preview"><div class="card-icon">${ICONS.folder}</div></div>
             <div class="card-body"><div class="card-name">${esc(folder)}</div>
             <div class="card-meta">folder</div></div>
@@ -138,7 +146,7 @@ function renderZipList(entries) {
     for (const folder of folders) {
         const target = state.zipSubdir + folder + '/';
         html += `<div class="list-row folder" data-zip-folder="${esc(folder)}"
-            onclick="enterZipSubdir('${jesc(target)}')">
+            ondblclick="enterZipSubdir('${jesc(target)}')">
             <span class="icon">${ICONS.folder}</span>
             <span class="name">${esc(folder)}</span>
             <span class="size"></span>
