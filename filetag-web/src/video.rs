@@ -526,10 +526,16 @@ pub async fn extract_video_frames(
     abs: &Path,
     n: usize,
     duration_secs: f64,
+    use_scene_select: bool,
 ) -> anyhow::Result<Vec<Vec<u8>>> {
-    let positions: Vec<f64> = (0..n)
-        .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
-        .collect();
+    let positions = if use_scene_select {
+        match scene_positions(abs, n, duration_secs).await {
+            Ok(v) if !v.is_empty() => v,
+            _ => interval_positions(n, duration_secs),
+        }
+    } else {
+        interval_positions(n, duration_secs)
+    };
 
     let mut frames = Vec::with_capacity(n);
 
@@ -566,6 +572,94 @@ pub async fn extract_video_frames(
     Ok(frames)
 }
 
+fn interval_positions(n: usize, duration_secs: f64) -> Vec<f64> {
+    (0..n)
+        .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
+        .collect()
+}
+
+fn parse_pts_time(line: &str) -> Option<f64> {
+    let key = "pts_time:";
+    let pos = line.find(key)? + key.len();
+    let tail = &line[pos..];
+    let tok = tail.split_whitespace().next()?;
+    tok.parse::<f64>().ok()
+}
+
+fn pick_evenly(items: &[f64], n: usize) -> Vec<f64> {
+    if items.len() <= n {
+        return items.to_vec();
+    }
+    let step = items.len() as f64 / n as f64;
+    (0..n)
+        .map(|i| {
+            let idx = (i as f64 * step).floor() as usize;
+            items[idx.min(items.len() - 1)]
+        })
+        .collect()
+}
+
+async fn scene_positions(abs: &Path, n: usize, duration_secs: f64) -> anyhow::Result<Vec<f64>> {
+    if n == 0 {
+        return Ok(vec![]);
+    }
+
+    let out = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg", "-i"])
+        .arg(abs)
+        .args([
+            "-vf",
+            "select='gt(scene,0.35)',showinfo",
+            "-vsync",
+            "vfr",
+            "-f",
+            "null",
+            "-",
+            "-loglevel",
+            "info",
+        ])
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await?;
+
+    if !out.status.success() {
+        anyhow::bail!("ffmpeg scene detection failed");
+    }
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut cuts: Vec<f64> = stderr.lines().filter_map(parse_pts_time).collect();
+    cuts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    cuts.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+
+    // Build scene segments [0..cut1], [cut1..cut2], ... [last_cut..duration]
+    // and sample at the midpoint of each segment so transition frames are avoided.
+    let mut bounds: Vec<f64> = Vec::with_capacity(cuts.len() + 2);
+    bounds.push(0.0);
+    for c in cuts {
+        if c > 0.0 && c < duration_secs {
+            bounds.push(c);
+        }
+    }
+    bounds.push(duration_secs);
+
+    let mut mids: Vec<f64> = Vec::new();
+    for w in bounds.windows(2) {
+        let start = w[0];
+        let end = w[1];
+        if end > start {
+            mids.push(start + (end - start) * 0.5);
+        }
+    }
+
+    if mids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    Ok(pick_evenly(&mids, n))
+}
+
 /// Generate one or more AI analysis sprite sheets for `abs`.
 ///
 /// Frames are sampled evenly across the full duration, then split into chunks
@@ -577,15 +671,26 @@ pub async fn generate_ai_sprites(
     n: usize,
     duration_secs: f64,
     max_frames_per_sheet: usize,
+    use_scene_select: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
     if n == 0 {
         anyhow::bail!("cannot generate AI sprites with zero frames");
     }
 
     let max_per_sheet = max_frames_per_sheet.clamp(1, 256);
-    let positions: Vec<f64> = (0..n)
-        .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
-        .collect();
+    let positions = if use_scene_select {
+        match scene_positions(abs, n, duration_secs).await {
+            Ok(v) if !v.is_empty() => v,
+            _ => interval_positions(n, duration_secs),
+        }
+    } else {
+        interval_positions(n, duration_secs)
+    };
+    let mode_suffix = if use_scene_select {
+        "scene"
+    } else {
+        "interval"
+    };
 
     let mut out_paths = Vec::new();
 
@@ -598,7 +703,10 @@ pub async fn generate_ai_sprites(
             abs,
             root,
             "ai_sprites",
-            &format!("ai{n}_s{:02}_{chunk_n}_{cols}x{rows}.jpg", sheet_idx + 1),
+            &format!(
+                "ai{n}_{mode_suffix}_s{:02}_{chunk_n}_{cols}x{rows}.jpg",
+                sheet_idx + 1
+            ),
         )
         .ok_or_else(|| {
             anyhow::anyhow!("cannot compute AI sprite cache path for {}", abs.display())
