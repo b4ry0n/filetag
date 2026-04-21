@@ -599,6 +599,89 @@ fn pick_evenly(items: &[f64], n: usize) -> Vec<f64> {
         .collect()
 }
 
+fn build_sprite_filter(chunk_n: usize) -> (String, usize, usize) {
+    let cols = (chunk_n as f64).sqrt().ceil().max(1.0) as usize;
+    let rows = chunk_n.div_ceil(cols);
+
+    let scale_parts: Vec<String> = (0..chunk_n)
+        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+        .collect();
+
+    let mut filter_parts = scale_parts;
+    for row in 0..rows {
+        let start = row * cols;
+        let end = ((row + 1) * cols).min(chunk_n);
+        if start >= end {
+            continue;
+        }
+        let row_len = end - start;
+        if row_len == 1 {
+            filter_parts.push(format!("[f{start}]null[r{row}]"));
+        } else {
+            let row_inputs: String = (start..end).map(|i| format!("[f{i}]")).collect();
+            filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
+        }
+    }
+    if rows == 1 {
+        filter_parts.push("[r0]null[out]".to_string());
+    } else {
+        let row_inputs: String = (0..rows).map(|i| format!("[r{i}]")).collect();
+        filter_parts.push(format!("{row_inputs}vstack={rows}[out]"));
+    }
+
+    (filter_parts.join(";"), cols, rows)
+}
+
+async fn run_sprite_sheet_ffmpeg(
+    abs: &Path,
+    times: &[f64],
+    cache_path: &Path,
+    filter: &str,
+) -> anyhow::Result<std::process::Output> {
+    let mut cmd = tokio::process::Command::new("nice");
+    cmd.args(["-n", "10", "ffmpeg"]);
+    for t in times {
+        cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
+    }
+    let out = cmd
+        .args([
+            "-filter_complex",
+            filter,
+            "-map",
+            "[out]",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "4",
+            "-y",
+        ])
+        .arg(cache_path)
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .output()
+        .await?;
+    Ok(out)
+}
+
+fn looks_like_empty_output(stderr: &str) -> bool {
+    stderr.contains("received no packets")
+        || stderr.contains("Nothing was written into output file")
+}
+
+async fn seek_has_video_frame(abs: &Path, t: f64) -> bool {
+    tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg", "-ss", &format!("{t:.2}"), "-i"])
+        .arg(abs)
+        .args(["-frames:v", "1", "-f", "null", "-", "-loglevel", "error"])
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 async fn scene_positions(abs: &Path, n: usize, duration_secs: f64) -> anyhow::Result<Vec<f64>> {
     if n == 0 {
         return Ok(vec![]);
@@ -694,8 +777,7 @@ pub async fn generate_ai_sprites(
 
     for (sheet_idx, chunk) in positions.chunks(max_per_sheet).enumerate() {
         let chunk_n = chunk.len();
-        let cols = (chunk_n as f64).sqrt().ceil().max(1.0) as usize;
-        let rows = chunk_n.div_ceil(cols);
+        let (filter, cols, rows) = build_sprite_filter(chunk_n);
 
         let cache_path = file_cache_path(
             abs,
@@ -719,58 +801,41 @@ pub async fn generate_ai_sprites(
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let scale_parts: Vec<String> = (0..chunk_n)
-            .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
-            .collect();
-
-        let mut filter_parts = scale_parts;
-        for row in 0..rows {
-            let start = row * cols;
-            let end = ((row + 1) * cols).min(chunk_n);
-            if start >= end {
-                continue;
-            }
-            let row_len = end - start;
-            if row_len == 1 {
-                filter_parts.push(format!("[f{start}]null[r{row}]"));
-            } else {
-                let row_inputs: String = (start..end).map(|i| format!("[f{i}]")).collect();
-                filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
-            }
-        }
-        if rows == 1 {
-            filter_parts.push("[r0]null[out]".to_string());
-        } else {
-            let row_inputs: String = (0..rows).map(|i| format!("[r{i}]")).collect();
-            filter_parts.push(format!("{row_inputs}vstack={rows}[out]"));
-        }
-        let filter = filter_parts.join(";");
-
-        let mut cmd = tokio::process::Command::new("nice");
-        cmd.args(["-n", "10", "ffmpeg"]);
-        for t in chunk {
-            cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
-        }
-        let out = cmd
-            .args([
-                "-filter_complex",
-                &filter,
-                "-map",
-                "[out]",
-                "-frames:v",
-                "1",
-                "-q:v",
-                "4",
-                "-y",
-            ])
-            .arg(&cache_path)
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .output()
-            .await?;
+        let out = run_sprite_sheet_ffmpeg(abs, chunk, &cache_path, &filter).await?;
 
         if !out.status.success() || !cache_path.exists() {
             let stderr = String::from_utf8_lossy(&out.stderr);
+
+            // Older/odd files can fail on specific seek positions. Retry with
+            // only timestamps that actually return a frame.
+            if looks_like_empty_output(&stderr) {
+                let mut valid_times = Vec::new();
+                for t in chunk {
+                    if seek_has_video_frame(abs, *t).await {
+                        valid_times.push(*t);
+                    }
+                }
+
+                if !valid_times.is_empty() && valid_times.len() < chunk.len() {
+                    let (retry_filter, _, _) = build_sprite_filter(valid_times.len());
+                    let retry =
+                        run_sprite_sheet_ffmpeg(abs, &valid_times, &cache_path, &retry_filter)
+                            .await?;
+                    if retry.status.success() && cache_path.exists() {
+                        out_paths.push(cache_path);
+                        continue;
+                    }
+                    let retry_stderr = String::from_utf8_lossy(&retry.stderr);
+                    anyhow::bail!(
+                        "ffmpeg sprite retry failed ({} of {} frames usable). first error: {} | retry error: {}",
+                        valid_times.len(),
+                        chunk.len(),
+                        stderr.trim(),
+                        retry_stderr.trim()
+                    );
+                }
+            }
+
             anyhow::bail!(
                 "ffmpeg could not generate AI sprite sheet (filter: {}): {}",
                 filter,
