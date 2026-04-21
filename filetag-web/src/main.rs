@@ -50,6 +50,10 @@ struct Args {
     #[arg(long)]
     no_parents: bool,
 
+    /// Do not scan loaded roots for nested databases during startup
+    #[arg(long)]
+    no_scan: bool,
+
     /// Password to protect the web interface.
     /// Can also be set via the FILETAG_PASSWORD environment variable.
     /// When not set, the interface is unauthenticated (loopback-only by default).
@@ -87,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     let mut all_dbs = db::collect_all_databases(conn, root.clone(), !args.no_parents)?;
 
     // Discover nested databases by scanning the filesystem.
-    {
+    if !args.no_scan {
         let mut visited: std::collections::HashSet<PathBuf> = all_dbs
             .iter()
             .filter_map(|db| std::fs::canonicalize(&db.root).ok())
