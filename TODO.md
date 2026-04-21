@@ -19,3 +19,7 @@
 - **Multi-file AI analysis modes** – support running AI analysis for multiple selected files in one operation, with an explicit mode choice:
 	- **Per-file mode**: analyse each file independently and apply file-specific tags.
 	- **Common-traits mode**: analyse the selected files together and apply only tags that represent shared characteristics across the selection.
+
+### Bugs
+
+- **Tag value rename does not work** – renaming the value part of a key=value tag currently fails. Expected behaviour: users can rename a tag value and all matching assignments are updated consistently.
