@@ -614,10 +614,14 @@ pub async fn api_zip_thumb(
             return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
         }
 
-        let _permit = match THUMB_LIMITER.try_acquire() {
+        let _permit = match THUMB_LIMITER.acquire().await {
             Ok(p) => p,
             Err(_) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "thumbnail limiter closed",
+                )
+                    .into_response();
             }
         };
 
