@@ -111,7 +111,7 @@ function renderZipGrid(entries) {
     for (const entry of files) {
         const displayName = entry.name.split('/').pop() || entry.name;
         const dbPath = state.zipPath + '::' + entry.name;
-        const selected = state.selectedFile && state.selectedFile.path === dbPath ? ' selected' : '';
+        const selected = state.selectedPaths.has(dbPath) ? ' selected' : '';
 
         let preview;
         if (entry.is_image) {
@@ -123,12 +123,14 @@ function renderZipGrid(entries) {
 
         const tagBadge = entry.tag_count > 0
             ? `<span class="card-tag-count">${entry.tag_count}</span>` : '';
+        const checkmark = state.selectedPaths.has(dbPath)
+            ? '<span class="card-check">&#10003;</span>' : '';
         const dblAttr = entry.is_image
             ? ` ondblclick="openMediaViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
 
         html += `<div class="card${selected}" data-path="${esc(dbPath)}"
             onclick="selectFile('${jesc(dbPath)}', event)"${dblAttr}>
-            ${tagBadge}<div class="card-preview">${preview}</div>
+            ${checkmark}${tagBadge}<div class="card-preview">${preview}</div>
             <div class="card-body"><div class="card-name">${esc(displayName)}</div>
             <div class="card-meta">${formatSize(entry.size)}</div></div>
         </div>`;
@@ -158,7 +160,7 @@ function renderZipList(entries) {
     for (const entry of files) {
         const displayName = entry.name.split('/').pop() || entry.name;
         const dbPath = state.zipPath + '::' + entry.name;
-        const selected = state.selectedFile && state.selectedFile.path === dbPath ? ' selected' : '';
+        const selected = state.selectedPaths.has(dbPath) ? ' selected' : '';
         const icon = fileIcon(displayName);
         const size = formatSize(entry.size);
         const tags = entry.tag_count != null ? `${entry.tag_count} tags` : '';
@@ -772,7 +774,7 @@ function renderDetail() {
         const bulkTags = aggregateBulkTags();
         const chipsHtml = renderBulkTagChips(bulkTags, count);
         const paths = [...state.selectedPaths];
-        const hasAiTagsBulk = bulkTags.some(t => t.name.startsWith('ai/'));
+        const hasAiTagsBulk = bulkTags.some(t => t.tagStr.startsWith('ai/'));
         const aiAcceptBulkBtn = hasAiTagsBulk
             ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(${JSON.stringify(paths)})">Accept all ai/ tags</button>`
             : '';
