@@ -22,7 +22,7 @@ use crate::state::Features;
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
 };
-use crate::video::{extract_video_frames, generate_ai_sprite, sprites_for_duration, video_info};
+use crate::video::{extract_video_frames, generate_ai_sprites, sprites_for_duration, video_info};
 
 // ---------------------------------------------------------------------------
 // AI concurrency + constants
@@ -35,7 +35,13 @@ static AI_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1)
 /// Users can override these per-type via `ai.prompt_image`, `ai.prompt_video`,
 /// and `ai.prompt_archive` in the settings.
 pub const AI_IMAGE_INTRO: &str = "Look at this image.";
-pub const AI_VIDEO_INTRO: &str = "Look at this video contact sheet.";
+pub const AI_VIDEO_INTRO: &str = "These are sampled frames from a video. \
+Identify the most meaningful content: the genre, main subject, key visual themes, and recognisable elements. \
+Focus on WHAT is in the video, not HOW it was shot or framed. \
+Do NOT read or tag credits, title cards, text overlays, or on-screen captions. \
+Do NOT output people's names or character names unless they are the clear central subject of the entire video. \
+Do NOT output generic scene-setting words (interior, exterior, lighting, camera, crew, dining, sitting, walking). \
+Do NOT tag the image format: no contact_sheet, movie_still, film_frame, screenshot, collage, or similar.";
 pub const AI_VIDEO_FULL_INTRO: &str = "Look at this video.";
 pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and sample images.";
 
@@ -43,8 +49,11 @@ pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and samp
 /// Users can override this via `ai.output_format` in the settings.
 pub const AI_OUTPUT_FORMAT: &str = "\
 Output ONLY a JSON array of short descriptive tags (English, lowercase). \
+Return at most 10 tags; include only the most relevant and specific ones. \
+Prefer tags that describe the main subject, genre, mood, or defining visual elements. \
+Avoid vague, generic, or overly broad tags. \
 Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\n\
-Good: [\"dog\", \"beach\", \"sunny\", \"color=blue\", \"year=2023\"]\n\
+Good: [\"alien\", \"sci-fi\", \"space\", \"horror\", \"year=1979\"]\n\
 Bad: any text outside the JSON array\n\n\
 /no_think";
 
@@ -99,6 +108,9 @@ struct AiConfig {
     /// Maximum video file size in MiB for `video_mode = "full"`.
     /// Files larger than this fall back to sprite mode automatically.
     video_max_mb: u64,
+    /// Maximum number of sampled frames packed into one AI sprite sheet.
+    /// Lower values produce more sheets with higher per-frame detail.
+    video_sheet_max_frames: usize,
     /// Free-text description of the collection (e.g. "family photos and videos" or "bird photography").
     /// Injected into every prompt so the model has collection context.
     subject: Option<String>,
@@ -153,6 +165,12 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .flatten()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(50);
+    let video_sheet_max_frames = db::get_setting(conn, "ai.video_sheet_max_frames")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(16)
+        .clamp(1, 256);
     let subject = db::get_setting(conn, "ai.subject")
         .ok()
         .flatten()
@@ -189,6 +207,7 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         format,
         video_mode,
         video_max_mb,
+        video_sheet_max_frames,
         subject,
         prompt_image,
         prompt_video,
@@ -588,16 +607,22 @@ async fn analyse_video_sprite(
         .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
 
     let n = n_frames
-        .map(|v| (v as usize).clamp(2, 64))
+        .map(|v| (v as usize).clamp(2, 256))
         .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 16));
 
-    let sprite_path = generate_ai_sprite(abs, root, n, info.duration).await?;
-    let sprite_bytes = tokio::fs::read(&sprite_path).await?;
+    // Keep each image compact (multi-sheet) so the model retains more per-frame detail.
+    let sprite_paths =
+        generate_ai_sprites(abs, root, n, info.duration, config.video_sheet_max_frames).await?;
+    let mut sprite_b64 = Vec::with_capacity(sprite_paths.len());
+    for sprite_path in &sprite_paths {
+        let sprite_bytes = tokio::fs::read(sprite_path).await?;
+        sprite_b64.push(base64::engine::general_purpose::STANDARD.encode(&sprite_bytes));
+    }
+    let b64_refs: Vec<&str> = sprite_b64.iter().map(|s| s.as_str()).collect();
 
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&sprite_bytes);
     let intro = config.prompt_video.as_deref().unwrap_or(AI_VIDEO_INTRO);
     let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
-    let raw = vlm_call(config, &prompt, Some(&b64)).await?;
+    let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
     Ok((raw, tags))
@@ -621,7 +646,7 @@ async fn analyse_video_full(
         .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
 
     let n = n_frames
-        .map(|v| (v as usize).clamp(2, 64))
+        .map(|v| (v as usize).clamp(2, 256))
         .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 24));
 
     let frames = extract_video_frames(abs, n, info.duration).await?;
@@ -799,6 +824,46 @@ fn pick_samples(items: &[String], n: usize) -> Vec<String> {
         .collect()
 }
 
+/// Tags describing the sprite-sheet or image format rather than the content.
+/// These are never useful as file-content tags and are filtered out unconditionally.
+const SPRITE_META_BLOCKLIST: &[&str] = &[
+    // Sprite/format meta-tags
+    "contact_sheet",
+    "movie_still",
+    "film_frame",
+    "video_frame",
+    "screenshot",
+    "collage",
+    "composite",
+    "sprite_sheet",
+    "storyboard",
+    "montage",
+    "still_frame",
+    "frame_grab",
+    "filmstrip",
+    "thumbnail_grid",
+    // Generic scene-setting words that add no value
+    "interior",
+    "exterior",
+    "indoors",
+    "outdoors",
+    "lighting",
+    "camera",
+    "sitting",
+    "standing",
+    "walking",
+    "talking",
+    "looking",
+    // Credits / text-overlay artefacts
+    "credits",
+    "end_credits",
+    "opening_credits",
+    "title_card",
+    "caption",
+    "text_overlay",
+    "subtitles",
+];
+
 fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
     let trimmed = text.trim();
 
@@ -863,7 +928,9 @@ fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
             } else {
                 &t[prefix.len()..]
             };
-            tag_candidate_ok(tag_part) && seen.insert(t.clone())
+            tag_candidate_ok(tag_part)
+                && !SPRITE_META_BLOCKLIST.contains(&tag_part)
+                && seen.insert(t.clone())
         })
         .collect();
 
@@ -1386,6 +1453,8 @@ pub(crate) struct AiConfigRequest {
     video_mode: Option<String>,
     /// Maximum video file size in MiB before falling back to sprite mode.
     video_max_mb: Option<u64>,
+    /// Maximum number of sampled frames per AI sprite sheet.
+    video_sheet_max_frames: Option<u32>,
     enabled: Option<bool>,
     dir: Option<String>,
 }
@@ -1471,6 +1540,11 @@ pub async fn api_ai_config_set(
     if let Some(v) = body.video_max_mb {
         db::set_setting(&conn, "ai.video_max_mb", &v.to_string()).map_err(AppError)?;
     }
+    if let Some(v) = body.video_sheet_max_frames {
+        let clamped = v.clamp(1, 256);
+        db::set_setting(&conn, "ai.video_sheet_max_frames", &clamped.to_string())
+            .map_err(AppError)?;
+    }
     if let Some(v) = body.enabled {
         db::set_setting(&conn, "ai.enabled", if v { "1" } else { "0" }).map_err(AppError)?;
     }
@@ -1536,6 +1610,10 @@ pub async fn api_ai_config_get(
         video_mode_raw
     };
     let video_max_mb = g("ai.video_max_mb").parse::<u64>().unwrap_or(50);
+    let video_sheet_max_frames = g("ai.video_sheet_max_frames")
+        .parse::<u32>()
+        .unwrap_or(16)
+        .clamp(1, 256);
     // Backward compat: if ai.prompt_image is unset, fall back to legacy ai.prompt.
     let prompt_image_raw = g("ai.prompt_image");
     let prompt_image = if prompt_image_raw.is_empty() {
@@ -1557,6 +1635,7 @@ pub async fn api_ai_config_get(
         "format": format,
         "video_mode": video_mode,
         "video_max_mb": video_max_mb,
+        "video_sheet_max_frames": video_sheet_max_frames,
         "enabled": g("ai.enabled") != "0",
         "default_prompt_image": AI_IMAGE_INTRO,
         "default_prompt_video": AI_VIDEO_INTRO,

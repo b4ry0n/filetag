@@ -24,6 +24,8 @@ const state = {
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
     kvValueCache: {},          // tagName → [{value, count}] loaded lazily for k/v tags
     aiAnalysing: new Set(),    // paths currently being analysed by AI
+    aiVideoFrames: 12,         // preferred frame count for single-video AI analysis
+    aiVideoFramesAuto: false,  // true => let backend choose frame count by duration
     settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false }, // per-root settings (loaded from DB)
 };
 

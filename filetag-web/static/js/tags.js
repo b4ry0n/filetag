@@ -21,8 +21,10 @@ function colorDot(color) {
 
 function renderTags() {
     const el = document.getElementById('tag-list');
+    const filtersEl = document.getElementById('tag-filters');
     if (!state.tags.length) {
         el.innerHTML = '<div class="empty-state"><span class="empty-state-text">No tags</span></div>';
+        if (filtersEl) filtersEl.innerHTML = '';
         return;
     }
 
@@ -57,14 +59,18 @@ function renderTags() {
 
     let html = '';
 
-    // Active filter chips
-    if (state.activeTags.size > 0) {
-        html += '<div class="active-filters">';
-        for (const t of state.activeTags) {
-            html += `<button class="filter-chip" onclick="toggleTagFilter('${jesc(t)}')" title="Remove filter">${esc(t)} \xd7</button>`;
+    // Active filter chips — rendered in the sticky #tag-filters container (outside the scrolling list)
+    if (filtersEl) {
+        let filterHtml = '';
+        if (state.activeTags.size > 0) {
+            filterHtml += '<div class="active-filters">';
+            for (const t of state.activeTags) {
+                filterHtml += `<button class="filter-chip" onclick="toggleTagFilter('${jesc(t)}')" title="Remove filter">${esc(t)} \xd7</button>`;
+            }
+            filterHtml += `<button class="active-filters-clear" onclick="clearTagFilters()">Clear all</button>`;
+            filterHtml += '</div>';
         }
-        html += `<button class="active-filters-clear" onclick="clearTagFilters()">Clear all</button>`;
-        html += '</div>';
+        filtersEl.innerHTML = filterHtml;
     }
 
     // Hierarchy groups (prefix/suffix tags)
