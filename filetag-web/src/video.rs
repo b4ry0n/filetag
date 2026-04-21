@@ -610,8 +610,6 @@ async fn scene_positions(abs: &Path, n: usize, duration_secs: f64) -> anyhow::Re
         .args([
             "-vf",
             "select='gt(scene,0.35)',showinfo",
-            "-vsync",
-            "vfr",
             "-f",
             "null",
             "-",
