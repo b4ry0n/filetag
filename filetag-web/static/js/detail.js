@@ -773,8 +773,11 @@ function renderDetail() {
         const chipsHtml = renderBulkTagChips(bulkTags, count);
         const paths = [...state.selectedPaths];
         const hasAiTagsBulk = bulkTags.some(t => t.name.startsWith('ai/'));
+        const aiAcceptBulkBtn = hasAiTagsBulk
+            ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(${JSON.stringify(paths)})">Accept all ai/ tags</button>`
+            : '';
         const aiClearBulkBtn = hasAiTagsBulk
-            ? `<button class="ai-clear-btn" onclick="aiClearTags(${JSON.stringify(paths)})">Verwijder alle ai/-tags</button>`
+            ? `<button class="ai-clear-btn" onclick="aiClearTags(${JSON.stringify(paths)})">Remove all ai/ tags</button>`
             : '';
         panel.innerHTML = `
             <div class="detail-header">
@@ -789,6 +792,7 @@ function renderDetail() {
                     <input type="text" id="bulk-tag-input" placeholder="Tag (e.g. genre/rock)">
                     <button onclick="doBulkAddTag()">Add</button>
                 </div>
+                ${aiAcceptBulkBtn}
                 ${aiClearBulkBtn}
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
@@ -955,8 +959,11 @@ function renderDetail() {
 
     const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip' || type_ === 'video');
     const isAnalysing = state.aiAnalysing.has(f.path);
+    const aiAcceptBtn = hasAiTags
+        ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(['${jesc(f.path)}'])">Accept all ai/ tags</button>`
+        : '';
     const aiClearBtn = hasAiTags
-        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Verwijder ai/-tags</button>`
+        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Remove ai/ tags</button>`
         : '';
     const aiBtn = isAnalysable || hasAiTags
         ? `<div class="ai-analyse-row">
@@ -967,7 +974,8 @@ function renderDetail() {
                 <button class="ai-settings-btn" onclick="openSettings('prompts')" title="AI prompt settings">⚙</button>
             </div>
             <small class="ai-analyse-note">${type_ === 'video' ? 'Analysis is based on sampled frames, not the full video.' : ''}</small>` : ''}
-            ${aiClearBtn}
+                ${aiAcceptBtn}
+                ${aiClearBtn}
            </div>`
         : '';
 

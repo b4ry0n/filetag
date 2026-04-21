@@ -957,6 +957,52 @@ async function aiClearTags(paths) {
     }
 }
 
+/// Promote all ai/* tags on the given paths: add tags without ai/ prefix,
+/// then remove the original ai/ tags.
+async function aiAcceptAllTags(paths) {
+    const toast = showToast(`Accepting ai/ tags on ${paths.length} file${paths.length !== 1 ? 's' : ''}…`, 0);
+    try {
+        let accepted = 0;
+        for (const path of paths) {
+            let data = state.selectedFilesData.get(path);
+            if (!data || !Array.isArray(data.tags)) {
+                data = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
+            }
+
+            const aiTags = (data.tags || []).filter(t => t.name && t.name.startsWith('ai/'));
+            if (aiTags.length === 0) continue;
+
+            const promoted = aiTags
+                .map(t => {
+                    const bare = t.name.slice('ai/'.length);
+                    if (!bare) return null;
+                    return t.value ? `${bare}=${t.value}` : bare;
+                })
+                .filter(Boolean);
+
+            if (promoted.length === 0) continue;
+
+            const originals = aiTags.map(t => (t.value ? `${t.name}=${t.value}` : t.name));
+            await apiPost('/api/tag', { path, tags: promoted, dir: currentAbsDir() });
+            await apiPost('/api/untag', { path, tags: originals, dir: currentAbsDir() });
+
+            accepted += originals.length;
+            const refreshed = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
+            state.selectedFilesData.set(path, refreshed);
+            if (state.selectedFile?.path === path) state.selectedFile = refreshed;
+        }
+
+        await loadTags();
+        renderDetail();
+        _updateCardTagBadges();
+        dismissToast(toast);
+        showToast(accepted > 0 ? `Accepted ${accepted} ai/ tag${accepted !== 1 ? 's' : ''}` : 'No ai/ tags found');
+    } catch (e) {
+        dismissToast(toast);
+        showToast('Accept failed: ' + e.message);
+    }
+}
+
 async function aiAnalyseSingle(path) {
     if (state.aiAnalysing.has(path)) return; // already running
     state.aiAnalysing.add(path);
