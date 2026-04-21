@@ -97,9 +97,10 @@ jobs:
               note_args+=(--notes "Latest build from the main branch.")
             fi
             # Create or update the nightly pre-release, refreshing notes each time.
-            gh release create "nightly" "${note_args[@]}" 2>/dev/null \
-            || gh release edit "nightly" "${note_args[@]}" 2>/dev/null \
-            || true
+            # Delete any existing nightly release first (avoids orphaned drafts
+            # when the rolling tag is deleted and recreated).
+            gh release delete "nightly" --yes 2>/dev/null || true
+            gh release create "nightly" "${note_args[@]}"
           else
             gh release create "${{ github.ref_name }}" --generate-notes 2>/dev/null || true
           fi
