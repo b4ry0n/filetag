@@ -111,6 +111,8 @@ struct AiConfig {
     /// Maximum number of sampled frames packed into one AI sprite sheet.
     /// Lower values produce more sheets with higher per-frame detail.
     video_sheet_max_frames: usize,
+    /// Frame selection strategy for video analysis: `interval` or `scene`.
+    video_frame_selection: String,
     /// Free-text description of the collection (e.g. "family photos and videos" or "bird photography").
     /// Injected into every prompt so the model has collection context.
     subject: Option<String>,
@@ -171,6 +173,15 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(16)
         .clamp(1, 256);
+    let video_frame_selection_raw = db::get_setting(conn, "ai.video_frame_selection")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "interval".to_string());
+    let video_frame_selection = if video_frame_selection_raw == "scene" {
+        "scene".to_string()
+    } else {
+        "interval".to_string()
+    };
     let subject = db::get_setting(conn, "ai.subject")
         .ok()
         .flatten()
@@ -208,6 +219,7 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         video_mode,
         video_max_mb,
         video_sheet_max_frames,
+        video_frame_selection,
         subject,
         prompt_image,
         prompt_video,
@@ -627,10 +639,18 @@ async fn analyse_video_sprite(
     let n = n_frames
         .map(|v| (v as usize).clamp(2, 256))
         .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 16));
+    let use_scene_select = config.video_frame_selection == "scene";
 
     // Keep each image compact (multi-sheet) so the model retains more per-frame detail.
-    let sprite_paths =
-        generate_ai_sprites(abs, root, n, info.duration, config.video_sheet_max_frames).await?;
+    let sprite_paths = generate_ai_sprites(
+        abs,
+        root,
+        n,
+        info.duration,
+        config.video_sheet_max_frames,
+        use_scene_select,
+    )
+    .await?;
     let mut sprite_b64 = Vec::with_capacity(sprite_paths.len());
     for sprite_path in &sprite_paths {
         let sprite_bytes = tokio::fs::read(sprite_path).await?;
@@ -666,8 +686,9 @@ async fn analyse_video_full(
     let n = n_frames
         .map(|v| (v as usize).clamp(2, 256))
         .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 24));
+    let use_scene_select = config.video_frame_selection == "scene";
 
-    let frames = extract_video_frames(abs, n, info.duration).await?;
+    let frames = extract_video_frames(abs, n, info.duration, use_scene_select).await?;
     let b64_frames: Vec<String> = frames
         .iter()
         .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
@@ -1470,6 +1491,8 @@ pub(crate) struct AiConfigRequest {
     video_max_mb: Option<u64>,
     /// Maximum number of sampled frames per AI sprite sheet.
     video_sheet_max_frames: Option<u32>,
+    /// `interval` (default) or `scene`.
+    video_frame_selection: Option<String>,
     enabled: Option<bool>,
     dir: Option<String>,
 }
@@ -1560,6 +1583,14 @@ pub async fn api_ai_config_set(
         db::set_setting(&conn, "ai.video_sheet_max_frames", &clamped.to_string())
             .map_err(AppError)?;
     }
+    if let Some(v) = &body.video_frame_selection {
+        if v != "interval" && v != "scene" {
+            return Err(AppError(anyhow::anyhow!(
+                "video_frame_selection must be 'interval' or 'scene'"
+            )));
+        }
+        db::set_setting(&conn, "ai.video_frame_selection", v).map_err(AppError)?;
+    }
     if let Some(v) = body.enabled {
         db::set_setting(&conn, "ai.enabled", if v { "1" } else { "0" }).map_err(AppError)?;
     }
@@ -1629,6 +1660,12 @@ pub async fn api_ai_config_get(
         .parse::<u32>()
         .unwrap_or(16)
         .clamp(1, 256);
+    let video_frame_selection_raw = g("ai.video_frame_selection");
+    let video_frame_selection = if video_frame_selection_raw == "scene" {
+        "scene".to_string()
+    } else {
+        "interval".to_string()
+    };
     // Backward compat: if ai.prompt_image is unset, fall back to legacy ai.prompt.
     let prompt_image_raw = g("ai.prompt_image");
     let prompt_image = if prompt_image_raw.is_empty() {
@@ -1651,6 +1688,7 @@ pub async fn api_ai_config_get(
         "video_mode": video_mode,
         "video_max_mb": video_max_mb,
         "video_sheet_max_frames": video_sheet_max_frames,
+        "video_frame_selection": video_frame_selection,
         "enabled": g("ai.enabled") != "0",
         "default_prompt_image": AI_IMAGE_INTRO,
         "default_prompt_video": AI_VIDEO_INTRO,

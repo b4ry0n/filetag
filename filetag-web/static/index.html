@@ -301,6 +301,13 @@
                         <small class="settings-desc-inline">Used in sprite mode. Lower values create more sheets with better per-frame detail.</small>
                         <input type="number" id="ai-video-sheet-max-frames" value="16" min="1" max="256">
                     </label>
+                    <label>Frame selection
+                        <small class="settings-desc-inline">Interval = evenly spaced over time. Scene = ffmpeg scene-cut detection.</small>
+                        <select id="ai-video-frame-selection">
+                            <option value="interval">Interval (evenly spaced)</option>
+                            <option value="scene">Scene select (cut-aware)</option>
+                        </select>
+                    </label>
                     <div class="modal-actions">
                         <button id="ai-test-btn" onclick="aiTestConnection()">Test connection</button>
                         <button onclick="aiSaveSettings()">Save</button>

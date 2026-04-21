@@ -732,6 +732,7 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-video-mode').value = cfg.video_mode || 'sprite';
         document.getElementById('ai-video-max-mb').value = cfg.video_max_mb ?? 50;
         document.getElementById('ai-video-sheet-max-frames').value = cfg.video_sheet_max_frames ?? 16;
+        document.getElementById('ai-video-frame-selection').value = cfg.video_frame_selection || 'interval';
         _updateVideoMaxMbVisibility();
         document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
         document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
@@ -850,6 +851,7 @@ async function aiSaveSettings() {
         video_mode: document.getElementById('ai-video-mode').value,
         video_max_mb: parseInt(document.getElementById('ai-video-max-mb').value, 10) || 50,
         video_sheet_max_frames: parseInt(document.getElementById('ai-video-sheet-max-frames').value, 10) || 16,
+        video_frame_selection: document.getElementById('ai-video-frame-selection').value,
         enabled: document.getElementById('ai-enabled').checked,
         dir: currentAbsDir(),
     };
