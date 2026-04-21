@@ -524,6 +524,7 @@ fn build_full_prompt(
     config: &AiConfig,
     existing_tags: &[String],
     kv_keys: &[String],
+    source_path: Option<&Path>,
     data_prefix: Option<&str>,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -536,6 +537,15 @@ fn build_full_prompt(
 
     if let Some(s) = config.subject.as_deref().filter(|s| !s.is_empty()) {
         parts.push(format!("Collection context: {s}"));
+    }
+
+    if let Some(path) = source_path
+        && let Some(name) = path.file_name().and_then(|n| n.to_str())
+        && !name.is_empty()
+    {
+        parts.push(format!(
+            "Filename hint: \"{name}\". Treat the filename only as a weak hint, not as ground truth. Use it only when it supports the visible content or other clear evidence. Ignore misleading scanner names, hashes, sequence numbers, release names, or other arbitrary filename fragments."
+        ));
     }
 
     let output_fmt = config
@@ -575,13 +585,21 @@ If you cannot determine a value for a key, omit that key entirely."
 
 async fn analyse_image(
     config: &AiConfig,
+    source_path: &Path,
     jpeg_bytes: &[u8],
     existing_tags: &[String],
     kv_keys: &[String],
 ) -> anyhow::Result<(String, Vec<String>)> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
     let intro = config.prompt_image.as_deref().unwrap_or(AI_IMAGE_INTRO);
-    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
+    let prompt = build_full_prompt(
+        intro,
+        config,
+        existing_tags,
+        kv_keys,
+        Some(source_path),
+        None,
+    );
     let raw = vlm_call(config, &prompt, Some(&b64)).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
@@ -621,7 +639,7 @@ async fn analyse_video_sprite(
     let b64_refs: Vec<&str> = sprite_b64.iter().map(|s| s.as_str()).collect();
 
     let intro = config.prompt_video.as_deref().unwrap_or(AI_VIDEO_INTRO);
-    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
+    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, Some(abs), None);
     let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
@@ -660,7 +678,7 @@ async fn analyse_video_full(
         .prompt_video
         .as_deref()
         .unwrap_or(AI_VIDEO_FULL_INTRO);
-    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, None);
+    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, Some(abs), None);
     let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
     let tags = parse_ai_tags(&raw, &config.tag_prefix)?;
     let tags = filter_bare_kv_keys(tags, kv_keys, &config.tag_prefix);
@@ -774,7 +792,14 @@ async fn analyse_archive(
         listing,
     );
     let intro = config.prompt_archive.as_deref().unwrap_or(AI_ARCHIVE_INTRO);
-    let prompt = build_full_prompt(intro, config, existing_tags, kv_keys, Some(&data_prefix));
+    let prompt = build_full_prompt(
+        intro,
+        config,
+        existing_tags,
+        kv_keys,
+        Some(archive_abs),
+        Some(&data_prefix),
+    );
 
     let b64_refs: Vec<&str> = sample_b64.iter().map(|s| s.as_str()).collect();
     let raw = vlm_call_multi(config, &prompt, &b64_refs).await?;
@@ -1093,6 +1118,69 @@ fn fetch_existing_tags(
     (existing_tags, kv_keys)
 }
 
+/// Batch helper: return `None` when the file is already marked as analysed.
+/// Otherwise return the same tuple as `fetch_existing_tags`.
+fn fetch_existing_tags_unless_marked(
+    conn: &Connection,
+    root: &Path,
+    rel: &str,
+    tag_prefix: &str,
+    marker: &str,
+) -> Option<(Vec<String>, Vec<String>)> {
+    let rec_result = if rel.contains("::") {
+        db::get_or_index_archive_entry(conn, rel)
+    } else {
+        db::get_or_index_file(conn, rel, root)
+    };
+
+    if let Ok(rec) = rec_result
+        && let Ok(all_tags) = db::tags_for_file(conn, rec.id)
+        && all_tags.iter().any(|(name, _)| name == marker)
+    {
+        return None;
+    }
+
+    Some(fetch_existing_tags(conn, root, rel, tag_prefix))
+}
+
+/// Shared per-file analysis dispatch used by both single and batch handlers.
+async fn analyse_one_path(
+    config: &AiConfig,
+    effective_root: &Path,
+    rel: &str,
+    existing_tags: &[String],
+    kv_keys: &[String],
+    n_frames: Option<u32>,
+) -> anyhow::Result<(String, Vec<String>, Option<String>)> {
+    let ext = rel.rsplit('.').next().unwrap_or("").to_lowercase();
+    let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
+    let is_video = AI_VIDEO_EXTS.contains(&ext.as_str());
+
+    if is_archive {
+        let abs = effective_root.join(rel);
+        let (raw, tags) = analyse_archive(config, &abs, existing_tags, kv_keys).await?;
+        Ok((raw, tags, None))
+    } else if is_video {
+        let abs = effective_root.join(rel);
+        analyse_video(
+            config,
+            &abs,
+            effective_root,
+            existing_tags,
+            kv_keys,
+            n_frames,
+        )
+        .await
+    } else {
+        let jpeg = prepare_jpeg_for_analysis(effective_root, rel)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Could not prepare image for analysis"))?;
+        let abs = effective_root.join(rel);
+        let (raw, tags) = analyse_image(config, &abs, &jpeg, existing_tags, kv_keys).await?;
+        Ok((raw, tags, None))
+    }
+}
+
 /// Prepare JPEG bytes for AI analysis from either a plain file or archive entry.
 async fn prepare_jpeg_for_analysis(effective_root: &Path, rel: &str) -> Option<Vec<u8>> {
     if let Some(sep) = rel.find("::") {
@@ -1177,11 +1265,6 @@ pub async fn api_ai_analyse(
     };
     let (conn, effective_root, rel) = open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
-    // Detect archive or video files.
-    let ext = body.path.rsplit('.').next().unwrap_or("").to_lowercase();
-    let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
-    let is_video = AI_VIDEO_EXTS.contains(&ext.as_str());
-
     let _permit = AI_LIMITER
         .acquire()
         .await
@@ -1190,33 +1273,16 @@ pub async fn api_ai_analyse(
     let (existing_tags, kv_keys) =
         fetch_existing_tags(&conn, &effective_root, &rel, &config.tag_prefix);
 
-    let (raw_response, tags, warning) = if is_archive {
-        let abs = effective_root.join(&rel);
-        let (raw, tags) = analyse_archive(&config, &abs, &existing_tags, &kv_keys)
-            .await
-            .map_err(AppError)?;
-        (raw, tags, None)
-    } else if is_video {
-        let abs = effective_root.join(&rel);
-        analyse_video(
-            &config,
-            &abs,
-            &effective_root,
-            &existing_tags,
-            &kv_keys,
-            body.n_frames,
-        )
-        .await
-        .map_err(AppError)?
-    } else {
-        let jpeg = prepare_jpeg_for_analysis(&effective_root, &rel)
-            .await
-            .ok_or_else(|| AppError(anyhow::anyhow!("Could not prepare image for analysis")))?;
-        let (raw, tags) = analyse_image(&config, &jpeg, &existing_tags, &kv_keys)
-            .await
-            .map_err(AppError)?;
-        (raw, tags, None)
-    };
+    let (raw_response, tags, warning) = analyse_one_path(
+        &config,
+        &effective_root,
+        &rel,
+        &existing_tags,
+        &kv_keys,
+        body.n_frames,
+    )
+    .await
+    .map_err(AppError)?;
 
     let applied = if !body.dry_run && !tags.is_empty() {
         apply_ai_tags(&conn, &effective_root, &rel, &tags, &config.tag_prefix).map_err(AppError)?;
@@ -1301,88 +1367,37 @@ pub async fn api_ai_analyse_batch(
                 Err(_) => continue,
             };
 
-            // Check marker + fetch existing tags and kv-keys
-            let (existing_tags, kv_keys): (Vec<String>, Vec<String>) = {
-                let rec_result = if eff_rel.contains("::") {
-                    db::get_or_index_archive_entry(&conn, &eff_rel)
-                } else {
-                    db::get_or_index_file(&conn, &eff_rel, &effective_root)
-                };
-                let existing: Vec<String> = match rec_result {
-                    Ok(rec) => match db::tags_for_file(&conn, rec.id) {
-                        Ok(all_tags) => {
-                            if all_tags.iter().any(|(n, _)| n == &marker) {
-                                continue;
-                            }
-                            all_tags
-                                .into_iter()
-                                .filter(|(name, _)| !name.starts_with(&config.tag_prefix))
-                                .map(|(name, value)| match value.as_deref().unwrap_or("") {
-                                    "" => name,
-                                    v => format!("{name}={v}"),
-                                })
-                                .collect()
-                        }
-                        Err(_) => vec![],
-                    },
-                    Err(_) => vec![],
-                };
-                let kv: Vec<String> = db::all_tags(&conn)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|(name, _, _, has_values)| {
-                        if name.starts_with(&config.tag_prefix) || !has_values {
-                            None
-                        } else {
-                            Some(name)
-                        }
-                    })
-                    .collect();
-                (existing, kv)
+            let (existing_tags, kv_keys) = match fetch_existing_tags_unless_marked(
+                &conn,
+                &effective_root,
+                &eff_rel,
+                &config.tag_prefix,
+                &marker,
+            ) {
+                Some(v) => v,
+                None => continue,
             };
-
-            let ext = rel_path.rsplit('.').next().unwrap_or("").to_lowercase();
-            let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
-            let is_video = AI_VIDEO_EXTS.contains(&ext.as_str());
 
             let _permit = match AI_LIMITER.acquire().await {
                 Ok(p) => p,
                 Err(_) => break,
             };
 
-            let (_raw, tags, fallback) = if is_archive {
-                let abs = effective_root.join(&eff_rel);
-                match analyse_archive(&config, &abs, &existing_tags, &kv_keys).await {
-                    Ok((raw, tags)) => (raw, tags, false),
-                    Err(_) => continue,
-                }
-            } else if is_video {
-                let abs = effective_root.join(&eff_rel);
-                match analyse_video(
-                    &config,
-                    &abs,
-                    &effective_root,
-                    &existing_tags,
-                    &kv_keys,
-                    None,
-                )
-                .await
-                {
-                    Ok((raw, tags, warn)) => (raw, tags, warn.is_some()),
-                    Err(_) => continue,
-                }
-            } else {
-                let jpeg = match prepare_jpeg_for_analysis(&effective_root, &eff_rel).await {
-                    Some(j) => j,
-                    None => continue,
-                };
-                match analyse_image(&config, &jpeg, &existing_tags, &kv_keys).await {
-                    Ok((raw, tags)) => (raw, tags, false),
-                    Err(_) => continue,
-                }
+            let (_raw, tags, warning) = match analyse_one_path(
+                &config,
+                &effective_root,
+                &eff_rel,
+                &existing_tags,
+                &kv_keys,
+                None,
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(_) => continue,
             };
 
-            if fallback {
+            if warning.is_some() {
                 let mut prog = state2.ai_progress.lock().unwrap();
                 prog.fallback_count += 1;
             }

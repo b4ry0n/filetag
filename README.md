@@ -288,6 +288,7 @@ Open `http://127.0.0.1:3000` (default) in your browser. The full query language 
 | `--password-file <PATH>`    |               | Read the password from a file; takes precedence over `--password` |
 | `-P, --generate-password`   |               | Generate a random password and print it; useful for ad-hoc access |
 | `--no-parents`              |               | Do not include ancestor databases in the session |
+| `--no-scan`                 |               | Skip the startup scan for nested databases |
 
 ### Authentication
 
@@ -344,6 +345,8 @@ When a password is set:
 filetag-web intentionally has a broader database scope than the CLI:
 
 At startup it loads the primary database, all explicitly linked child databases, and all ancestor databases (same as the CLI). It then also performs a recursive filesystem scan under each loaded root to find any nested `.filetag/` databases, up to 10 levels deep. This means that every sub-directory with its own database is automatically included in the session, whether or not it was registered with `filetag db add`.
+
+Use `--no-scan` to skip that recursive discovery step and start faster. With `--no-scan`, the session includes only the primary database, explicitly linked child databases, and any ancestor databases that are still enabled.
 
 The reason for this difference: in the web interface the user browses the full directory tree and expects that what they can see they can also search and tag consistently. Tags always land in the most specific database for a file (the innermost `.filetag/` that covers it), and searches cover all loaded databases, so browsing, tagging, and searching are always in sync.
 

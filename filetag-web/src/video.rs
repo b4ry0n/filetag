@@ -626,14 +626,14 @@ pub async fn generate_ai_sprites(
             }
             let row_len = end - start;
             if row_len == 1 {
-                filter_parts.push(format!("[f{start}]copy[r{row}]"));
+                filter_parts.push(format!("[f{start}]null[r{row}]"));
             } else {
                 let row_inputs: String = (start..end).map(|i| format!("[f{i}]")).collect();
                 filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
             }
         }
         if rows == 1 {
-            filter_parts.push("[r0]copy[out]".to_string());
+            filter_parts.push("[r0]null[out]".to_string());
         } else {
             let row_inputs: String = (0..rows).map(|i| format!("[r{i}]")).collect();
             filter_parts.push(format!("{row_inputs}vstack={rows}[out]"));
