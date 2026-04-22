@@ -260,6 +260,13 @@ pub struct CacheClearBody {
     pub all: Option<bool>,
 }
 
+/// Body for `POST /api/cache/clear-subdir`.
+#[derive(Deserialize)]
+pub struct CacheClearSubdirBody {
+    /// The cache subdirectory to remove (e.g. "vthumbs", "ai_sprites").
+    pub subdir: String,
+}
+
 /// Query params for `GET /api/settings`.
 #[derive(Deserialize, Default)]
 pub struct SettingsParams {
