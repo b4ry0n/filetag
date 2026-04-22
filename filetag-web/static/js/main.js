@@ -297,6 +297,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     render();
 
+    // Build language selector and apply i18n translations to all data-i18n elements.
+    const langSel = document.getElementById('lang-select');
+    if (langSel) {
+        langSel.innerHTML = LANG_OPTIONS.map(o =>
+            `<option value="${o.code}"${o.code === getLang() ? ' selected' : ''}>${o.label}</option>`
+        ).join('');
+    }
+    applyI18n();
+
     // Media viewer stage events (wheel, drag, pinch)
     _cvInitStageEvents();
 

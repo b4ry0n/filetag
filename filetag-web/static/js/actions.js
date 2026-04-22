@@ -573,9 +573,9 @@ async function clearCache(all = false) {
 
     const btn = document.getElementById('cache-clear-page-btn');
     btn.disabled = true;
-    const toast = showToast(all ? 'Clearing cache…' : 'Clearing page cache…', 0);
+    const toast = showToast(all ? t('toast.cache-cleared') + '\u2026' : t('toast.page-cache-cleared') + '\u2026', 0);
     let success = false;
-    let errorMsg = 'Cache clear failed';
+    let errorMsg = t('toast.cache-clear-failed');
     try {
         let body = null;
         if (!all) {
@@ -600,7 +600,7 @@ async function clearCache(all = false) {
             body: body ?? undefined,
         });
         if (!resp.ok) {
-            errorMsg = 'Cache clear failed: ' + (await resp.text()).trim();
+            errorMsg = t('toast.cache-clear-failed') + ': ' + (await resp.text()).trim();
             throw new Error(errorMsg);
         }
         // Invalidate the in-memory blob URL cache so thumbnails reload from
@@ -612,7 +612,7 @@ async function clearCache(all = false) {
     } finally {
         btn.disabled = false;
         dismissToast(toast);
-        showToast(success ? (all ? 'Cache cleared' : 'Page cache cleared') : errorMsg);
+        showToast(success ? (all ? t('toast.cache-cleared') : t('toast.page-cache-cleared')) : errorMsg);
         if (state.mode === 'search') {
             await doSearch();
         } else {
@@ -651,7 +651,7 @@ async function pregenSprites() {
 
     let done = 0;
     for (const path of videoPaths) {
-        updateToast(toast, `Generating video sprites… (${done} / ${videoPaths.length})`);
+        updateToast(toast, t('toolbar.sprites-gen') + ` (${done} / ${videoPaths.length})`);
         try {
             const minN = state.settings.sprite_min ?? 8;
             const maxN = state.settings.sprite_max ?? 16;
@@ -662,7 +662,7 @@ async function pregenSprites() {
     }
 
     dismissToast(toast);
-    showToast(`Done: ${done} sprite${done !== 1 ? 's' : ''} generated`);
+    showToast(t('toast.sprites-done'));
     btn.disabled = false;
 }
 
@@ -918,7 +918,7 @@ async function aiPromoteTag(path, tagName, value) {
     const promoted = tagName.slice('ai/'.length);
     if (!promoted) return;
     const newTagStr = value ? `${promoted}=${value}` : promoted;
-    const toast = showToast(`Promoting: ${newTagStr}…`, 0);
+    const toast = showToast(t('toast.promoting', {tag: newTagStr}), 0);
     try {
         // Add the promoted tag, then remove the ai/ original.
         await apiPost('/api/tag', { path, tags: [newTagStr], dir: currentAbsDir() });
@@ -929,7 +929,7 @@ async function aiPromoteTag(path, tagName, value) {
         renderDetailTagsOnly();
         _updateCardTagBadges();
     } catch (e) {
-        showToast('Promote failed: ' + e.message);
+        showToast(t('toast.promote-failed', {err: e.message}));
     } finally {
         dismissToast(toast);
     }
@@ -937,7 +937,8 @@ async function aiPromoteTag(path, tagName, value) {
 
 /// Remove all ai/* tags from given paths.
 async function aiClearTags(paths) {
-    const toast = showToast(`Removing ai/ tags from ${paths.length} file${paths.length !== 1 ? 's' : ''}…`, 0);
+    const np = paths.length;
+    const toast = showToast(t('toast.removing-ai-tags', {n: np, plural: np !== 1 ? t('toast.removing-ai-plural') : ''}), 0);
     try {
         await apiPost('/api/ai/clear-tags', { paths, dir: currentAbsDir() });
         // Refresh each file that may be currently selected.
@@ -950,17 +951,18 @@ async function aiClearTags(paths) {
         renderDetail();
         _updateCardTagBadges();
         dismissToast(toast);
-        showToast(`ai/ tags removed`);
+        showToast(t('toast.ai-tags-removed'));
     } catch (e) {
         dismissToast(toast);
-        showToast('Remove failed: ' + e.message);
+        showToast(t('toast.remove-failed', {err: e.message}));
     }
 }
 
 /// Promote all ai/* tags on the given paths: add tags without ai/ prefix,
 /// then remove the original ai/ tags.
 async function aiAcceptAllTags(paths) {
-    const toast = showToast(`Accepting ai/ tags on ${paths.length} file${paths.length !== 1 ? 's' : ''}…`, 0);
+    const nap = paths.length;
+    const toast = showToast(t('toast.accepting-ai-tags', {n: nap, plural: nap !== 1 ? t('toast.accepting-plural') : ''}), 0);
     try {
         let accepted = 0;
         for (const path of paths) {
@@ -996,10 +998,10 @@ async function aiAcceptAllTags(paths) {
         renderDetail();
         _updateCardTagBadges();
         dismissToast(toast);
-        showToast(accepted > 0 ? `Accepted ${accepted} ai/ tag${accepted !== 1 ? 's' : ''}` : 'No ai/ tags found');
+        showToast(accepted > 0 ? t('toast.accepted', {n: accepted, plural: accepted !== 1 ? t('toast.accepted-plural') : ''}) : t('toast.no-ai-tags'));
     } catch (e) {
         dismissToast(toast);
-        showToast('Accept failed: ' + e.message);
+        showToast(t('toast.accept-failed', {err: e.message}));
     }
 }
 
@@ -1008,7 +1010,7 @@ async function aiAnalyseSingle(path) {
     state.aiAnalysing.add(path);
     // Re-render so the button shows "Analysing…" immediately (also persists on navigate-away & back)
     if (state.selectedFile?.path === path) renderDetail();
-    const toast = showToast(`AI: analysing…`, 0);
+    const toast = showToast(t('toast.ai-analysing'), 0);
     const autoFramesEl = document.getElementById('ai-frames-auto');
     if (autoFramesEl) aiSetVideoFramesAuto(autoFramesEl.checked);
     const framesEl = document.getElementById('ai-frames-input');
@@ -1027,10 +1029,11 @@ async function aiAnalyseSingle(path) {
         if (!res.ok) throw new Error(data.error || res.statusText);
         const n = (data.tags || []).length;
         dismissToast(toast);
+        const nTagsMsg = t('toast.ai-n-tags', {n, plural: n !== 1 ? t('toast.ai-tags-plural') : ''});
         if (data.warning) {
-            showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} added (⚠ ${data.warning})`, 8000);
+            showToast(nTagsMsg + ` (⚠ ${data.warning})`, 8000);
         } else {
-            showToast(`AI: ${n} tag${n !== 1 ? 's' : ''} added`);
+            showToast(nTagsMsg);
         }
         if (state.selectedFile?.path === path) {
             await loadFileDetail(path);
@@ -1038,10 +1041,82 @@ async function aiAnalyseSingle(path) {
         }
     } catch (e) {
         dismissToast(toast);
-        showToast('AI error: ' + e.message);
+        showToast(t('toast.ai-error', {err: e.message}));
     } finally {
         state.aiAnalysing.delete(path);
         if (state.selectedFile?.path === path) renderDetail();
+    }
+}
+
+/// Per-file AI analysis for all currently selected files (sequential).
+async function aiAnalyseSelected() {
+    const paths = [...state.selectedPaths].filter(p => isAiImage(p));
+    if (paths.length === 0) {
+        showToast(t('toast.ai-no-images'));
+        return;
+    }
+    const toast = showToast(t('toast.ai-analysing-n', {done: 0, total: paths.length}), 0);
+    toast.classList.add('toast-progress');
+    let done = 0;
+    let errors = 0;
+    for (const path of paths) {
+        if (state.aiAnalysing.has(path)) { done++; continue; }
+        state.aiAnalysing.add(path);
+        renderDetail();
+        updateToast(toast, t('toast.ai-analysing-n', {done, total: paths.length}));
+        try {
+            const res = await fetch('/api/ai/analyse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, dir: currentAbsDir() }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || res.statusText);
+        } catch (_) {
+            errors++;
+        } finally {
+            state.aiAnalysing.delete(path);
+            done++;
+        }
+    }
+    dismissToast(toast);
+    const msg = errors > 0
+        ? t('toast.ai-errors', {done: done - errors, errors, plural: errors !== 1 ? t('toast.ai-errors-plural') : ''})
+        : t('toast.ai-analysed-n', {n: done, plural: done !== 1 ? t('toast.ai-analysed-plural') : ''});
+    showToast(msg);
+    await loadTags();
+    renderDetail();
+    _updateCardTagBadges();
+}
+
+/// Common-traits AI analysis: send all selected images to the VLM together
+/// and apply only the shared tags to every selected file.
+async function aiAnalyseCommonTraits() {
+    const paths = [...state.selectedPaths];
+    if (paths.length === 0) {
+        showToast(t('toast.ai-no-images'));
+        return;
+    }
+    const toast = showToast(t('toast.ai-common-analysing'), 0);
+    toast.classList.add('toast-progress');
+    try {
+        const res = await fetch('/api/ai/analyse-common', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths, dir: currentAbsDir() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        const n = (data.tags || []).length;
+        const m = data.applied_count || 0;
+        dismissToast(toast);
+        showToast(t('toast.ai-common-done', {n, plural: n !== 1 ? t('toast.ai-common-plural') : '', m, plural2: m !== 1 ? t('toast.ai-common-plural2') : ''}));
+        await loadTags();
+        renderDetail();
+        _updateCardTagBadges();
+    } catch (e) {
+        dismissToast(toast);
+        showToast(t('toast.ai-error', {err: e.message}));
     }
 }
 
@@ -1077,14 +1152,14 @@ async function aiAnalyseBatch() {
     }
 
     if (imagePaths.length === 0) {
-        showToast('No images in current view');
+        showToast(t('toast.ai-none-in-view'));
         return;
     }
 
     const btn = document.getElementById('ai-analyse-btn');
     if (btn) btn.disabled = true;
 
-    const toast = showToast(`AI: queuing ${imagePaths.length} image${imagePaths.length !== 1 ? 's' : ''}…`, 0);
+    const toast = showToast(t('toast.ai-analysing'), 0);
     toast.classList.add('toast-progress');
 
     try {
@@ -1101,13 +1176,14 @@ async function aiAnalyseBatch() {
             try {
                 const sr = await fetch('/api/ai/status');
                 const prog = await sr.json();
-                updateToast(toast, `AI: analysing… (${prog.done} / ${prog.total})`);
+                updateToast(toast, t('toast.ai-analysing-n', {done: prog.done, total: prog.total}));
                 if (!prog.running) {
                     clearInterval(poll);
                     dismissToast(toast);
+                    const nd = prog.done || 0;
                     const fb = prog.fallback_count || 0;
-                    const msg = `AI done: ${prog.done} file${prog.done !== 1 ? 's' : ''} analysed`
-                        + (fb > 0 ? ` (⚠ ${fb} video${fb !== 1 ? 's' : ''} fell back to sprite mode)` : '');
+                    const msg = t('toast.ai-done', {n: nd, plural: nd !== 1 ? t('toast.ai-done-plural') : ''})
+                        + (fb > 0 ? t('toast.ai-fallback', {n: fb, plural: fb !== 1 ? t('toast.ai-fallback-plural') : ''}) : '');
                     showToast(msg, fb > 0 ? 8000 : 3000);
                     if (btn) btn.disabled = false;
                     await loadTags();
@@ -1120,7 +1196,7 @@ async function aiAnalyseBatch() {
         }, 2000);
     } catch (e) {
         dismissToast(toast);
-        showToast('AI error: ' + e.message);
+        showToast(t('toast.ai-error', {err: e.message}));
         if (btn) btn.disabled = false;
     }
 }
@@ -1179,54 +1255,58 @@ async function loadCacheInfo() {
     const totalEl = document.getElementById('cm-total-label');
     if (!listEl) return;
     if (state.currentBasePath == null) {
-        listEl.innerHTML = '<div class="cm-loading">Geen database geselecteerd.</div>';
+        listEl.innerHTML = `<div class="cm-loading">${esc(t('cm.empty'))}</div>`;
         return;
     }
-    listEl.innerHTML = '<div class="cm-loading">Laden\u2026</div>';
+    listEl.innerHTML = `<div class="cm-loading">${esc(t('cm.loading'))}</div>`;
     try {
         const data = await api('/api/cache/info' + dirParam('?'));
         if (!data.subdirs || data.subdirs.length === 0) {
-            listEl.innerHTML = '<div class="cm-loading">Cache is leeg.</div>';
+            listEl.innerHTML = `<div class="cm-loading">${esc(t('cm.empty'))}</div>`;
             if (totalEl) totalEl.textContent = '';
             return;
         }
-        const LABELS = {
-            thumbs:      'Miniaturen',
-            raw:         'RAW-voorbeelden',
-            vthumbs:     'Video sprites (trickplay)',
-            ai_sprites:  'AI-analyse sprites (video)',
-            hls2:        'HLS-videobestanden',
-            video:       'Video-transcodes',
+        const CACHE_DIR_LABELS_BY_LANG = {
+            thumbs:     {en:'Thumbnails',       nl:'Miniaturen',      de:'Miniaturbilder',  fr:'Miniatures',       es:'Miniaturas',    it:'Anteprime',      pt:'Miniaturas',    pl:'Miniatury',      sv:'Miniatyrer'},
+            raw:        {en:'RAW previews',     nl:'RAW-voorbeelden', de:'RAW-Vorschauen',  fr:'Aperçus RAW',      es:'Vistas previas RAW', it:'Anteprime RAW', pt:'Pré-visualizações RAW', pl:'Podglądy RAW', sv:'RAW-förhandsvisningar'},
+            vthumbs:    {en:'Video sprites',    nl:'Video-sprites',   de:'Video-Sprites',   fr:'Sprites vidéo',    es:'Sprites de vídeo', it:'Sprite video', pt:'Sprites de vídeo', pl:"Sprite'y wideo", sv:'Videospritar'},
+            ai_sprites: {en:'AI sprites',       nl:'AI-sprites',      de:'KI-Sprites',      fr:'Sprites IA',       es:'Sprites de IA', it:'Sprite IA',      pt:'Sprites de IA', pl:"Sprite'y AI",    sv:'AI-spritar'},
+            hls2:       {en:'HLS video files',  nl:'HLS-videobestanden', de:'HLS-Videodateien', fr:'Fichiers HLS', es:'Archivos HLS',  it:'File HLS',       pt:'Ficheiros HLS', pl:'Pliki HLS',      sv:'HLS-filer'},
+            video:      {en:'Video transcodes', nl:'Video-transcodes', de:'Transkodierungen', fr:'Transcodages',   es:'Transcodificaciones', it:'Transcodifiche', pt:'Transcodificações', pl:'Transkodowania', sv:'Transkodningar'},
         };
+        function cacheDirLabel(name) {
+            const map = CACHE_DIR_LABELS_BY_LANG[name];
+            if (!map) return name;
+            const lang = getLang();
+            return map[lang] || map.en || name;
+        }
         let html = '';
         for (const sd of data.subdirs) {
-            const label = LABELS[sd.name] || sd.name;
+            const label = cacheDirLabel(sd.name);
             const size = formatSize(sd.size);
             const count = sd.count.toLocaleString();
             html += `<div class="cm-subdir-row">
                 <div class="cm-subdir-info">
                     <span class="cm-subdir-name">${esc(label)}</span>
-                    <span class="cm-subdir-meta">${count} bestand${sd.count !== 1 ? 'en' : ''} &middot; ${size}</span>
+                    <span class="cm-subdir-meta">${count} &middot; ${size}</span>
                 </div>
-                <button class="cm-btn cm-btn-sm" onclick="doCacheClearSubdir('${jesc(sd.name)}')">Wissen</button>
+                <button class="cm-btn cm-btn-sm" onclick="doCacheClearSubdir('${jesc(sd.name)}')">${esc(t('cm.clear-btn'))}</button>
             </div>`;
         }
         listEl.innerHTML = html;
-        if (totalEl) totalEl.textContent = 'Totaal: ' + formatSize(data.total);
+        const totalCount = data.total_count || data.subdirs.reduce((s, d) => s + d.count, 0);
+        if (totalEl) totalEl.textContent = t('cm.total', {size: formatSize(data.total), n: totalCount, plural: t('cm.total-plural')});
     } catch (e) {
-        listEl.innerHTML = `<div class="cm-loading">Fout: ${esc(e.message || String(e))}</div>`;
+        listEl.innerHTML = `<div class="cm-loading">${esc(e.message || String(e))}</div>`;
     }
 }
 
 async function doCachePrune() {
-    if (state.currentBasePath == null) {
-        showToast('Geen database geselecteerd.');
-        return;
-    }
+    if (state.currentBasePath == null) return;
     const btn = document.getElementById('cm-prune-btn');
     const statusEl = document.getElementById('cm-status');
     if (btn) btn.disabled = true;
-    if (statusEl) statusEl.textContent = 'Bezig met opschonen\u2026';
+    if (statusEl) statusEl.textContent = t('cm.prune-btn') + '\u2026';
     try {
         const resp = await fetch('/api/cache/prune' + dirParam('?'), {
             method: 'POST',
@@ -1236,11 +1316,11 @@ async function doCachePrune() {
         const data = await resp.json();
         const freed = formatSize(data.freed || 0);
         const n = data.removed || 0;
-        if (statusEl) statusEl.textContent = `Verwijderd: ${n} bestand${n !== 1 ? 'en' : ''} (${freed} vrijgemaakt).`;
+        if (statusEl) statusEl.textContent = t('cm.pruned', {n, plural: n !== 1 ? t('cm.pruned-plural') : '', freed});
         _thumbClearCache();
         await loadCacheInfo();
     } catch (e) {
-        if (statusEl) statusEl.textContent = 'Fout: ' + (e.message || e);
+        if (statusEl) statusEl.textContent = e.message || String(e);
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -1249,7 +1329,7 @@ async function doCachePrune() {
 async function doCacheClearSubdir(subdir) {
     if (state.currentBasePath == null) return;
     const statusEl = document.getElementById('cm-status');
-    if (statusEl) statusEl.textContent = 'Bezig\u2026';
+    if (statusEl) statusEl.textContent = t('cm.loading');
     try {
         await fetch('/api/cache/clear-subdir' + dirParam('?'), {
             method: 'POST',
@@ -1257,10 +1337,10 @@ async function doCacheClearSubdir(subdir) {
             body: JSON.stringify({ subdir }),
         });
         _thumbClearCache();
-        if (statusEl) statusEl.textContent = `"${subdir}" cache gewist.`;
+        if (statusEl) statusEl.textContent = t('toast.cache-cleared');
         await loadCacheInfo();
     } catch (e) {
-        if (statusEl) statusEl.textContent = 'Fout: ' + (e.message || e);
+        if (statusEl) statusEl.textContent = e.message || String(e);
     }
 }
 
