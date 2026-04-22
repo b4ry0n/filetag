@@ -1277,6 +1277,13 @@ function toggleTagGroup(prefix) {
     renderTags();
 }
 
+function toggleTagSortMode() {
+    state.tagSortMode = state.tagSortMode === 'groups-first' ? 'alpha' : 'groups-first';
+    const btn = document.getElementById('sidebar-sort-btn');
+    if (btn) btn.classList.toggle('active', state.tagSortMode === 'groups-first');
+    renderTags();
+}
+
 async function doTagGroupSearch(prefix) {
     // Expand group on click and clear any active tag filters
     _thumbClearCache();

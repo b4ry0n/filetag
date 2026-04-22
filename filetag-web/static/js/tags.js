@@ -16,8 +16,148 @@ function colorDot(color) {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar tag list
+// Tag tree building and rendering (sidebar)
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a recursive tree from a flat tag list.
+ * Returns Map<segment, TreeNode> where TreeNode = { segment, fullPath, tag, children }.
+ */
+function buildTagTree(tags) {
+    const root = new Map();
+    for (const tag of tags) {
+        const parts = tag.name.split('/');
+        let nodeMap = root;
+        for (let i = 0; i < parts.length; i++) {
+            const seg = parts[i];
+            const fullPath = parts.slice(0, i + 1).join('/');
+            if (!nodeMap.has(seg)) {
+                nodeMap.set(seg, { segment: seg, fullPath, tag: null, children: new Map() });
+            }
+            const node = nodeMap.get(seg);
+            if (i === parts.length - 1) node.tag = tag;
+            nodeMap = node.children;
+        }
+    }
+    return root;
+}
+
+function _nodeCount(node) {
+    let n = node.tag ? node.tag.count : 0;
+    for (const child of node.children.values()) n += _nodeCount(child);
+    return n;
+}
+
+function _anyDescendantActive(nodeMap) {
+    for (const node of nodeMap.values()) {
+        if (node.tag && state.activeTags.has(node.fullPath)) return true;
+        if (_anyDescendantActive(node.children)) return true;
+    }
+    return false;
+}
+
+/**
+ * Render children of a node map as HTML.
+ * depth=0: top-level; respects tagSortMode.
+ * depth>0: inside a group; pure alphabetical by segment.
+ */
+function renderTagTreeNodes(nodeMap, depth) {
+    const nodes = [...nodeMap.values()];
+    if (depth === 0 && state.tagSortMode === 'groups-first') {
+        nodes.sort((a, b) => {
+            const ag = a.children.size > 0 ? 0 : 1;
+            const bg = b.children.size > 0 ? 0 : 1;
+            if (ag !== bg) return ag - bg;
+            return a.segment.localeCompare(b.segment);
+        });
+    } else {
+        nodes.sort((a, b) => a.segment.localeCompare(b.segment));
+    }
+    return nodes.map(n => renderTagTreeNode(n, depth)).join('');
+}
+
+function renderTagTreeNode(node, depth) {
+    const { segment, fullPath, tag, children } = node;
+    const hasChildren = children.size > 0;
+    // Each sub-group level adds 12 px of left margin (accumulated through nesting).
+    const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
+
+    // --- Leaf node ---
+    if (!hasChildren) {
+        if (!tag) return '';
+        if (tag.has_values) return _renderKvNode(tag, segment, marginStyle);
+        const active = state.activeTags.has(fullPath) ? ' active' : '';
+        const synBadge = (tag.synonyms || []).length
+            ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
+        const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
+        return `<button class="${cls}${active}" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')">${colorDot(tag.color)}${esc(segment)}${synBadge} <span class="count">${tag.count}</span></button>`;
+    }
+
+    // --- Group node (has children; may also have a tag at this exact path) ---
+    const totalCount = _nodeCount(node);
+    const expanded = state.expandedGroups.has(fullPath);
+    const expandedClass = expanded ? ' expanded' : '';
+    const anyActive = (tag && state.activeTags.has(fullPath)) || _anyDescendantActive(children);
+    const searchQuery = tag ? `${fullPath} or ${fullPath}/*` : `${fullPath}/*`;
+    const groupActiveClass =
+        (state.mode === 'search' && state.searchQuery === searchQuery) || anyActive
+            ? ' active' : '';
+    const groupColor = tag ? tag.color : null;
+    const rootContextMenu = tag ? ` oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')"` : '';
+    const synBadge = tag && (tag.synonyms || []).length
+        ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
+    return `<div class="tag-group"${marginStyle}>
+        <div class="tag-group-label${groupActiveClass}${expandedClass}">
+            <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(fullPath)}')" title="Expand/collapse">
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(fullPath)}')"${rootContextMenu}>${colorDot(groupColor)}${esc(segment)}${synBadge} <span class="count">${totalCount}</span></button>
+        </div>
+        <div class="tag-group-items${expanded ? ' open' : ''}">
+            ${expanded ? renderTagTreeNodes(children, depth + 1) : ''}
+        </div>
+    </div>`;
+}
+
+/** Render a k=v tag as an expandable group-like element. */
+function _renderKvNode(tag, segment, marginStyle) {
+    const active = state.activeTags.has(tag.name) ? ' active' : '';
+    const synBadge = (tag.synonyms || []).length
+        ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
+    const kvKey = '\x01kv:' + tag.name;
+    const expanded = state.expandedGroups.has(kvKey);
+    const expandedClass = expanded ? ' expanded' : '';
+    const values = state.kvValueCache[tag.name] || [];
+    let html = `<div class="tag-group tag-kv-group"${marginStyle}>
+        <div class="tag-group-label${expandedClass}${active}">
+            <button class="tag-group-chevron" onclick="toggleKvExpand('${jesc(tag.name)}')" title="Show values">
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="tag-group-name" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')">
+                ${colorDot(tag.color)}${esc(segment)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
+            </button>
+        </div>`;
+    if (expanded) {
+        html += `<div class="tag-group-items open">`;
+        if (values.length) {
+            for (const v of values) {
+                const valFilter = `${tag.name}=${v.value}`;
+                const valActive = state.activeTags.has(valFilter) ? ' active' : '';
+                html += `<button class="tag-item tag-kv-value${valActive}"
+                    onclick="toggleTagFilter('${jesc(valFilter)}')"
+                    oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
+                    title="${esc(tag.name)}=${esc(v.value)}">
+                    <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
+                </button>`;
+            }
+        } else {
+            html += `<div class="tag-item-loading">Loading\u2026</div>`;
+        }
+        html += `</div>`;
+    }
+    html += `</div>`;
+    return html;
+}
 
 function renderTags() {
     const el = document.getElementById('tag-list');
@@ -27,37 +167,6 @@ function renderTags() {
         if (filtersEl) filtersEl.innerHTML = '';
         return;
     }
-
-    // Group hierarchy tags by their first /prefix
-    const groups = {};
-    const standalone = [];
-    for (const tag of state.tags) {
-        const slash = tag.name.indexOf('/');
-        if (slash > 0) {
-            const prefix = tag.name.slice(0, slash);
-            const suffix = tag.name.slice(slash + 1);
-            if (!groups[prefix]) groups[prefix] = { root: null, children: [] };
-            groups[prefix].children.push({
-                suffix, fullName: tag.name, count: tag.count,
-                color: tag.color, synonyms: tag.synonyms || [],
-                has_values: tag.has_values || false,
-            });
-        } else {
-            standalone.push(tag);
-        }
-    }
-
-    // Standalone tags that share a name with a group prefix become the root
-    const trulyStandalone = [];
-    for (const tag of standalone) {
-        if (groups[tag.name]) {
-            groups[tag.name].root = tag;
-        } else {
-            trulyStandalone.push(tag);
-        }
-    }
-
-    let html = '';
 
     // Active filter chips — rendered in the sticky #tag-filters container (outside the scrolling list)
     if (filtersEl) {
@@ -73,86 +182,8 @@ function renderTags() {
         filtersEl.innerHTML = filterHtml;
     }
 
-    // Hierarchy groups (prefix/suffix tags)
-    const groupNames = Object.keys(groups).sort();
-    for (const prefix of groupNames) {
-        const { root, children } = groups[prefix];
-        const items = children.sort((a, b) => a.suffix.localeCompare(b.suffix));
-        const rootCount = root ? root.count : 0;
-        const totalCount = items.reduce((s, i) => s + i.count, 0) + rootCount;
-        const groupQuery = root ? `${prefix} or ${prefix}/*` : `${prefix}/*`;
-        const groupActiveClass = (state.mode === 'search' && state.searchQuery === groupQuery)
-            || items.some(i => state.activeTags.has(i.fullName))
-            ? ' active' : '';
-        const groupColor = root ? root.color : null;
-        const expanded = state.expandedGroups.has(prefix);
-        const expandedClass = expanded ? ' expanded' : '';
-        const rootContextMenu = root ? ` oncontextmenu="showTagMenu(event,'${jesc(prefix)}')"` : '';
-        html += `<div class="tag-group">
-            <div class="tag-group-label${groupActiveClass}${expandedClass}">
-                <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(prefix)}')" title="Expand/collapse">
-                    <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
-                <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(prefix)}')"${rootContextMenu}>${colorDot(groupColor)}${esc(prefix)} <span class="count">${totalCount}</span></button>
-            </div>
-            <div class="tag-group-items${expanded ? ' open' : ''}">`;
-        for (const item of items) {
-            const active = state.activeTags.has(item.fullName) ? ' active' : '';
-            const synBadge = item.synonyms.length ? ` <span class="tag-synonym-badge" title="Synonyms: ${item.synonyms.map(esc).join(', ')}">&#8801;</span>` : '';
-            html += `<button class="tag-item${active}" onclick="toggleTagFilter('${jesc(item.fullName)}')" oncontextmenu="showTagMenu(event, '${jesc(item.fullName)}')">
-                ${colorDot(item.color)}${esc(item.suffix)}${synBadge} <span class="count">${item.count}</span>
-            </button>`;
-        }
-        html += '</div></div>';
-    }
-
-    // Standalone tags (not a prefix of any hierarchy group)
-    for (const tag of trulyStandalone.sort((a, b) => a.name.localeCompare(b.name))) {
-        const active = state.activeTags.has(tag.name) ? ' active' : '';
-        const synBadge = (tag.synonyms || []).length
-            ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
-
-        if (tag.has_values) {
-            const kvKey = '\x01kv:' + tag.name;
-            const expanded = state.expandedGroups.has(kvKey);
-            const expandedClass = expanded ? ' expanded' : '';
-            const values = state.kvValueCache[tag.name] || [];
-            html += `<div class="tag-group tag-kv-group">
-                <div class="tag-group-label${expandedClass}${active}">
-                    <button class="tag-group-chevron" onclick="toggleKvExpand('${jesc(tag.name)}')" title="Show values">
-                        <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </button>
-                    <button class="tag-group-name" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')">
-                        ${colorDot(tag.color)}${esc(tag.name)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
-                    </button>
-                </div>`;
-            if (expanded) {
-                html += `<div class="tag-group-items open">`;
-                if (values.length) {
-                    for (const v of values) {
-                        const valFilter = `${tag.name}=${v.value}`;
-                        const valActive = state.activeTags.has(valFilter) ? ' active' : '';
-                        html += `<button class="tag-item tag-kv-value${valActive}"
-                            onclick="toggleTagFilter('${jesc(valFilter)}')"
-                            oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
-                            title="${esc(tag.name)}=${esc(v.value)}">
-                            <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
-                        </button>`;
-                    }
-                } else {
-                    html += `<div class="tag-item-loading">Loading\u2026</div>`;
-                }
-                html += `</div>`;
-            }
-            html += `</div>`;
-        } else {
-            html += `<button class="tag-item tag-standalone${active}" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event, '${jesc(tag.name)}')">
-                ${colorDot(tag.color)}${esc(tag.name)}${synBadge} <span class="count">${tag.count}</span>
-            </button>`;
-        }
-    }
-
-    el.innerHTML = html;
+    const tree = buildTagTree(state.tags);
+    el.innerHTML = renderTagTreeNodes(tree, 0);
 }
 
 async function toggleKvExpand(tagName) {
