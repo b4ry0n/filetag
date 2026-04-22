@@ -857,9 +857,9 @@ function renderDetail() {
         } else {
             tagsHtml = d.tags.length === 0
                 ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
-                : d.tags.map(t => {
-                    const tagStr = formatTag(t);
-                    const stateTag = state.tags.find(st => st.name === t.name);
+                : d.tags.map(tag => {
+                    const tagStr = formatTag(tag);
+                    const stateTag = state.tags.find(st => st.name === tag.name);
                     const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
                     return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="removeTagFromDir('${jesc(d.path)}','${jesc(tagStr)}')">&times;</button></span>`;
                 }).join('');
@@ -947,18 +947,18 @@ function renderDetail() {
 
     const covered = f.covered !== false;
 
-    const hasAiTags = covered && f.tags.some(t => t.name.startsWith('ai/'));
+    const hasAiTags = covered && f.tags.some(tag => tag.name.startsWith('ai/'));
     const tagChips = f.tags.length === 0
         ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
-        : f.tags.map(t => {
-            const tagStr = formatTag(t);
-            const stateTag = state.tags.find(st => st.name === t.name);
+        : f.tags.map(tag => {
+            const tagStr = formatTag(tag);
+            const stateTag = state.tags.find(st => st.name === tag.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
             if (!covered) {
                 return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
             }
-            const promoteBtn = t.name.startsWith('ai/')
-                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
+            const promoteBtn = tag.name.startsWith('ai/')
+                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}')">&uarr;</button>`
                 : '';
             return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
@@ -1057,12 +1057,12 @@ function renderDetailTagsOnly() {
     const f = state.selectedFile;
     const tagChips = f.tags.length === 0
         ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
-        : f.tags.map(t => {
-            const tagStr = formatTag(t);
-            const stateTag = state.tags.find(st => st.name === t.name);
+        : f.tags.map(tag => {
+            const tagStr = formatTag(tag);
+            const stateTag = state.tags.find(st => st.name === tag.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-            const promoteBtn = t.name.startsWith('ai/')
-                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
+            const promoteBtn = tag.name.startsWith('ai/')
+                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}')">&uarr;</button>`
                 : '';
             return `<span class="tag-chip"${chipColor}>${promoteBtn}${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
