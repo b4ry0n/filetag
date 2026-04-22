@@ -166,6 +166,11 @@ async function selectFile(path, event) {
     const isShift = event && event.shiftKey;
 
     if (isMulti) {
+        // When transitioning from single-select: ensure the already-selected file has its data
+        // in selectedFilesData (plain click only sets state.selectedFile, not selectedFilesData).
+        if (state.selectedFile && !state.selectedFilesData.has(state.selectedFile.path)) {
+            state.selectedFilesData.set(state.selectedFile.path, state.selectedFile);
+        }
         // Toggle this path in the multi-select set
         if (state.selectedPaths.has(path)) {
             state.selectedPaths.delete(path);
