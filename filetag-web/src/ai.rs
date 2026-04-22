@@ -1811,13 +1811,15 @@ every single image. Ignore features unique to any individual image."
     let tags = parse_ai_tags(&raw, &config.tag_prefix).map_err(AppError)?;
 
     // Apply tags to every path in the original selection.
+    // First remove any existing ai/ tags so the result reflects only common traits.
     let mut applied_count = 0usize;
     if !body.dry_run && !tags.is_empty() {
         for rel_path in &body.paths {
-            if let Ok((conn, eff_root, eff_rel)) = open_for_file_op(db_root, rel_path)
-                && apply_ai_tags(&conn, &eff_root, &eff_rel, &tags, &config.tag_prefix).is_ok()
-            {
-                applied_count += 1;
+            if let Ok((conn, eff_root, eff_rel)) = open_for_file_op(db_root, rel_path) {
+                let _ = remove_prefixed_tags(&conn, &eff_root, &eff_rel, &config.tag_prefix);
+                if apply_ai_tags(&conn, &eff_root, &eff_rel, &tags, &config.tag_prefix).is_ok() {
+                    applied_count += 1;
+                }
             }
         }
     }
