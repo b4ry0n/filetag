@@ -38,6 +38,16 @@
     box-shadow: 0 0 0 3px var(--accent), 0 0 12px 4px rgba(18, 184, 134, 0.45);
 }
 
+.card.bulk-tag-lit {
+    box-shadow: 0 0 0 2px var(--primary);
+    border-color: var(--primary);
+}
+
+.list-row.bulk-tag-lit {
+    background: var(--primary-light);
+    outline: 1px solid var(--primary);
+}
+
 .card-goto {
     position: absolute;
     top: 5px;

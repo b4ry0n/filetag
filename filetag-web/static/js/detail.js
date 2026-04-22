@@ -1081,24 +1081,76 @@ function renderBulkTagChips(bulkTags, total) {
     return bulkTags.map(({ tagStr, count }) => {
         const stateTag = state.tags.find(st => st.name === tagStr || st.name === tagStr.split('=')[0]);
         const chipBorder = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-        const countBadge = count < total
+        const isPartial = count < total;
+        const countBadge = isPartial
             ? `<span class="bulk-chip-count">${count}/${total}</span>`
             : '';
+        const applyBtn = isPartial
+            ? `<button class="bulk-chip-apply" onclick="doBulkApplyTagToAll('${jesc(tagStr)}')" title="Apply to all ${total} selected files">+</button>`
+            : '';
         const isArmed = _armedBulkTag === tagStr;
+        const hoverIn  = `bulkChipHoverEnter('${jesc(tagStr)}')`;
+        const hoverOut = `bulkChipHoverLeave()`;
         if (isArmed) {
-            return `<span class="bulk-chip armed"${chipBorder}>
+            return `<span class="bulk-chip armed"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
                 <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
                 <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}')" title="Cancel">&#8617;</button>
                 <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}')">Remove</button>
             </span>`;
         }
-        return `<span class="bulk-chip"${chipBorder}>
+        return `<span class="bulk-chip"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
             <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
+            ${applyBtn}
             <button class="bulk-chip-arm" onclick="armBulkTag('${jesc(tagStr)}')" title="Remove from selection">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             </button>
         </span>`;
     }).join('');
+}
+
+// Highlight grid/list cards that have the given tag among the selected files.
+function bulkChipHoverEnter(tagStr) {
+    const hasPaths = new Set();
+    for (const [path, data] of state.selectedFilesData) {
+        if (state.selectedPaths.has(path) && (data.tags || []).some(t => formatTag(t) === tagStr)) {
+            hasPaths.add(path);
+        }
+    }
+    document.querySelectorAll('.card[data-path], .list-row[data-path]').forEach(el => {
+        el.classList.toggle('bulk-tag-lit', hasPaths.has(el.dataset.path));
+    });
+}
+
+function bulkChipHoverLeave() {
+    document.querySelectorAll('.bulk-tag-lit').forEach(el => el.classList.remove('bulk-tag-lit'));
+}
+
+// Apply tagStr to every selected file that does not yet have it.
+async function doBulkApplyTagToAll(tagStr) {
+    const paths = [...state.selectedPaths].filter(p => {
+        const data = state.selectedFilesData.get(p);
+        return data && !(data.tags || []).some(t => formatTag(t) === tagStr);
+    });
+    if (!paths.length) return;
+    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
+    // Update local cache
+    const eqIdx = tagStr.indexOf('=');
+    const tName  = eqIdx !== -1 ? tagStr.slice(0, eqIdx) : tagStr;
+    const tValue = eqIdx !== -1 ? tagStr.slice(eqIdx + 1) : '';
+    for (const p of paths) {
+        const d = state.selectedFilesData.get(p);
+        if (d) d.tags.push({ name: tName, value: tValue });
+    }
+    await loadTags();
+    if (state.mode === 'browse') await loadFiles(state.currentPath);
+    const status = document.getElementById('bulk-status');
+    if (status) status.textContent = `Applied "${tagStr}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    const el = document.getElementById('bulk-tag-chips');
+    if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
+    renderTags();
+    renderContent();
+    _thumbInit();
+    _dirThumbInit();
 }
 
 function armBulkTag(tagStr) {
