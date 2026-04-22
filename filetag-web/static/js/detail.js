@@ -775,11 +775,12 @@ function renderDetail() {
         const chipsHtml = renderBulkTagChips(bulkTags, count);
         const paths = [...state.selectedPaths];
         const hasAiTagsBulk = bulkTags.some(t => t.tagStr.startsWith('ai/'));
+        const pathsJson = esc(JSON.stringify(paths));
         const aiAcceptBulkBtn = hasAiTagsBulk
-            ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(${JSON.stringify(paths)})">${esc(t('ai.accept-all'))}</button>`
+            ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(${pathsJson})">${esc(t('ai.accept-all'))}</button>`
             : '';
         const aiClearBulkBtn = hasAiTagsBulk
-            ? `<button class="ai-clear-btn" onclick="aiClearTags(${JSON.stringify(paths)})">${esc(t('ai.clear-tags-bulk'))}</button>`
+            ? `<button class="ai-clear-btn" onclick="aiClearTags(${pathsJson})">${esc(t('ai.clear-tags-bulk'))}</button>`
             : '';
         const hasAnalysable = paths.some(p => isAiImage(p));
         const aiBulkSection = hasAnalysable ? `
