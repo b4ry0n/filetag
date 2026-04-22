@@ -776,26 +776,37 @@ function renderDetail() {
         const paths = [...state.selectedPaths];
         const hasAiTagsBulk = bulkTags.some(t => t.tagStr.startsWith('ai/'));
         const aiAcceptBulkBtn = hasAiTagsBulk
-            ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(${JSON.stringify(paths)})">Accept all ai/ tags</button>`
+            ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(${JSON.stringify(paths)})">${esc(t('ai.accept-all'))}</button>`
             : '';
         const aiClearBulkBtn = hasAiTagsBulk
-            ? `<button class="ai-clear-btn" onclick="aiClearTags(${JSON.stringify(paths)})">Remove all ai/ tags</button>`
+            ? `<button class="ai-clear-btn" onclick="aiClearTags(${JSON.stringify(paths)})">${esc(t('ai.clear-tags-bulk'))}</button>`
             : '';
+        const hasAnalysable = paths.some(p => isAiImage(p));
+        const aiBulkSection = hasAnalysable ? `
+            <div class="bulk-ai-section">
+                <p class="bulk-section-label">${esc(t('ai.analysis-label'))}</p>
+                <div class="bulk-ai-row">
+                    <button class="ai-analyse-btn bulk-ai-btn" onclick="aiAnalyseSelected()" title="${esc(t('ai.analyse-per-file'))}">${esc(t('ai.analyse-per-file'))}</button>
+                    <button class="ai-analyse-btn bulk-ai-btn" onclick="aiAnalyseCommonTraits()" title="${esc(t('ai.analyse-common'))}">${esc(t('ai.analyse-common'))}</button>
+                </div>
+                <small class="ai-analyse-note">${esc(t('ai.bulk-note'))}</small>
+            </div>` : '';
         panel.innerHTML = `
             <div class="detail-header">
-                <h3>${count} files selected</h3>
-                <button class="detail-close" onclick="clearSelection()" title="Clear selection">&times;</button>
+                <h3>${t('bulk.n-selected', {n: count})}</h3>
+                <button class="detail-close" onclick="clearSelection()" title="${esc(t('bulk.clear-sel'))}">&times;</button>
             </div>
             <div class="bulk-tag-section">
-                ${bulkTags.length > 0 ? `<p class="bulk-section-label">Tags on selected files</p>
+                ${bulkTags.length > 0 ? `<p class="bulk-section-label">${esc(t('bulk.tags-label'))}</p>
                 <div class="bulk-tag-chips" id="bulk-tag-chips">${chipsHtml}</div>` : ''}
-                <p class="bulk-section-label" style="margin-top:12px">Add tag</p>
+                <p class="bulk-section-label" style="margin-top:12px">${esc(t('bulk.add-label'))}</p>
                 <div class="tag-add-form">
-                    <input type="text" id="bulk-tag-input" placeholder="Tag (e.g. genre/rock)">
-                    <button onclick="doBulkAddTag()">Add</button>
+                    <input type="text" id="bulk-tag-input" placeholder="${esc(t('bulk.tag-input'))}">
+                    <button onclick="doBulkAddTag()">${esc(t('bulk.add-btn'))}</button>
                 </div>
                 ${aiAcceptBulkBtn}
                 ${aiClearBulkBtn}
+                ${aiBulkSection}
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
         attachTagAutocomplete(document.getElementById('bulk-tag-input'), () => doBulkAddTag());
@@ -803,7 +814,7 @@ function renderDetail() {
     }
 
     if (!state.selectedFile && !state.selectedDir && state.selectedRoot == null) {
-        panel.innerHTML = '<div class="detail-empty">Select a file or folder to see details</div>';
+        panel.innerHTML = `<div class="detail-empty">${esc(t('detail.empty'))}</div>`;
         return;
     }
 
@@ -814,24 +825,24 @@ function renderDetail() {
         const name = rootMeta ? rootMeta.name : state.selectedRoot.split('/').pop();
         const path = state.selectedRoot;
         const infoRows = info ? `
-            <div class="detail-meta-row"><span class="detail-meta-label">Files</span><span class="detail-meta-value">${info.files.toLocaleString()}</span></div>
-            <div class="detail-meta-row"><span class="detail-meta-label">Tags</span><span class="detail-meta-value">${info.tags.toLocaleString()}</span></div>
-            <div class="detail-meta-row"><span class="detail-meta-label">Assignments</span><span class="detail-meta-value">${info.assignments.toLocaleString()}</span></div>
-            <div class="detail-meta-row"><span class="detail-meta-label">Total size</span><span class="detail-meta-value">${formatSize(info.total_size)}</span></div>` : '<div class="detail-meta-row">Loading…</div>';
+            <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.files')}</span><span class="detail-meta-value">${info.files.toLocaleString()}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.tags')}</span><span class="detail-meta-value">${info.tags.toLocaleString()}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.assignments')}</span><span class="detail-meta-value">${info.assignments.toLocaleString()}</span></div>
+            <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.total-size')}</span><span class="detail-meta-value">${formatSize(info.total_size)}</span></div>` : `<div class="detail-meta-row">${esc(t('detail.loading'))}</div>`;
         panel.innerHTML = `
             <div class="detail-header">
                 <h3>${esc(name)}</h3>
-                <button class="detail-close" onclick="clearSelection()" title="Close">&times;</button>
+                <button class="detail-close" onclick="clearSelection()" title="${esc(t('detail.close'))}">&times;</button>
             </div>
             <div class="detail-preview">
                 <div class="no-preview" style="color:var(--primary)">${ICONS.root}</div>
             </div>
             <div class="detail-meta">
-                <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value" style="word-break:break-all">${esc(path)}</span></div>
+                <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.path')}</span><span class="detail-meta-value" style="word-break:break-all">${esc(path)}</span></div>
                 ${infoRows}
             </div>
             <div style="padding:8px 12px">
-                <button class="tag-action-btn" onclick="enterRoot('${jesc(state.selectedRoot)}')">Open database</button>
+                <button class="tag-action-btn" onclick="enterRoot('${jesc(state.selectedRoot)}')">${esc(t('detail.open-db'))}</button>
             </div>`;
         return;
     }
@@ -842,10 +853,10 @@ function renderDetail() {
         let tagsHtml;
         let tagInputHtml = '';
         if (d.tags === null) {
-            tagsHtml = '<span class="no-tags">Loading…</span>';
+            tagsHtml = `<span class="no-tags">${esc(t('detail.loading'))}</span>`;
         } else {
             tagsHtml = d.tags.length === 0
-                ? '<span class="no-tags">No tags assigned</span>'
+                ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
                 : d.tags.map(t => {
                     const tagStr = formatTag(t);
                     const stateTag = state.tags.find(st => st.name === t.name);
@@ -853,27 +864,27 @@ function renderDetail() {
                     return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="removeTagFromDir('${jesc(d.path)}','${jesc(tagStr)}')">&times;</button></span>`;
                 }).join('');
             tagInputHtml = `<div class="tag-add-form">
-                <input type="text" id="dir-tag-input" placeholder="Add tag (e.g. genre/rock)">
-                <button onclick="doDirAddTag()">Add</button>
+                <input type="text" id="dir-tag-input" placeholder="${esc(t('detail.tag-add'))}">
+                <button onclick="doDirAddTag()">${esc(t('detail.tag-add-btn'))}</button>
             </div>`;
         }
         panel.innerHTML = `
             <div class="detail-top">
             <div class="detail-header">
                 <h3>${esc(d.name)}</h3>
-                <button class="detail-close" onclick="closeDetail()" title="Close">&times;</button>
+                <button class="detail-close" onclick="closeDetail()" title="${esc(t('detail.close'))}">&times;</button>
             </div>
             <div class="detail-preview">
                 <div class="no-preview" style="color:#fab005">${ICONS.folder}</div>
             </div>
             <div class="detail-meta">
-                <div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(d.path)}</span></div>
-                <div class="detail-meta-row"><span class="detail-meta-label">Items</span><span class="detail-meta-value">${d.file_count}</span></div>
+                <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.path')}</span><span class="detail-meta-value">${esc(d.path)}</span></div>
+                <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.items')}</span><span class="detail-meta-value">${d.file_count}</span></div>
             </div>
             </div>
             <div class="detail-v-handle" id="detail-v-handle"></div>
             <div class="detail-tags-section">
-                <h4>Tags</h4>
+                <h4>${t('detail.tags')}</h4>
                 <div class="detail-tags">${tagsHtml}</div>
                 ${tagInputHtml}
             </div>`;
@@ -938,7 +949,7 @@ function renderDetail() {
 
     const hasAiTags = covered && f.tags.some(t => t.name.startsWith('ai/'));
     const tagChips = f.tags.length === 0
-        ? '<span class="no-tags">No tags assigned</span>'
+        ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
         : f.tags.map(t => {
             const tagStr = formatTag(t);
             const stateTag = state.tags.find(st => st.name === t.name);
@@ -947,35 +958,35 @@ function renderDetail() {
                 return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
             }
             const promoteBtn = t.name.startsWith('ai/')
-                ? `<button class="promote" title="Bewaar zonder ai/-prefix" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
+                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
                 : '';
             return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
 
     const tagAddSection = covered
         ? `<div class="tag-add-form">
-                <input type="text" id="tag-input" placeholder="Add tag (e.g. genre/rock)">
-                <button onclick="doAddTag()">Add</button>
+                <input type="text" id="tag-input" placeholder="${esc(t('detail.tag-add'))}">
+                <button onclick="doAddTag()">${esc(t('detail.tag-add-btn'))}</button>
             </div>`
-        : `<div class="uncovered-notice">This file is on a different filesystem. Tags cannot be added here.</div>`;
+        : `<div class="uncovered-notice">${esc(t('detail.uncovered'))}</div>`;
 
     const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip' || type_ === 'video');
     const isAnalysing = state.aiAnalysing.has(f.path);
     const aiAcceptBtn = hasAiTags
-        ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(['${jesc(f.path)}'])">Accept all ai/ tags</button>`
+        ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(['${jesc(f.path)}'])">${esc(t('ai.accept-all'))}</button>`
         : '';
     const aiClearBtn = hasAiTags
-        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">Remove ai/ tags</button>`
+        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">${esc(t('ai.clear-tags'))}</button>`
         : '';
     const aiBtn = isAnalysable || hasAiTags
         ? `<div class="ai-analyse-row">
             ${isAnalysable ? `
             <div class="ai-analyse-controls">
-                <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? 'Analyseren…' : '✨ Analyse (AI)'}</button>
-                ${type_ === 'video' ? `<label class="ai-frames-label" title="Automatically choose frame count based on video duration"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>auto</span></label><label class="ai-frames-label" title="Number of frames sampled from the video"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" oninput="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>frames</span></label>` : ''}
-                <button class="ai-settings-btn" onclick="openSettings('prompts')" title="AI prompt settings">⚙</button>
+                <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? esc(t('ai.analysing')) : esc(t('ai.analyse-btn'))}</button>
+                ${type_ === 'video' ? `<label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label><label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" oninput="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>` : ''}
+                <button class="ai-settings-btn" onclick="openSettings('prompts')" title="${esc(t('ai.settings-title'))}">⚙</button>
             </div>
-            <small class="ai-analyse-note">${type_ === 'video' ? 'Analysis is based on sampled frames, not the full video.' : ''}</small>` : ''}
+            <small class="ai-analyse-note">${type_ === 'video' ? esc(t('ai.video-note')) : ''}</small>` : ''}
                 ${aiAcceptBtn}
                 ${aiClearBtn}
            </div>`
@@ -985,22 +996,22 @@ function renderDetail() {
         <div class="detail-top">
         <div class="detail-header">
             <h3>${esc(name)}</h3>
-            <button class="detail-close" onclick="closeDetail()" title="Close">&times;</button>
+            <button class="detail-close" onclick="closeDetail()" title="${esc(t('detail.close'))}">&times;</button>
         </div>
         <div class="detail-preview">${preview}</div>
         <div class="detail-meta">
             ${zipEntry
-                ? `<div class="detail-meta-row"><span class="detail-meta-label">Archive</span><span class="detail-meta-value">${esc(zipEntry.zipPath.split('/').pop())}</span></div>
-                   <div class="detail-meta-row"><span class="detail-meta-label">Entry</span><span class="detail-meta-value">${esc(zipEntry.entryName)}</span></div>`
-                : `<div class="detail-meta-row"><span class="detail-meta-label">Path</span><span class="detail-meta-value">${esc(f.path)}</span></div>
-                   <div class="detail-meta-row"><span class="detail-meta-label">Size</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
-                   ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">Indexed</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}`
+                ? `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.archive'))}</span><span class="detail-meta-value">${esc(zipEntry.zipPath.split('/').pop())}</span></div>
+                   <div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.entry'))}</span><span class="detail-meta-value">${esc(zipEntry.entryName)}</span></div>`
+                : `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.path'))}</span><span class="detail-meta-value">${esc(f.path)}</span></div>
+                   <div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.size'))}</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
+                   ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.indexed'))}</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}`
             }
         </div>
         </div>
         <div class="detail-v-handle" id="detail-v-handle"></div>
         <div class="detail-tags-section">
-            <h4>Tags</h4>
+            <h4>${t('detail.tags')}</h4>
             <div class="detail-tags">${tagChips}</div>
             ${tagAddSection}
             ${aiBtn}
@@ -1020,7 +1031,7 @@ function renderDetail() {
                 const clipped = txt.length > 60000 ? txt.slice(0, 60000) + '\n…' : txt;
                 if (el) el.innerHTML = highlightCode(clipped, name);
             }).catch(() => {
-                if (el) el.textContent = '(Could not load preview)';
+                if (el) el.textContent = t('detail.preview-error');
             });
         }
     } else if (type_ === 'markdown') {
@@ -1032,7 +1043,7 @@ function renderDetail() {
             }).then(txt => {
                 if (el) el.innerHTML = renderMarkdown(txt);
             }).catch(() => {
-                if (el) el.textContent = '(Could not load preview)';
+                if (el) el.textContent = t('detail.preview-error');
             });
         }
     }
@@ -1045,13 +1056,13 @@ function renderDetailTagsOnly() {
     if (!tagsEl) return;
     const f = state.selectedFile;
     const tagChips = f.tags.length === 0
-        ? '<span class="no-tags">No tags assigned</span>'
+        ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
         : f.tags.map(t => {
             const tagStr = formatTag(t);
             const stateTag = state.tags.find(st => st.name === t.name);
             const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
             const promoteBtn = t.name.startsWith('ai/')
-                ? `<button class="promote" title="Bewaar zonder ai/-prefix" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
+                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(t.name)}','${jesc(t.value || '')}')">&uarr;</button>`
                 : '';
             return `<span class="tag-chip"${chipColor}>${promoteBtn}${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
         }).join('');
@@ -1086,7 +1097,7 @@ function renderBulkTagChips(bulkTags, total) {
             ? `<span class="bulk-chip-count">${count}/${total}</span>`
             : '';
         const applyBtn = isPartial
-            ? `<button class="bulk-chip-apply" onclick="doBulkApplyTagToAll('${jesc(tagStr)}')" title="Apply to all ${total} selected files">+</button>`
+            ? `<button class="bulk-chip-apply" onclick="doBulkApplyTagToAll('${jesc(tagStr)}')" title="${esc(t('bulk.apply-title', {n: total}))}">+</button>`
             : '';
         const isArmed = _armedBulkTag === tagStr;
         const hoverIn  = `bulkChipHoverEnter('${jesc(tagStr)}')`;
@@ -1094,8 +1105,8 @@ function renderBulkTagChips(bulkTags, total) {
         if (isArmed) {
             return `<span class="bulk-chip armed"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
                 <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
-                <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}')" title="Cancel">&#8617;</button>
-                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}')">Remove</button>
+                <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}')" title="${esc(t('bulk.cancel'))}">&#8617;</button>
+                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}')">${esc(t('bulk.remove'))}</button>
             </span>`;
         }
         return `<span class="bulk-chip"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
@@ -1144,7 +1155,7 @@ async function doBulkApplyTagToAll(tagStr) {
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     const status = document.getElementById('bulk-status');
-    if (status) status.textContent = `Applied "${tagStr}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    if (status) status.textContent = t('bulk.applied', {tag: tagStr, n: paths.length, plural: paths.length !== 1 ? t('bulk.applied-plural') : ''});
     const el = document.getElementById('bulk-tag-chips');
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
     renderTags();
@@ -1178,7 +1189,7 @@ async function doBulkRemoveTagChip(tagStr) {
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     const status = document.getElementById('bulk-status');
-    if (status) status.textContent = `Removed "${tagStr}" from ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    if (status) status.textContent = t('bulk.removed', {tag: tagStr, n: paths.length, plural: paths.length !== 1 ? t('bulk.removed-plural') : ''});
     const el = document.getElementById('bulk-tag-chips');
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
     renderTags();

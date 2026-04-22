@@ -1698,3 +1698,130 @@ pub async fn api_ai_config_get(
         "default_output_format": AI_OUTPUT_FORMAT,
     })))
 }
+
+// ---------------------------------------------------------------------------
+// Multi-file common-traits analysis
+// ---------------------------------------------------------------------------
+
+/// Maximum number of images to include in one common-traits analysis call.
+const COMMON_TRAITS_MAX_IMAGES: usize = 8;
+
+#[derive(Deserialize)]
+pub(crate) struct AiAnalyseCommonRequest {
+    paths: Vec<String>,
+    dir: Option<String>,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// Analyse multiple images in a single VLM call and return only the tags that
+/// describe characteristics shared across **all** of them.
+///
+/// Tags are applied to every path in `paths` (not just the analysable subset)
+/// so that, for example, a mixed selection of images and other files all
+/// receive the shared context tags.
+pub async fn api_ai_analyse_common(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AiAnalyseCommonRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if body.paths.is_empty() {
+        return Ok(Json(serde_json::json!({ "tags": [], "applied_count": 0 })));
+    }
+
+    let db_root = root_for_dir(&state, Path::new(body.dir.as_deref().unwrap_or("")))
+        .ok_or_else(|| AppError(anyhow::anyhow!("no database found for this path")))?;
+
+    let config = {
+        let root_conn = open_conn(db_root).map_err(AppError)?;
+        load_ai_config(&root_conn).ok_or_else(|| {
+            AppError(anyhow::anyhow!(
+                "AI not configured — set endpoint in settings"
+            ))
+        })?
+    };
+
+    // Collect analysable image paths (no videos; cap at COMMON_TRAITS_MAX_IMAGES).
+    let analysable: Vec<&str> = body
+        .paths
+        .iter()
+        .filter(|p| {
+            let ext = p.rsplit('.').next().unwrap_or("").to_lowercase();
+            AI_IMAGE_EXTS.contains(&ext.as_str()) || ARCHIVE_EXTS.contains(&ext.as_str())
+        })
+        .map(|s| s.as_str())
+        .take(COMMON_TRAITS_MAX_IMAGES)
+        .collect();
+
+    if analysable.is_empty() {
+        return Err(AppError(anyhow::anyhow!(
+            "No analysable images in the selection"
+        )));
+    }
+
+    let _permit = AI_LIMITER
+        .acquire()
+        .await
+        .map_err(|e| AppError(anyhow::anyhow!("AI limiter error: {e}")))?;
+
+    // Prepare JPEG bytes for each analysable path.
+    let mut b64_images: Vec<String> = Vec::new();
+    for rel_path in &analysable {
+        if let Ok((_conn, eff_root, eff_rel)) = open_for_file_op(db_root, rel_path)
+            && let Some(bytes) = prepare_jpeg_for_analysis(&eff_root, &eff_rel).await
+        {
+            b64_images.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+        }
+    }
+
+    if b64_images.is_empty() {
+        return Err(AppError(anyhow::anyhow!(
+            "Could not prepare any images for analysis"
+        )));
+    }
+
+    // Build the common-traits prompt.
+    let n = b64_images.len();
+    let intro = format!(
+        "You are looking at {n} images. Identify ONLY characteristics that are \
+shared across ALL of them. Return ONLY tags describing attributes present in \
+every single image. Ignore features unique to any individual image."
+    );
+
+    let output_fmt = config
+        .output_format
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(AI_OUTPUT_FORMAT);
+
+    let mut prompt_parts = vec![intro];
+    if let Some(s) = config.subject.as_deref().filter(|s| !s.is_empty()) {
+        prompt_parts.push(format!("Collection context: {s}"));
+    }
+    prompt_parts.push(output_fmt.to_string());
+    let prompt = prompt_parts.join("\n\n");
+
+    let b64_refs: Vec<&str> = b64_images.iter().map(|s| s.as_str()).collect();
+    let raw = vlm_call_multi(&config, &prompt, &b64_refs)
+        .await
+        .map_err(AppError)?;
+
+    let tags = parse_ai_tags(&raw, &config.tag_prefix).map_err(AppError)?;
+
+    // Apply tags to every path in the original selection.
+    let mut applied_count = 0usize;
+    if !body.dry_run && !tags.is_empty() {
+        for rel_path in &body.paths {
+            if let Ok((conn, eff_root, eff_rel)) = open_for_file_op(db_root, rel_path)
+                && apply_ai_tags(&conn, &eff_root, &eff_rel, &tags, &config.tag_prefix).is_ok()
+            {
+                applied_count += 1;
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "tags": tags,
+        "applied_count": applied_count,
+        "raw": if body.dry_run { raw } else { String::new() },
+    })))
+}

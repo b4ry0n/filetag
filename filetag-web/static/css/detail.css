@@ -549,6 +549,18 @@
 }
 .ai-clear-btn:hover { background: var(--bg-hover); color: var(--fg); }
 
+/* Bulk multi-select AI section */
+.bulk-ai-section { margin-top: 12px; }
+
+.bulk-ai-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.bulk-ai-btn { flex: 1; justify-content: center; min-width: 120px; }
+
 /* Zip cover */
 .zip-cover-wrap {
     display: flex;

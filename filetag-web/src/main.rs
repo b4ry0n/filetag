@@ -264,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dir-thumbs", get(preview::api_dir_thumbs))
         .route("/api/ai/analyse", post(ai::api_ai_analyse))
         .route("/api/ai/analyse-batch", post(ai::api_ai_analyse_batch))
+        .route("/api/ai/analyse-common", post(ai::api_ai_analyse_common))
         .route("/api/ai/clear-tags", post(ai::api_ai_clear_tags))
         .route("/api/ai/status", get(ai::api_ai_status))
         .route("/api/ai/config", get(ai::api_ai_config_get))

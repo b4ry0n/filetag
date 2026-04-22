@@ -20,9 +20,10 @@
         </div>
         <div class="header-search">
             <input type="text" id="search-input"
+                   data-i18n-placeholder="search.placeholder"
                    placeholder="Search tags, e.g. genre/rock and year>=2020 or type:image">
-            <button id="search-btn" title="Search">Search</button>
-            <button id="search-clear" title="Clear search" hidden>Clear</button>
+            <button id="search-btn" data-i18n-title="search.btn" title="Search"><span data-i18n="search.btn">Search</span></button>
+            <button id="search-clear" data-i18n-title="search.clear" title="Clear search" hidden><span data-i18n="search.clear">Clear</span></button>
         </div>
         <div class="header-right">
             <span id="db-info" class="db-info"></span>
@@ -31,13 +32,13 @@
     <div class="layout" id="layout">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <h3>Tags</h3>
-                <button class="sidebar-sort-btn active" id="sidebar-sort-btn" onclick="toggleTagSortMode()" title="Groups first / alphabetical">
+                <h3 data-i18n="sidebar.tags">Tags</h3>
+                <button class="sidebar-sort-btn active" id="sidebar-sort-btn" onclick="toggleTagSortMode()" data-i18n-title="sidebar.sort.title" title="Groups first / alphabetical">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="10" y2="8"/><line x1="2" y1="12" x2="6" y2="12"/>
                     </svg>
                 </button>
-                <button class="sidebar-manage-btn" onclick="showTagManager()" title="Open Tag Manager">Manage</button>
+                <button class="sidebar-manage-btn" onclick="showTagManager()" title="Open Tag Manager" data-i18n="sidebar.manage">Manage</button>
             </div>
             <div id="tag-filters"></div>
             <div class="sidebar-content" id="tag-list"></div>
@@ -48,14 +49,14 @@
                 <nav class="breadcrumb" id="breadcrumb"></nav>
                 <div class="toolbar-right">
                     <span id="entry-count" class="entry-count"></span>
-                    <button id="detail-toggle" class="view-btn active" title="Toggle info pane" onclick="toggleDetailPanel()">
+                    <button id="detail-toggle" class="view-btn active" data-i18n-title="toolbar.toggle-detail" title="Toggle info panel" onclick="toggleDetailPanel()">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                             <rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
                             <rect x="15" y="3" width="6" height="18" rx="0"/>
                         </svg>
                     </button>
                     <div class="view-toggle">
-                        <button id="view-grid" class="view-btn active" title="Grid view">
+                        <button id="view-grid" class="view-btn active" data-i18n-title="toolbar.view-grid" title="Grid view">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                 <rect x="3" y="3" width="7" height="7" rx="1"/>
                                 <rect x="14" y="3" width="7" height="7" rx="1"/>
@@ -63,7 +64,7 @@
                                 <rect x="14" y="14" width="7" height="7" rx="1"/>
                             </svg>
                         </button>
-                        <button id="view-list" class="view-btn" title="List view">
+                        <button id="view-list" class="view-btn" data-i18n-title="toolbar.view-list" title="List view">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                 <rect x="3" y="4" width="18" height="2" rx="1"/>
                                 <rect x="3" y="11" width="18" height="2" rx="1"/>
@@ -71,35 +72,35 @@
                             </svg>
                         </button>
                     </div>
-                    <button id="hidden-toggle" class="view-btn" title="Show hidden files" onclick="toggleShowHidden()">
+                    <button id="hidden-toggle" class="view-btn" data-i18n-title="toolbar.hidden" title="Show hidden files" onclick="toggleShowHidden()">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                     </button>
                     <input type="range" id="zoom-slider" class="zoom-slider" min="80" max="240" value="140" step="10" title="Icon size">
                     <div class="split-btn" id="cache-btn-wrap">
-                        <button class="view-btn" id="cache-clear-page-btn" title="Clear cache for this page" onclick="clearCache(false)">
+                        <button class="view-btn" id="cache-clear-page-btn" data-i18n-title="toolbar.cache-page" title="Clear cache for this page" onclick="clearCache(false)">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <polyline points="1 4 1 10 7 10"/>
                                 <path d="M3.51 15a9 9 0 1 0 .49-3.89"/>
                             </svg>
                         </button>
-                        <button class="view-btn split-btn-arrow" title="More cache options" onclick="toggleCacheMenu(event)">
+                        <button class="view-btn split-btn-arrow" data-i18n-title="toolbar.cache-more" title="More cache options" onclick="toggleCacheMenu(event)">
                             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
                                 <path d="M1 3l4 4 4-4"/>
                             </svg>
                         </button>
                         <div class="toolbar-dropdown" id="cache-menu" hidden>
-                            <button onclick="clearCache(true)">Volledige cache wissen</button>
-                            <button id="pregen-sprites-btn" onclick="pregenSprites()">Video sprites genereren</button>
+                            <button onclick="clearCache(true)" data-i18n="toolbar.cache-clear-all">Clear all cache</button>
+                            <button id="pregen-sprites-btn" onclick="pregenSprites()" data-i18n="toolbar.sprites-gen">Generate video sprites</button>
                             <hr>
-                            <button id="ai-analyse-btn" onclick="aiAnalyseBatch()">Afbeeldingen analyseren (AI)</button>
+                            <button id="ai-analyse-btn" onclick="aiAnalyseBatch()" data-i18n="toolbar.ai-batch">Analyse images (AI)</button>
                             <hr>
-                            <button onclick="openCacheManager()">Cache beheer&hellip;</button>
+                            <button onclick="openCacheManager()" data-i18n="toolbar.cache-mgr">Cache manager&hellip;</button>
                         </div>
                     </div>
-                    <button class="view-btn" id="settings-btn" title="Settings" onclick="openSettings()">
+                    <button class="view-btn" id="settings-btn" data-i18n-title="toolbar.settings" title="Settings" onclick="openSettings()">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                     </button>
-                    <button class="view-btn" id="logout-btn" title="Sign out" onclick="doLogout()" hidden>
+                    <button class="view-btn" id="logout-btn" data-i18n-title="toolbar.signout" title="Sign out" onclick="doLogout()" hidden>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     </button>
                 </div>
@@ -108,7 +109,7 @@
         </main>
         <div class="resize-handle resize-handle--col" id="resize-detail" title="Drag to resize"></div>
         <aside class="detail" id="detail">
-            <div class="detail-empty">Select a file or folder to see details</div>
+            <div class="detail-empty" data-i18n="detail.empty">Select a file or folder to see details</div>
         </aside>
     </div>
     <!-- Lightbox modal -->
@@ -205,26 +206,26 @@
     <div id="cache-manager-modal" class="modal-overlay" hidden onclick="if(event.target===this)closeCacheManager()">
         <div class="modal cache-manager-modal">
             <div class="modal-header">
-                <h3>Cache beheer</h3>
+                <h3 data-i18n="cm.title">Cache manager</h3>
                 <button class="modal-close" onclick="closeCacheManager()">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="cm-actions">
                     <div class="cm-action-row">
                         <div class="cm-action-info">
-                            <strong>Niet-gelinkte cachebestanden verwijderen</strong>
-                            <span class="cm-action-desc">Verwijdert cachebestanden waarvoor de bronbestand niet meer bestaat op schijf.</span>
+                            <strong data-i18n="cm.prune-title">Remove unlinked cache files</strong>
+                            <span class="cm-action-desc" data-i18n="cm.prune-desc">Removes cache files whose source file no longer exists on disk.</span>
                         </div>
-                        <button class="cm-btn" id="cm-prune-btn" onclick="doCachePrune()">Opschonen</button>
+                        <button class="cm-btn" id="cm-prune-btn" onclick="doCachePrune()" data-i18n="cm.prune-btn">Clean up</button>
                     </div>
                 </div>
-                <div class="cm-section-label">Cache per map</div>
+                <div class="cm-section-label" data-i18n="cm.per-dir">Cache by folder</div>
                 <div id="cm-subdir-list" class="cm-subdir-list">
-                    <div class="cm-loading">Laden&hellip;</div>
+                    <div class="cm-loading" data-i18n="cm.loading">Loading&hellip;</div>
                 </div>
                 <div class="cm-footer">
                     <span id="cm-total-label" class="cm-total"></span>
-                    <button class="cm-btn cm-btn-warn" onclick="clearCache(true).then(loadCacheInfo)">Alles wissen</button>
+                    <button class="cm-btn cm-btn-warn" onclick="clearCache(true).then(loadCacheInfo)" data-i18n="cm.clear-all">Clear all</button>
                 </div>
             </div>
             <div id="cm-status" class="cm-status"></div>
@@ -234,14 +235,15 @@
     <div id="settings-modal" class="modal-overlay" hidden onclick="if(event.target===this)closeSettings()">
         <div class="modal">
             <div class="modal-header">
-                <h3>Settings</h3>
+                <h3 data-i18n="settings.title">Settings</h3>
                 <button class="modal-close" onclick="closeSettings()">&times;</button>
             </div>
             <nav class="modal-tabs">
-                <button class="modal-tab-btn active" data-tab="video" onclick="switchSettingsTab('video')">Video</button>
-                <button class="modal-tab-btn" data-tab="features" onclick="switchSettingsTab('features')">Features</button>
-                <button class="modal-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')">AI</button>
-                <button class="modal-tab-btn" data-tab="prompts" onclick="switchSettingsTab('prompts')">Prompts</button>
+                <button class="modal-tab-btn active" data-tab="video" onclick="switchSettingsTab('video')" data-i18n="settings.tab.video">Video</button>
+                <button class="modal-tab-btn" data-tab="features" onclick="switchSettingsTab('features')" data-i18n="settings.tab.features">Features</button>
+                <button class="modal-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')" data-i18n="settings.tab.ai">AI</button>
+                <button class="modal-tab-btn" data-tab="prompts" onclick="switchSettingsTab('prompts')" data-i18n="settings.tab.prompts">Prompts</button>
+                <button class="modal-tab-btn" data-tab="language" onclick="switchSettingsTab('language')" data-i18n="settings.tab.language">Language</button>
             </nav>
             <div class="modal-body">
                 <div id="settings-tab-video" class="modal-tab-panel">
@@ -352,6 +354,17 @@
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
                     </div><!-- #ai-settings-fields -->
                 </div>
+                <div id="settings-tab-language" class="modal-tab-panel" hidden>
+                    <label>
+                        <span data-i18n="lang.label">Display language</span>
+                        <select id="lang-select" onchange="setLang(this.value)">
+                            <!-- Populated by i18n.js via buildLangSelect() -->
+                        </select>
+                    </label>
+                    <div class="modal-actions">
+                        <button onclick="closeSettings()" data-i18n="settings.cancel">Cancel</button>
+                    </div>
+                </div>
                 <div id="settings-tab-prompts" class="modal-tab-panel" hidden>
                     <label>Collection description
                         <small class="settings-desc-inline">Describe what this collection contains. The AI uses this as context for every analysis.</small>
@@ -388,6 +401,7 @@
         </div>
     </div>
 
+    <script src="/js/i18n.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/state.js"></script>
     <script src="/js/tags.js"></script>
