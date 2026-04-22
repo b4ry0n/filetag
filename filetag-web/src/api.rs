@@ -102,6 +102,7 @@ macro_rules! js_handler {
     };
 }
 
+js_handler!(js_i18n, "../static/js/i18n.js");
 js_handler!(js_utils, "../static/js/utils.js");
 js_handler!(js_state, "../static/js/state.js");
 js_handler!(js_tags, "../static/js/tags.js");

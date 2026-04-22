@@ -220,6 +220,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/css/cards.css", get(api::css_cards))
         .route("/css/detail.css", get(api::css_detail))
         .route("/css/viewer.css", get(api::css_viewer))
+        .route("/js/i18n.js", get(api::js_i18n))
         .route("/js/utils.js", get(api::js_utils))
         .route("/js/state.js", get(api::js_state))
         .route("/js/tags.js", get(api::js_tags))
