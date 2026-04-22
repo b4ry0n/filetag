@@ -956,13 +956,8 @@ async function aiClearTags(paths) {
     const toast = showToast(t('toast.removing-ai-tags', {n: np, plural: np !== 1 ? t('toast.removing-ai-plural') : ''}), 0);
     try {
         await apiPost('/api/ai/clear-tags', { paths, dir: currentAbsDir() });
-        // Refresh each file that may be currently selected.
-        for (const p of paths) {
-            if (state.selectedFile?.path === p) {
-                await loadFileDetail(p);
-            }
-        }
         await loadTags();
+        await refreshSelectedFilesData();
         renderDetail();
         _updateCardTagBadges();
         dismissToast(toast);
@@ -986,20 +981,20 @@ async function aiAcceptAllTags(paths) {
                 data = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
             }
 
-            const aiTags = (data.tags || []).filter(t => t.name && t.name.startsWith('ai/'));
+            const aiTags = (data.tags || []).filter(tag => tag.name && tag.name.startsWith('ai/'));
             if (aiTags.length === 0) continue;
 
             const promoted = aiTags
-                .map(t => {
-                    const bare = t.name.slice('ai/'.length);
+                .map(tag => {
+                    const bare = tag.name.slice('ai/'.length);
                     if (!bare) return null;
-                    return t.value ? `${bare}=${t.value}` : bare;
+                    return tag.value ? `${bare}=${tag.value}` : bare;
                 })
                 .filter(Boolean);
 
             if (promoted.length === 0) continue;
 
-            const originals = aiTags.map(t => (t.value ? `${t.name}=${t.value}` : t.name));
+            const originals = aiTags.map(tag => (tag.value ? `${tag.name}=${tag.value}` : tag.name));
             await apiPost('/api/tag', { path, tags: promoted, dir: currentAbsDir() });
             await apiPost('/api/untag', { path, tags: originals, dir: currentAbsDir() });
 
