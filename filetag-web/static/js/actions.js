@@ -747,6 +747,16 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-settings-fields').hidden = !enabled;
     } catch (_) { /* defaults are fine */ }
     document.getElementById('ai-test-result').hidden = true;
+    // Language selector — populate on demand so it works regardless of load order.
+    const langSel = document.getElementById('lang-select');
+    if (langSel) {
+        if (!langSel.options.length) {
+            langSel.innerHTML = LANG_OPTIONS.map(o =>
+                `<option value="${o.code}">${o.label}</option>`
+            ).join('');
+        }
+        langSel.value = getLang();
+    }
     switchSettingsTab(tab);
     document.getElementById('settings-modal').hidden = false;
 }
