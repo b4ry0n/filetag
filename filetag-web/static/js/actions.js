@@ -1100,6 +1100,7 @@ async function aiAnalyseSelected() {
         : t('toast.ai-analysed-n', {n: done, plural: done !== 1 ? t('toast.ai-analysed-plural') : ''});
     showToast(msg);
     await loadTags();
+    await refreshSelectedFilesData();
     renderDetail();
     _updateCardTagBadges();
 }
@@ -1127,6 +1128,7 @@ async function aiAnalyseCommonTraits() {
         dismissToast(toast);
         showToast(t('toast.ai-common-done', {n, plural: n !== 1 ? t('toast.ai-common-plural') : '', m, plural2: m !== 1 ? t('toast.ai-common-plural2') : ''}));
         await loadTags();
+        await refreshSelectedFilesData();
         renderDetail();
         _updateCardTagBadges();
     } catch (e) {
@@ -1226,6 +1228,21 @@ async function refreshSelectedFile() {
         }
     } catch (_) {}
     await loadTags();
+}
+
+/// Re-fetch file detail for every path currently in selectedFilesData so the
+/// bulk tag panel reflects freshly applied tags without requiring a deselect.
+async function refreshSelectedFilesData() {
+    await Promise.all([...state.selectedFilesData.keys()].map(async p => {
+        try {
+            const res = await fetch('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
+            if (res.ok) {
+                const data = await res.json();
+                state.selectedFilesData.set(p, data);
+                if (state.selectedFile?.path === p) state.selectedFile = data;
+            }
+        } catch (_) {}
+    }));
 }
 
 function setViewMode(mode) {
