@@ -1740,13 +1740,16 @@ pub async fn api_ai_analyse_common(
         })?
     };
 
-    // Collect analysable image paths (no videos; cap at COMMON_TRAITS_MAX_IMAGES).
+    // Collect analysable paths (images, archives, videos); cap at COMMON_TRAITS_MAX_IMAGES.
+    // Videos use the ffmpeg first-frame path inside prepare_jpeg_for_analysis.
     let analysable: Vec<&str> = body
         .paths
         .iter()
         .filter(|p| {
             let ext = p.rsplit('.').next().unwrap_or("").to_lowercase();
-            AI_IMAGE_EXTS.contains(&ext.as_str()) || ARCHIVE_EXTS.contains(&ext.as_str())
+            AI_IMAGE_EXTS.contains(&ext.as_str())
+                || ARCHIVE_EXTS.contains(&ext.as_str())
+                || AI_VIDEO_EXTS.contains(&ext.as_str())
         })
         .map(|s| s.as_str())
         .take(COMMON_TRAITS_MAX_IMAGES)
