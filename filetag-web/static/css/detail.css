@@ -393,7 +393,14 @@
     border-radius: 12px;
     font-size: 12px;
     font-weight: 500;
-    transition: background 0.15s, color 0.15s;
+    cursor: default;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.bulk-chip:hover {
+    background: rgba(230, 162, 0, 0.18);
+    color: #c87f00;
+    box-shadow: 0 0 0 1.5px rgba(230, 162, 0, 0.55);
 }
 
 .bulk-chip.armed {
