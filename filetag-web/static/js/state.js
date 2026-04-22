@@ -20,7 +20,8 @@ const state = {
     selectedFilesData: new Map(), // path → file detail (for tag aggregation)
     info: null,
     detailOpen: true,
-    expandedGroups: new Set(), // tag group prefixes that are expanded
+    expandedGroups: new Set(), // tag group full paths that are expanded
+    tagSortMode: 'groups-first', // 'groups-first' | 'alpha'
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
     kvValueCache: {},          // tagName → [{value, count}] loaded lazily for k/v tags
     aiAnalysing: new Set(),    // paths currently being analysed by AI

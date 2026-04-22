@@ -488,6 +488,31 @@
     color: var(--text);
 }
 
+.sidebar-sort-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 5px;
+    color: var(--text-tertiary);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.sidebar-sort-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+.sidebar-sort-btn.active {
+    color: var(--primary);
+    border-color: var(--primary-light);
+    background: var(--primary-light);
+}
+
 /* ------------------------------------------------------------------ */
 /* Tag Manager modal                                                   */
 /* ------------------------------------------------------------------ */
