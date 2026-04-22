@@ -1158,6 +1158,112 @@ function toggleDetailPanel() {
     restoreScrollAnchor(anchor);
 }
 
+// ---------------------------------------------------------------------------
+// Cache Manager modal
+// ---------------------------------------------------------------------------
+
+function openCacheManager() {
+    const menu = document.getElementById('cache-menu');
+    if (menu) menu.hidden = true;
+    document.getElementById('cache-manager-modal').hidden = false;
+    document.getElementById('cm-status').textContent = '';
+    loadCacheInfo();
+}
+
+function closeCacheManager() {
+    document.getElementById('cache-manager-modal').hidden = true;
+}
+
+async function loadCacheInfo() {
+    const listEl = document.getElementById('cm-subdir-list');
+    const totalEl = document.getElementById('cm-total-label');
+    if (!listEl) return;
+    if (state.currentBasePath == null) {
+        listEl.innerHTML = '<div class="cm-loading">Geen database geselecteerd.</div>';
+        return;
+    }
+    listEl.innerHTML = '<div class="cm-loading">Laden\u2026</div>';
+    try {
+        const data = await api('/api/cache/info' + dirParam('?'));
+        if (!data.subdirs || data.subdirs.length === 0) {
+            listEl.innerHTML = '<div class="cm-loading">Cache is leeg.</div>';
+            if (totalEl) totalEl.textContent = '';
+            return;
+        }
+        const LABELS = {
+            thumbs:      'Miniaturen',
+            raw:         'RAW-voorbeelden',
+            vthumbs:     'Video sprites (trickplay)',
+            ai_sprites:  'AI-analyse sprites (video)',
+            hls2:        'HLS-videobestanden',
+            video:       'Video-transcodes',
+        };
+        let html = '';
+        for (const sd of data.subdirs) {
+            const label = LABELS[sd.name] || sd.name;
+            const size = formatSize(sd.size);
+            const count = sd.count.toLocaleString();
+            html += `<div class="cm-subdir-row">
+                <div class="cm-subdir-info">
+                    <span class="cm-subdir-name">${esc(label)}</span>
+                    <span class="cm-subdir-meta">${count} bestand${sd.count !== 1 ? 'en' : ''} &middot; ${size}</span>
+                </div>
+                <button class="cm-btn cm-btn-sm" onclick="doCacheClearSubdir('${jesc(sd.name)}')">Wissen</button>
+            </div>`;
+        }
+        listEl.innerHTML = html;
+        if (totalEl) totalEl.textContent = 'Totaal: ' + formatSize(data.total);
+    } catch (e) {
+        listEl.innerHTML = `<div class="cm-loading">Fout: ${esc(e.message || String(e))}</div>`;
+    }
+}
+
+async function doCachePrune() {
+    if (state.currentBasePath == null) {
+        showToast('Geen database geselecteerd.');
+        return;
+    }
+    const btn = document.getElementById('cm-prune-btn');
+    const statusEl = document.getElementById('cm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Bezig met opschonen\u2026';
+    try {
+        const resp = await fetch('/api/cache/prune' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await resp.json();
+        const freed = formatSize(data.freed || 0);
+        const n = data.removed || 0;
+        if (statusEl) statusEl.textContent = `Verwijderd: ${n} bestand${n !== 1 ? 'en' : ''} (${freed} vrijgemaakt).`;
+        _thumbClearCache();
+        await loadCacheInfo();
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Fout: ' + (e.message || e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function doCacheClearSubdir(subdir) {
+    if (state.currentBasePath == null) return;
+    const statusEl = document.getElementById('cm-status');
+    if (statusEl) statusEl.textContent = 'Bezig\u2026';
+    try {
+        await fetch('/api/cache/clear-subdir' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subdir }),
+        });
+        _thumbClearCache();
+        if (statusEl) statusEl.textContent = `"${subdir}" cache gewist.`;
+        await loadCacheInfo();
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Fout: ' + (e.message || e);
+    }
+}
+
 function setCardSize(size) {
     document.getElementById('content').style.setProperty('--card-size', size + 'px');
 }

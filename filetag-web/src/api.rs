@@ -346,6 +346,189 @@ pub async fn api_cache_clear(
 }
 
 // ---------------------------------------------------------------------------
+// Cache management helpers
+// ---------------------------------------------------------------------------
+
+/// Recursively compute the total size and file count of a directory.
+fn dir_size_and_count(dir: &Path) -> (u64, u64) {
+    let mut size = 0u64;
+    let mut count = 0u64;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let (s, c) = dir_size_and_count(&entry.path());
+                size += s;
+                count += c;
+            } else if let Ok(meta) = entry.metadata() {
+                size += meta.len();
+                count += 1;
+            }
+        }
+    }
+    (size, count)
+}
+
+/// `GET /api/cache/info` — return size breakdown of the active root's cache.
+pub async fn api_cache_info(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let cache_dir = db_root.root.join(".filetag").join("cache");
+
+    let mut subdirs = vec![];
+    let mut total_size = 0u64;
+
+    if let Ok(rd) = std::fs::read_dir(&cache_dir) {
+        let mut entries: Vec<_> = rd
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for sd in entries {
+            let name = sd.file_name().to_string_lossy().into_owned();
+            let (size, count) = dir_size_and_count(&sd.path());
+            total_size += size;
+            subdirs.push(serde_json::json!({ "name": name, "size": size, "count": count }));
+        }
+    }
+
+    Ok(Json(
+        serde_json::json!({ "subdirs": subdirs, "total": total_size }),
+    ))
+}
+
+/// `POST /api/cache/prune` — remove cache files whose source no longer exists on disk.
+///
+/// Enumerates all indexed file paths, computes the expected cache key prefix for
+/// each file that still exists, then deletes any cache entry whose name does not
+/// start with a live prefix.
+pub async fn api_cache_prune(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let root = &db_root.root;
+    let cache_dir = root.join(".filetag").join("cache");
+
+    // Build the set of live cache key prefixes from every indexed file that still
+    // exists on disk.
+    let conn = open_conn(db_root).map_err(AppError)?;
+    let live_prefixes: std::collections::HashSet<String> = {
+        let mut stmt = conn
+            .prepare("SELECT path FROM files")
+            .map_err(|e| AppError(e.into()))?;
+        let rel_paths: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(|e| AppError(e.into()))?
+            .flatten()
+            .collect();
+
+        let mut prefixes = std::collections::HashSet::new();
+        for rel in rel_paths {
+            let abs = root.join(&rel);
+            if let Ok(meta) = std::fs::metadata(&abs) {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let size = meta.len();
+                let stem = abs
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                prefixes.insert(format!("{mtime}_{size}_{stem}"));
+            }
+        }
+        prefixes
+    };
+
+    let mut removed = 0u64;
+    let mut freed = 0u64;
+
+    if let Ok(subdirs) = std::fs::read_dir(&cache_dir) {
+        for sd in subdirs.flatten() {
+            if !sd.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            if sd.file_name() == "hls2" {
+                // hls2 uses one subdirectory per source file named by its key prefix.
+                if let Ok(rd) = std::fs::read_dir(sd.path()) {
+                    for entry in rd.flatten() {
+                        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                            continue;
+                        }
+                        let prefix = entry.file_name().to_string_lossy().into_owned();
+                        if !live_prefixes.contains(&prefix) {
+                            if let Ok(rd2) = std::fs::read_dir(entry.path()) {
+                                for f in rd2.flatten() {
+                                    if let Ok(m) = f.metadata() {
+                                        freed += m.len();
+                                    }
+                                    if std::fs::remove_file(f.path()).is_ok() {
+                                        removed += 1;
+                                    }
+                                }
+                            }
+                            let _ = std::fs::remove_dir(entry.path());
+                        }
+                    }
+                }
+            } else if let Ok(rd) = std::fs::read_dir(sd.path()) {
+                for entry in rd.flatten() {
+                    let fname = entry.file_name().to_string_lossy().into_owned();
+                    let is_live = live_prefixes.iter().any(|p| fname.starts_with(p.as_str()));
+                    if !is_live {
+                        if let Ok(m) = entry.metadata() {
+                            freed += m.len();
+                        }
+                        if std::fs::remove_file(entry.path()).is_ok() {
+                            removed += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(
+        serde_json::json!({ "removed": removed, "freed": freed }),
+    ))
+}
+
+/// `POST /api/cache/clear-subdir` — wipe a single named cache subdirectory.
+///
+/// Only the subdirectories listed in `ALLOWED_SUBDIRS` may be cleared.
+pub async fn api_cache_clear_subdir(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+    Json(body): Json<CacheClearSubdirBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    const ALLOWED_SUBDIRS: &[&str] = &["thumbs", "raw", "vthumbs", "ai_sprites", "hls2", "video"];
+    if !ALLOWED_SUBDIRS.contains(&body.subdir.as_str()) {
+        return Err(AppError(anyhow::anyhow!(
+            "unknown cache subdirectory '{}'",
+            body.subdir
+        )));
+    }
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let subdir = db_root
+        .root
+        .join(".filetag")
+        .join("cache")
+        .join(&body.subdir);
+    if subdir.exists() {
+        tokio::fs::remove_dir_all(&subdir)
+            .await
+            .map_err(|e| AppError(e.into()))?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
 // Tags list
 // ---------------------------------------------------------------------------
 

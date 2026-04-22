@@ -83,10 +83,12 @@
                             </svg>
                         </button>
                         <div class="toolbar-dropdown" id="cache-menu" hidden>
-                            <button onclick="clearCache(true)">Clear entire cache</button>
-                            <button id="pregen-sprites-btn" onclick="pregenSprites()">Generate video sprites</button>
+                            <button onclick="clearCache(true)">Volledige cache wissen</button>
+                            <button id="pregen-sprites-btn" onclick="pregenSprites()">Video sprites genereren</button>
                             <hr>
-                            <button id="ai-analyse-btn" onclick="aiAnalyseBatch()">Analyse images (AI)</button>
+                            <button id="ai-analyse-btn" onclick="aiAnalyseBatch()">Afbeeldingen analyseren (AI)</button>
+                            <hr>
+                            <button onclick="openCacheManager()">Cache beheer&hellip;</button>
                         </div>
                     </div>
                     <button class="view-btn" id="settings-btn" title="Settings" onclick="openSettings()">
@@ -194,6 +196,35 @@
         </div>
     </div>
     <div id="toast-container"></div>
+    <!-- Cache Manager modal -->
+    <div id="cache-manager-modal" class="modal-overlay" hidden onclick="if(event.target===this)closeCacheManager()">
+        <div class="modal cache-manager-modal">
+            <div class="modal-header">
+                <h3>Cache beheer</h3>
+                <button class="modal-close" onclick="closeCacheManager()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="cm-actions">
+                    <div class="cm-action-row">
+                        <div class="cm-action-info">
+                            <strong>Niet-gelinkte cachebestanden verwijderen</strong>
+                            <span class="cm-action-desc">Verwijdert cachebestanden waarvoor de bronbestand niet meer bestaat op schijf.</span>
+                        </div>
+                        <button class="cm-btn" id="cm-prune-btn" onclick="doCachePrune()">Opschonen</button>
+                    </div>
+                </div>
+                <div class="cm-section-label">Cache per map</div>
+                <div id="cm-subdir-list" class="cm-subdir-list">
+                    <div class="cm-loading">Laden&hellip;</div>
+                </div>
+                <div class="cm-footer">
+                    <span id="cm-total-label" class="cm-total"></span>
+                    <button class="cm-btn cm-btn-warn" onclick="clearCache(true).then(loadCacheInfo)">Alles wissen</button>
+                </div>
+            </div>
+            <div id="cm-status" class="cm-status"></div>
+        </div>
+    </div>
     <!-- AI settings modal -->
     <div id="settings-modal" class="modal-overlay" hidden onclick="if(event.target===this)closeSettings()">
         <div class="modal">

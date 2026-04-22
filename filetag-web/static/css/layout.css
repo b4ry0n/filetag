@@ -903,3 +903,143 @@
     padding-top: 16px;
     border-top: 1px solid var(--border);
 }
+
+/* ------------------------------------------------------------------ */
+/* Cache Manager modal                                                */
+/* ------------------------------------------------------------------ */
+
+.cache-manager-modal {
+    width: min(480px, 92vw);
+}
+
+.cm-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.cm-action-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.cm-action-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cm-action-info strong {
+    font-size: 13px;
+}
+
+.cm-action-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.cm-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    margin-bottom: 6px;
+}
+
+.cm-subdir-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+}
+
+.cm-subdir-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-surface);
+}
+
+.cm-subdir-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.cm-subdir-name {
+    font-size: 13px;
+}
+
+.cm-subdir-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.cm-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+
+.cm-total {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.cm-btn {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s;
+}
+
+.cm-btn:hover { background: var(--bg-hover); }
+.cm-btn:disabled { opacity: 0.5; cursor: default; }
+
+.cm-btn-sm {
+    padding: 3px 9px;
+    font-size: 11px;
+}
+
+.cm-btn-warn {
+    border-color: #dc2626;
+    color: #dc2626;
+}
+
+.cm-btn-warn:hover {
+    background: #fef2f2;
+}
+
+.cm-status {
+    padding: 6px 16px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-height: 26px;
+}
+
+.cm-loading {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    padding: 8px 0;
+}
