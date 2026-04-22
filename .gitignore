@@ -2,6 +2,7 @@
 /dist
 /scripts
 .filetag/
+.local/
 .github/copilot-instructions.md
 *.swp
 *.swo

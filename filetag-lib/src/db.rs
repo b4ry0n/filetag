@@ -584,14 +584,69 @@ pub enum RenameOutcome {
 
 /// Rename a tag.
 ///
-/// * If `new_name` does not yet exist as a plain name, the tag is renamed in-place.
-/// * If `new_name` already exists, the source is merged into it: all file-tag
-///   assignments are moved and the source tag is deleted.
-/// * If `new_name` contains `=` (e.g. `rating=5`), every file that held the
-///   source tag is assigned `key=value` instead; the source tag is deleted.
-///   If the derived key equals an existing plain tag, the two coexist normally
-///   because the schema distinguishes assignments by value.
+/// * If `name` is a plain tag name and `new_name` does not yet exist, the tag
+///   is renamed in-place.
+/// * If `name` is a plain tag name and `new_name` already exists, the source is
+///   merged into it: all file-tag assignments are moved and the source tag is
+///   deleted.
+/// * If `name` is a plain tag name and `new_name` contains `=` (e.g.
+///   `rating=5`), every file that held the source tag is assigned `key=value`
+///   instead; the source tag is deleted.
+/// * If `name` contains `=` (e.g. `year=2024`), only the assignments for that
+///   specific value are updated. The target may be another `key=value` pair
+///   (including a different key) or a plain tag name. The source key tag is
+///   kept even if it ends up with no remaining assignments.
 pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<RenameOutcome> {
+    // Guard against renaming to itself.
+    if name == new_name {
+        return Ok(RenameOutcome::Renamed);
+    }
+
+    // --- source is a key=value assignment (e.g. "year=2024") -------------------
+    if let Some(from_eq) = name.find('=') {
+        let from_key = &name[..from_eq];
+        let from_value = &name[from_eq + 1..];
+
+        let from_id: Option<i64> = conn
+            .prepare_cached("SELECT id FROM tags WHERE name = ?1")?
+            .query_row(params![from_key], |r| r.get(0))
+            .ok();
+        let Some(from_id) = from_id else {
+            return Ok(RenameOutcome::NotFound);
+        };
+
+        // Verify at least one assignment exists for this specific value.
+        let has_assignments: bool = conn
+            .prepare_cached("SELECT 1 FROM file_tags WHERE tag_id = ?1 AND value = ?2 LIMIT 1")?
+            .query_row(params![from_id, from_value], |_| Ok(true))
+            .unwrap_or(false);
+        if !has_assignments {
+            return Ok(RenameOutcome::NotFound);
+        }
+
+        // Resolve the target key and value.
+        let (to_id, to_value) = if let Some(to_eq) = new_name.find('=') {
+            let to_key = &new_name[..to_eq];
+            let to_val = &new_name[to_eq + 1..];
+            (get_or_create_tag(conn, to_key)?, to_val.to_owned())
+        } else {
+            (get_or_create_tag(conn, new_name)?, String::new())
+        };
+
+        let moved = conn.execute(
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at) \
+             SELECT file_id, ?1, ?2, created_at FROM file_tags \
+             WHERE tag_id = ?3 AND value = ?4",
+            params![to_id, to_value, from_id, from_value],
+        )?;
+        conn.execute(
+            "DELETE FROM file_tags WHERE tag_id = ?1 AND value = ?2",
+            params![from_id, from_value],
+        )?;
+        return Ok(RenameOutcome::Merged { assignments: moved });
+    }
+
+    // --- source is a plain tag name ---------------------------------------------
     let from_id: Option<i64> = conn
         .prepare_cached("SELECT id FROM tags WHERE name = ?1")?
         .query_row(params![name], |r| r.get(0))
