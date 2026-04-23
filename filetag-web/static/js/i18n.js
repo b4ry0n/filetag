@@ -75,6 +75,11 @@ const TRANSLATIONS = {
         'ai.frames-label':      'frames',
         'ai.video-note':        'Analysis is based on sampled frames, not the full video.',
 
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Send',
+        'chat.hint':  'Ask anything about the selected file(s).',
+
         // Tag sidebar
         'tags.no-tags':    'No tags',
         'tags.expand':     'Expand/collapse',
@@ -267,6 +272,11 @@ const TRANSLATIONS = {
         'ai.frames-label':      'frames',
         'ai.video-note':        'Analyse is gebaseerd op gesamplede frames, niet de volledige video.',
 
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Verstuur',
+        'chat.hint':  'Stel een vraag over het geselecteerde bestand of de geselecteerde bestanden.',
+
         'tags.no-tags':    'Geen tags',
         'tags.expand':     'Uitvouwen/invouwen',
         'tags.show-vals':  'Waarden tonen',
@@ -450,6 +460,11 @@ const TRANSLATIONS = {
         'ai.frames-title':      'Anzahl der Frames, die aus dem Video entnommen werden',
         'ai.frames-label':      'Frames',
         'ai.video-note':        'Analyse basiert auf entnommenen Frames, nicht dem vollständigen Video.',
+
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Senden',
+        'chat.hint':  'Stellen Sie eine Frage zur ausgewählten Datei oder den ausgewählten Dateien.',
 
         'tags.no-tags':    'Keine Tags',
         'tags.expand':     'Aus-/Einklappen',
@@ -635,6 +650,11 @@ const TRANSLATIONS = {
         'ai.frames-label':      'frames',
         'ai.video-note':        'L\'analyse est basée sur des frames échantillonnées, pas sur la vidéo complète.',
 
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Envoyer',
+        'chat.hint':  'Posez une question sur le(s) fichier(s) sélectionné(s).',
+
         'tags.no-tags':    'Aucun tag',
         'tags.expand':     'Développer/réduire',
         'tags.show-vals':  'Afficher les valeurs',
@@ -818,6 +838,11 @@ const TRANSLATIONS = {
         'ai.frames-title':      'Número de fotogramas muestreados del vídeo',
         'ai.frames-label':      'fotogramas',
         'ai.video-note':        'El análisis se basa en fotogramas muestreados, no en el vídeo completo.',
+
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Enviar',
+        'chat.hint':  'Haz una pregunta sobre el archivo o los archivos seleccionados.',
 
         'tags.no-tags':    'Sin etiquetas',
         'tags.expand':     'Expandir/contraer',
@@ -1003,6 +1028,11 @@ const TRANSLATIONS = {
         'ai.frames-label':      'frame',
         'ai.video-note':        'L\'analisi si basa su frame campionati, non sul video completo.',
 
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Invia',
+        'chat.hint':  'Fai una domanda sul file o sui file selezionati.',
+
         'tags.no-tags':    'Nessun tag',
         'tags.expand':     'Espandi/comprimi',
         'tags.show-vals':  'Mostra valori',
@@ -1186,6 +1216,11 @@ const TRANSLATIONS = {
         'ai.frames-title':      'Número de frames amostradas do vídeo',
         'ai.frames-label':      'frames',
         'ai.video-note':        'A análise baseia-se em frames amostradas, não no vídeo completo.',
+
+        // Chat panel
+        'chat.title': 'Chat',
+        'chat.send':  'Enviar',
+        'chat.hint':  'Faça uma pergunta sobre o(s) arquivo(s) selecionado(s).',
 
         'tags.no-tags':    'Sem etiquetas',
         'tags.expand':     'Expandir/recolher',
@@ -1371,6 +1406,11 @@ const TRANSLATIONS = {
         'ai.frames-label':      'klatek',
         'ai.video-note':        'Analiza opiera się na próbkowanych klatkach, nie na pełnym wideo.',
 
+        // Chat panel
+        'chat.title': 'Czat',
+        'chat.send':  'Wyślij',
+        'chat.hint':  'Zadaj pytanie dotyczące wybranego pliku lub plików.',
+
         'tags.no-tags':    'Brak tagów',
         'tags.expand':     'Rozwiń/zwiń',
         'tags.show-vals':  'Pokaż wartości',
@@ -1554,6 +1594,11 @@ const TRANSLATIONS = {
         'ai.frames-title':      'Antal bildrutor samplade från videon',
         'ai.frames-label':      'bildrutor',
         'ai.video-note':        'Analysen baseras på samplade bildrutor, inte hela videon.',
+
+        // Chat panel
+        'chat.title': 'Chatt',
+        'chat.send':  'Skicka',
+        'chat.hint':  'Ställ en fråga om den eller de valda filerna.',
 
         'tags.no-tags':    'Inga taggar',
         'tags.expand':     'Expandera/komprimera',

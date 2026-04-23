@@ -636,7 +636,7 @@ async fn analyse_video_sprite(
 
     let n = n_frames
         .map(|v| (v as usize).clamp(2, 256))
-        .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 16));
+        .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 64));
     let use_scene_select = config.video_frame_selection == "scene";
 
     // Keep each image compact (multi-sheet) so the model retains more per-frame detail.
