@@ -10,16 +10,14 @@
     height: 520px;
     min-width: 260px;
     min-height: 260px;
-    max-width: min(760px, 90vw);
-    max-height: min(900px, 90vh);
+    max-width: min(900px, 95vw);
+    max-height: min(900px, 95vh);
     display: flex;
     flex-direction: column;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-bottom: none;
-    border-right: none;
-    border-top-left-radius: 10px;
-    box-shadow: -4px -4px 24px rgba(0, 0, 0, 0.18);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
     z-index: 200;
     overflow: hidden;
 }
@@ -28,29 +26,19 @@
     display: none;
 }
 
-/* Resize handle: top-left corner + top edge + left edge */
-.chat-resize-handle {
+/* Resize edges and corners (injected by JS) */
+.chat-resize-edge {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 18px;
-    height: 18px;
-    cursor: nwse-resize;
     z-index: 10;
 }
-
-.chat-resize-handle::after {
-    content: '';
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    width: 10px;
-    height: 10px;
-    border-top: 2px solid var(--border);
-    border-left: 2px solid var(--border);
-    border-top-left-radius: 3px;
-    pointer-events: none;
-}
+.chat-resize-edge[data-dir="n"]  { top: 0;    left: 10px;  right: 10px; height: 5px; cursor: n-resize; }
+.chat-resize-edge[data-dir="s"]  { bottom: 0; left: 10px;  right: 10px; height: 5px; cursor: s-resize; }
+.chat-resize-edge[data-dir="e"]  { right: 0;  top: 10px; bottom: 10px; width: 5px;  cursor: e-resize; }
+.chat-resize-edge[data-dir="w"]  { left: 0;   top: 10px; bottom: 10px; width: 5px;  cursor: w-resize; }
+.chat-resize-edge[data-dir="ne"] { top: 0;    right: 0;  width: 14px; height: 14px; cursor: ne-resize; }
+.chat-resize-edge[data-dir="nw"] { top: 0;    left: 0;   width: 14px; height: 14px; cursor: nw-resize; }
+.chat-resize-edge[data-dir="se"] { bottom: 0; right: 0;  width: 14px; height: 14px; cursor: se-resize; }
+.chat-resize-edge[data-dir="sw"] { bottom: 0; left: 0;   width: 14px; height: 14px; cursor: sw-resize; }
 
 .chat-header {
     display: flex;
@@ -60,6 +48,12 @@
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     min-height: 42px;
+    cursor: move;
+    user-select: none;
+}
+
+.chat-header button {
+    cursor: pointer;
 }
 
 .chat-title {
