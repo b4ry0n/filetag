@@ -129,6 +129,49 @@
     gap: 8px;
 }
 
+.chat-video-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 12px;
+    background: var(--bg-hover);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--fg-dim);
+}
+
+.chat-video-bar[hidden] { display: none; }
+
+.chat-video-bar-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    cursor: pointer;
+    color: var(--fg);
+}
+
+.chat-frames-input {
+    width: 44px;
+    font-size: 12px;
+    padding: 1px 4px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--fg);
+    text-align: center;
+}
+
+.chat-video-bar-hint {
+    font-size: 11px;
+    color: var(--fg-dim);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .chat-hint {
     color: var(--text-tertiary);
     font-size: 12px;
