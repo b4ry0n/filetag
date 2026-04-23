@@ -2018,34 +2018,118 @@ pub async fn api_ai_chat(
             if let Some(info) = video_info(&abs).await {
                 let n = sprites_for_duration(info.duration, 8, 16);
                 let use_scene = config.video_frame_selection == "scene";
-                if let Ok(sprite_paths) = generate_ai_sprites(
-                    &abs,
-                    &root.root,
-                    n,
-                    info.duration,
-                    config.video_sheet_max_frames,
-                    use_scene,
-                )
-                .await
-                {
-                    let file_name = abs
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(file_path.as_str());
-                    let mins = (info.duration / 60.0) as u64;
-                    let secs = (info.duration % 60.0) as u64;
-                    let duration_str = format!("{mins}:{secs:02}");
-                    // Prepend a plain-text description so the model understands
-                    // that the image(s) are contact sheets, not individual photos.
-                    video_context.push_str(&format!(
-                        "[Video context: the following image(s) are contact sheets of {n} frames sampled evenly across \"{file_name}\" ({duration_str}). Each image shows multiple frames in a grid. Use these to answer questions about the video content.]\n"
-                    ));
-                    for sp in &sprite_paths {
-                        if let Ok(bytes) = tokio::fs::read(sp).await {
-                            b64_images
-                                .push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+                let file_name = abs
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(file_path.as_str());
+                let mins = (info.duration / 60.0) as u64;
+                let secs = (info.duration % 60.0) as u64;
+                let duration_str = format!("{mins}:{secs:02}");
+
+                // Mirror the analyse_video logic: use full-frame mode when configured,
+                // with sprite fallback on failure.
+                let frames_b64: Option<Vec<String>> = if config.video_mode == "full" {
+                    match extract_video_frames(&abs, n, info.duration, use_scene).await {
+                        Ok(frames) => {
+                            let encoded: Vec<String> = frames
+                                .iter()
+                                .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+                                .collect();
+                            if encoded.is_empty() {
+                                None
+                            } else {
+                                Some(encoded)
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[filetag-web] chat: full frame extraction failed for {file_name}: {e}; trying sprites"
+                            );
+                            match generate_ai_sprites(
+                                &abs,
+                                &root.root,
+                                n,
+                                info.duration,
+                                config.video_sheet_max_frames,
+                                use_scene,
+                            )
+                            .await
+                            {
+                                Ok(paths) => {
+                                    let mut enc = Vec::new();
+                                    for p in &paths {
+                                        if let Ok(b) = tokio::fs::read(p).await {
+                                            enc.push(
+                                                base64::engine::general_purpose::STANDARD
+                                                    .encode(&b),
+                                            );
+                                        }
+                                    }
+                                    if enc.is_empty() { None } else { Some(enc) }
+                                }
+                                Err(e2) => {
+                                    eprintln!(
+                                        "[filetag-web] chat: sprite fallback also failed for {file_name}: {e2}"
+                                    );
+                                    None
+                                }
+                            }
                         }
                     }
+                } else {
+                    match generate_ai_sprites(
+                        &abs,
+                        &root.root,
+                        n,
+                        info.duration,
+                        config.video_sheet_max_frames,
+                        use_scene,
+                    )
+                    .await
+                    {
+                        Ok(paths) => {
+                            let mut enc = Vec::new();
+                            for p in &paths {
+                                if let Ok(b) = tokio::fs::read(p).await {
+                                    enc.push(base64::engine::general_purpose::STANDARD.encode(&b));
+                                }
+                            }
+                            if enc.is_empty() { None } else { Some(enc) }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[filetag-web] chat: sprite generation failed for {file_name}: {e}; trying individual frames"
+                            );
+                            match extract_video_frames(&abs, n, info.duration, use_scene).await {
+                                Ok(frames) => {
+                                    let encoded: Vec<String> = frames
+                                        .iter()
+                                        .map(|b| {
+                                            base64::engine::general_purpose::STANDARD.encode(b)
+                                        })
+                                        .collect();
+                                    if encoded.is_empty() {
+                                        None
+                                    } else {
+                                        Some(encoded)
+                                    }
+                                }
+                                Err(e2) => {
+                                    eprintln!(
+                                        "[filetag-web] chat: frame fallback also failed for {file_name}: {e2}"
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                    }
+                };
+
+                if let Some(frames) = frames_b64 {
+                    video_context.push_str(&format!(
+                        "[Video context: the following image(s) are from \"{file_name}\" ({duration_str}). Use these to answer questions about the video content.]\n"
+                    ));
+                    b64_images.extend(frames);
                     video_slots += 1;
                 }
             }
