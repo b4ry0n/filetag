@@ -545,23 +545,6 @@
     text-align: center;
 }
 
-.ai-settings-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: transparent;
-    color: var(--fg-dim);
-    font-size: 17px;
-    cursor: pointer;
-    transition: background .15s, color .15s;
-    line-height: 1;
-}
-.ai-settings-btn:hover { background: var(--bg-hover); color: var(--fg); }
 
 .ai-analyse-note {
     display: block;
