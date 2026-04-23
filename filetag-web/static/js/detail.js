@@ -795,7 +795,13 @@ function renderDetail() {
         panel.innerHTML = `
             <div class="detail-header">
                 <h3>${t('bulk.n-selected', {n: count})}</h3>
-                <button class="detail-close" onclick="clearSelection()" title="${esc(t('bulk.clear-sel'))}">&times;</button>
+                <div class="detail-header-actions">
+                    <button class="detail-chat-btn" onclick="openChat()" title="Chat about selected files">
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
+                        Chat
+                    </button>
+                    <button class="detail-close" onclick="clearSelection()" title="${esc(t('bulk.clear-sel'))}">&times;</button>
+                </div>
             </div>
             <div class="bulk-tag-section">
                 ${bulkTags.length > 0 ? `<p class="bulk-section-label">${esc(t('bulk.tags-label'))}</p>
@@ -997,7 +1003,13 @@ function renderDetail() {
         <div class="detail-top">
         <div class="detail-header">
             <h3>${esc(name)}</h3>
-            <button class="detail-close" onclick="closeDetail()" title="${esc(t('detail.close'))}">&times;</button>
+            <div class="detail-header-actions">
+                <button class="detail-chat-btn" onclick="openChat()" title="Chat about this file">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
+                    Chat
+                </button>
+                <button class="detail-close" onclick="closeDetail()" title="${esc(t('detail.close'))}">&times;</button>
+            </div>
         </div>
         <div class="detail-preview">${preview}</div>
         <div class="detail-meta">

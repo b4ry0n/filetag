@@ -84,6 +84,7 @@ css_handler!(css_toolbar, "../static/css/toolbar.css");
 css_handler!(css_cards, "../static/css/cards.css");
 css_handler!(css_detail, "../static/css/detail.css");
 css_handler!(css_viewer, "../static/css/viewer.css");
+css_handler!(css_chat, "../static/css/chat.css");
 
 macro_rules! js_handler {
     ($name:ident, $path:literal) => {
@@ -112,6 +113,7 @@ js_handler!(js_actions, "../static/js/actions.js");
 js_handler!(js_lightbox, "../static/js/lightbox.js");
 js_handler!(js_viewer, "../static/js/viewer.js");
 js_handler!(js_main, "../static/js/main.js");
+js_handler!(js_chat, "../static/js/chat.js");
 
 /// Serve the embedded `favicon.ico`.
 pub async fn favicon() -> impl IntoResponse {

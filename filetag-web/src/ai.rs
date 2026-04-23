@@ -1830,3 +1830,339 @@ every single image. Ignore features unique to any individual image."
         "raw": if body.dry_run { raw } else { String::new() },
     })))
 }
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+/// A single turn in the chat conversation.
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct AiChatMessage {
+    pub role: String, // "user" | "assistant"
+    pub content: String,
+}
+
+/// Request body for `POST /api/ai/chat`.
+#[derive(serde::Deserialize)]
+pub struct AiChatRequest {
+    /// Absolute path of the current directory (used to resolve the correct DB root).
+    pub dir: Option<String>,
+    /// Absolute paths of the files being discussed.  Images are encoded and
+    /// sent with the first user message; other file types are skipped.
+    pub files: Vec<String>,
+    /// Full conversation history so far (NOT including the placeholder reply).
+    pub messages: Vec<AiChatMessage>,
+}
+
+/// Response for `POST /api/ai/chat`.
+#[derive(serde::Serialize)]
+pub struct AiChatResponse {
+    pub reply: String,
+}
+
+/// Send a multi-turn conversation to the VLM.
+///
+/// `b64_images` are attached to the *first* user message so the model can
+/// refer back to them in subsequent turns without re-sending the pixels.
+async fn vlm_chat_with_history(
+    config: &AiConfig,
+    messages: &[AiChatMessage],
+    b64_images: &[String],
+) -> anyhow::Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()?;
+
+    let raw = if config.format == "ollama" {
+        let url = format!("{}/api/chat", config.endpoint.trim_end_matches('/'));
+        let api_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                if i == 0 && !b64_images.is_empty() {
+                    serde_json::json!({
+                        "role": m.role,
+                        "content": m.content,
+                        "images": b64_images,
+                    })
+                } else {
+                    serde_json::json!({ "role": m.role, "content": m.content })
+                }
+            })
+            .collect();
+        let body = serde_json::json!({
+            "model": config.model,
+            "stream": false,
+            "messages": api_messages,
+            "options": { "num_predict": config.max_tokens },
+        });
+        let mut req = client.post(&url).json(&body);
+        if let Some(key) = &config.api_key
+            && !key.is_empty()
+        {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        let raw = response_text(req.send().await?).await?;
+        let resp: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+        resp["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    } else {
+        // OpenAI-compatible
+        let url = format!(
+            "{}/v1/chat/completions",
+            config.endpoint.trim_end_matches('/')
+        );
+        let api_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                if i == 0 && !b64_images.is_empty() {
+                    let mut parts = vec![serde_json::json!({"type": "text", "text": m.content})];
+                    for b64 in b64_images {
+                        let data_uri = format!("data:image/jpeg;base64,{b64}");
+                        parts.push(serde_json::json!({
+                            "type": "image_url",
+                            "image_url": { "url": data_uri }
+                        }));
+                    }
+                    serde_json::json!({ "role": m.role, "content": parts })
+                } else {
+                    serde_json::json!({ "role": m.role, "content": m.content })
+                }
+            })
+            .collect();
+        let body = serde_json::json!({
+            "model": config.model,
+            "max_tokens": config.max_tokens,
+            "messages": api_messages,
+        });
+        let mut req = client.post(&url).json(&body);
+        if let Some(key) = &config.api_key
+            && !key.is_empty()
+        {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        let raw = response_text(req.send().await?).await?;
+        let resp: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+        let content = &resp["choices"][0]["message"]["content"];
+        if let Some(s) = content.as_str() {
+            s.to_string()
+        } else {
+            // Structured content array (some providers return this)
+            content
+                .as_array()
+                .and_then(|arr| {
+                    arr.iter()
+                        .filter_map(|p| p["text"].as_str())
+                        .next()
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default()
+        }
+    };
+
+    Ok(strip_think_blocks(&raw).to_string())
+}
+
+/// `POST /api/ai/chat` — multi-turn chat about one or more selected files.
+pub async fn api_ai_chat(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AiChatRequest>,
+) -> Result<Json<AiChatResponse>, AppError> {
+    if req.messages.is_empty() {
+        return Err(AppError(anyhow::anyhow!("messages must not be empty")));
+    }
+    for msg in &req.messages {
+        if msg.role != "user" && msg.role != "assistant" {
+            return Err(AppError(anyhow::anyhow!("invalid role: {}", msg.role)));
+        }
+    }
+
+    let dir = req.dir.as_deref().unwrap_or("");
+    let root = root_for_dir(&state, std::path::Path::new(dir))
+        .ok_or_else(|| AppError(anyhow::anyhow!("no database found for directory")))?;
+    let conn = open_conn(root)?;
+    let config =
+        load_ai_config(&conn).ok_or_else(|| AppError(anyhow::anyhow!("AI is not configured")))?;
+
+    // Prepare visual context for the first user message.
+    // - Images: resize + encode as JPEG (up to 4 files).
+    // - Videos: generate an AI sprite sheet and encode each sheet (up to 2 videos).
+    // - Other file types: skip (their filenames appear in the user's message text).
+    let mut b64_images: Vec<String> = Vec::new();
+    let mut image_slots = 0usize;
+    let mut video_slots = 0usize;
+    let mut video_context = String::new();
+    for file_path in &req.files {
+        let abs = root.root.join(file_path);
+        let ext = abs
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if AI_IMAGE_EXTS.contains(&ext.as_str()) && image_slots < 4 {
+            if let Some(bytes) = ai_prepare_jpeg(&abs, &root.root).await {
+                // Only accept actual JPEG output — not raw bytes of non-image files.
+                if bytes.starts_with(&[0xFF, 0xD8]) {
+                    b64_images.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+                    image_slots += 1;
+                }
+            }
+        } else if AI_VIDEO_EXTS.contains(&ext.as_str()) && video_slots < 2 {
+            // Use the same sprite-sheet approach as the AI tagging pipeline.
+            // A contact sheet (grid of frames) lets the model perceive the video
+            // as a whole rather than treating each frame as an independent image.
+            if let Some(info) = video_info(&abs).await {
+                let n = sprites_for_duration(info.duration, 8, 16);
+                let use_scene = config.video_frame_selection == "scene";
+                if let Ok(sprite_paths) = generate_ai_sprites(
+                    &abs,
+                    &root.root,
+                    n,
+                    info.duration,
+                    config.video_sheet_max_frames,
+                    use_scene,
+                )
+                .await
+                {
+                    let file_name = abs
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(file_path.as_str());
+                    let mins = (info.duration / 60.0) as u64;
+                    let secs = (info.duration % 60.0) as u64;
+                    let duration_str = format!("{mins}:{secs:02}");
+                    // Prepend a plain-text description so the model understands
+                    // that the image(s) are contact sheets, not individual photos.
+                    video_context.push_str(&format!(
+                        "[Video context: the following image(s) are contact sheets of {n} frames sampled evenly across \"{file_name}\" ({duration_str}). Each image shows multiple frames in a grid. Use these to answer questions about the video content.]\n"
+                    ));
+                    for sp in &sprite_paths {
+                        if let Ok(bytes) = tokio::fs::read(sp).await {
+                            b64_images
+                                .push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+                        }
+                    }
+                    video_slots += 1;
+                }
+            }
+        }
+        // All other file types: omit visual context; model answers from filename + conversation.
+    }
+
+    // Text files: read content and prepend to the first user message as context.
+    // Each file is quoted with its filename so the model knows what it is reading.
+    // Limited to 32 KiB per file, up to 4 files total.
+    const TEXT_EXTS: &[&str] = &[
+        "txt",
+        "rst",
+        "csv",
+        "tsv",
+        "log",
+        "ini",
+        "cfg",
+        "conf",
+        "json",
+        "yaml",
+        "yml",
+        "toml",
+        "xml",
+        "html",
+        "htm",
+        "css",
+        "js",
+        "ts",
+        "jsx",
+        "tsx",
+        "py",
+        "rb",
+        "rs",
+        "go",
+        "java",
+        "c",
+        "cpp",
+        "h",
+        "hpp",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "sql",
+        "diff",
+        "patch",
+        "gitignore",
+        "env",
+        "md",
+        "markdown",
+    ];
+    const MAX_TEXT_BYTES: usize = 32 * 1024;
+    const MAX_TEXT_FILES: usize = 4;
+
+    let mut text_context = String::new();
+    let mut text_file_count = 0usize;
+    for file_path in &req.files {
+        if text_file_count >= MAX_TEXT_FILES {
+            break;
+        }
+        let abs = root.root.join(file_path);
+        let ext = abs
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !TEXT_EXTS.contains(&ext.as_str()) {
+            continue;
+        }
+
+        let raw = match tokio::fs::read(&abs).await {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        // Reject if it doesn't look like valid UTF-8 text.
+        let text = match std::str::from_utf8(&raw) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let file_name = abs
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path.as_str());
+        let snippet = if text.len() > MAX_TEXT_BYTES {
+            format!(
+                "```{file_name}\n{}\n… (truncated)\n```",
+                &text[..MAX_TEXT_BYTES]
+            )
+        } else {
+            format!("```{file_name}\n{text}\n```")
+        };
+        text_context.push_str(&snippet);
+        text_context.push('\n');
+        text_file_count += 1;
+    }
+
+    // Prepend video and/or text context to the first user message so the model
+    // has full context from the start of the conversation.
+    let mut messages = req.messages.clone();
+    let mut prefix = video_context.clone();
+    if !text_context.is_empty() {
+        prefix.push_str("The following file(s) are provided as context:\n\n");
+        prefix.push_str(&text_context);
+        prefix.push('\n');
+    }
+    if !prefix.is_empty() {
+        let first = &messages[0];
+        messages[0] = AiChatMessage {
+            role: first.role.clone(),
+            content: format!("{prefix}{}", first.content),
+        };
+    }
+
+    let reply = vlm_chat_with_history(&config, &messages, &b64_images)
+        .await
+        .map_err(AppError)?;
+
+    Ok(Json(AiChatResponse { reply }))
+}
