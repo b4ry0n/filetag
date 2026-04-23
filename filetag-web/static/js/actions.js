@@ -1143,6 +1143,9 @@ function aiSetVideoFrames(rawValue) {
     if (!Number.isFinite(parsed)) return state.aiVideoFrames;
     const clamped = Math.max(2, Math.min(256, parsed));
     state.aiVideoFrames = clamped;
+    // Keep chat-panel bar in sync.
+    const chatInput = document.getElementById('chat-frames-input');
+    if (chatInput) chatInput.value = clamped;
     return clamped;
 }
 
@@ -1150,6 +1153,11 @@ function aiSetVideoFramesAuto(enabled) {
     state.aiVideoFramesAuto = !!enabled;
     const input = document.getElementById('ai-frames-input');
     if (input) input.disabled = state.aiVideoFramesAuto;
+    // Keep chat-panel bar in sync.
+    const chatAuto  = document.getElementById('chat-frames-auto');
+    const chatInput = document.getElementById('chat-frames-input');
+    if (chatAuto)  chatAuto.checked  = state.aiVideoFramesAuto;
+    if (chatInput) chatInput.disabled = state.aiVideoFramesAuto;
     return state.aiVideoFramesAuto;
 }
 

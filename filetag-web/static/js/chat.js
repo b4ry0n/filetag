@@ -47,6 +47,24 @@ function _initChatResize() {
     if (sh) panel.style.height = sh;
 }
 
+function _updateChatVideoBar() {
+    const bar = document.getElementById('chat-video-bar');
+    if (!bar) return;
+    const hasVideo = _chatFiles.some(p => {
+        const ext = p.split('.').pop().toLowerCase();
+        return AI_VIDEO_EXTS.has(ext);
+    });
+    bar.hidden = !hasVideo;
+    if (!hasVideo) return;
+    const autoEl  = document.getElementById('chat-frames-auto');
+    const inputEl = document.getElementById('chat-frames-input');
+    if (autoEl)  autoEl.checked  = state.aiVideoFramesAuto;
+    if (inputEl) {
+        inputEl.value    = state.aiVideoFrames;
+        inputEl.disabled = state.aiVideoFramesAuto;
+    }
+}
+
 function openChat() {
     const files = state.selectedPaths.size > 0
         ? [...state.selectedPaths]
@@ -66,6 +84,7 @@ function openChat() {
     const panel = document.getElementById('chat-panel');
     panel.hidden = false;
     _renderChatFiles();
+    _updateChatVideoBar();
     _renderChatMessages();
     document.getElementById('chat-input').focus();
 }
