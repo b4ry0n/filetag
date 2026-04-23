@@ -2140,7 +2140,84 @@ pub async fn api_ai_chat(
             }
         }
         // All other file types: pass filename only so the model can use it as context.
-        else {
+        else if ARCHIVE_EXTS.contains(&ext.as_str()) && image_slots < 4 {
+            // Archive file: extract a file listing + sample images, like analyse_archive.
+            let arc = abs.clone();
+            let file_name = abs
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path.as_str())
+                .to_string();
+            if let Ok((all_entries, image_names)) = tokio::task::spawn_blocking(move || {
+                let entries = archive_list_entries_raw(&arc)?;
+                let images = archive_image_entries(&arc)?;
+                anyhow::Ok((entries, images))
+            })
+            .await
+            .unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed")))
+            {
+                let listing = build_archive_listing(&all_entries);
+                let sample_names = pick_samples(&image_names, ARCHIVE_SAMPLE_COUNT);
+                let mut sample_b64: Vec<String> = Vec::new();
+                for name in &sample_names {
+                    if image_slots + sample_b64.len() >= 4 {
+                        break;
+                    }
+                    let arc2 = abs.clone();
+                    let ename = name.clone();
+                    let entry_result =
+                        tokio::task::spawn_blocking(move || archive_read_entry(&arc2, &ename))
+                            .await
+                            .ok()
+                            .and_then(|r| r.ok());
+                    if let Some((bytes, _)) = entry_result {
+                        let entry_ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+                        if let Some(jpeg) = ai_prepare_jpeg_from_bytes(bytes, &entry_ext).await {
+                            sample_b64
+                                .push(base64::engine::general_purpose::STANDARD.encode(&jpeg));
+                        }
+                    }
+                }
+                video_context.push_str(&format!(
+                    "[Archive \"{file_name}\": {} files, {} images. File listing:\n{listing}]\n",
+                    all_entries.len(),
+                    image_names.len(),
+                ));
+                image_slots += sample_b64.len();
+                b64_images.extend(sample_b64);
+            }
+        } else if file_path.contains("::") && image_slots < 4 {
+            // Virtual archive entry path (e.g. "comics/book.cbz::page001.jpg").
+            // Split on "::" to get the archive path and entry name.
+            if let Some((archive_rel, entry_name)) = file_path.split_once("::") {
+                let archive_abs = root.root.join(archive_rel);
+                let ename = entry_name.to_string();
+                let arc = archive_abs.clone();
+                let entry_result =
+                    tokio::task::spawn_blocking(move || archive_read_entry(&arc, &ename))
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok());
+                if let Some((bytes, _)) = entry_result {
+                    let entry_ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    if let Some(jpeg) = ai_prepare_jpeg_from_bytes(bytes, &entry_ext).await
+                        && jpeg.starts_with(&[0xFF, 0xD8])
+                    {
+                        let label = format!(
+                            "{}::{}",
+                            archive_abs
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(archive_rel),
+                            entry_name
+                        );
+                        video_context.push_str(&format!("[Image: \"{label}\"]\n"));
+                        b64_images.push(base64::engine::general_purpose::STANDARD.encode(&jpeg));
+                        image_slots += 1;
+                    }
+                }
+            }
+        } else {
             let file_name = abs
                 .file_name()
                 .and_then(|n| n.to_str())
