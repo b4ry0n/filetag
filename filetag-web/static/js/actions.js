@@ -1132,6 +1132,8 @@ async function aiAnalyseCommonTraits() {
 
 /** Keep the chat panel to the left of the detail panel when it is visible. */
 function _syncChatRight() {
+    const panel = document.getElementById('chat-panel');
+    if (panel && panel.dataset.free === '1') return; // free-floating, leave alone
     const w = state.detailOpen
         ? getComputedStyle(document.documentElement).getPropertyValue('--detail-width').trim()
         : '0px';

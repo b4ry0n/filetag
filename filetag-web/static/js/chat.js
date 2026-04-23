@@ -7,44 +7,139 @@ let _chatFiles    = [];   // absolute paths of files in context
 let _chatSending  = false;
 
 function _initChatResize() {
-    const handle = document.getElementById('chat-resize-handle');
-    const panel  = document.getElementById('chat-panel');
-    if (!handle || !panel) return;
-    handle.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const startW = panel.offsetWidth;
-        const startH = panel.offsetHeight;
-        const minW = parseInt(getComputedStyle(panel).minWidth) || 260;
-        const minH = parseInt(getComputedStyle(panel).minHeight) || 260;
-        const maxW = parseInt(getComputedStyle(panel).maxWidth) || 760;
-        const maxH = parseInt(getComputedStyle(panel).maxHeight) || 900;
-        document.body.style.cursor = 'nwse-resize';
-        document.body.style.userSelect = 'none';
-        function onMove(ev) {
-            const w = Math.max(minW, Math.min(maxW, startW - (ev.clientX - startX)));
-            const h = Math.max(minH, Math.min(maxH, startH - (ev.clientY - startY)));
-            panel.style.width  = w + 'px';
-            panel.style.height = h + 'px';
-            localStorage.setItem('ft-chat-width',  w + 'px');
-            localStorage.setItem('ft-chat-height', h + 'px');
-        }
-        function onUp() {
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onUp);
-        }
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
-    });
-    // Restore saved size
+    const panel = document.getElementById('chat-panel');
+    if (!panel) return;
+
+    // --- Restore saved size ---
     const sw = localStorage.getItem('ft-chat-width');
     const sh = localStorage.getItem('ft-chat-height');
     if (sw) panel.style.width  = sw;
     if (sh) panel.style.height = sh;
+
+    // --- Restore saved free position ---
+    if (localStorage.getItem('ft-chat-free') === '1') {
+        const sl = localStorage.getItem('ft-chat-left');
+        const st = localStorage.getItem('ft-chat-top');
+        panel.style.right  = 'auto';
+        panel.style.bottom = 'auto';
+        if (sl) panel.style.left = sl;
+        if (st) panel.style.top  = st;
+        panel.dataset.free = '1';
+    }
+
+    // Switch from CSS right/bottom anchor to explicit left/top so the panel
+    // can be positioned freely anywhere on screen.
+    function enterFreeMode() {
+        if (panel.dataset.free === '1') return;
+        const rect = panel.getBoundingClientRect();
+        panel.style.right  = 'auto';
+        panel.style.bottom = 'auto';
+        panel.style.left   = rect.left + 'px';
+        panel.style.top    = rect.top  + 'px';
+        panel.dataset.free = '1';
+        localStorage.setItem('ft-chat-free', '1');
+    }
+
+    // --- Create 8 resize handles ---
+    for (const dir of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
+        const el = document.createElement('div');
+        el.className  = 'chat-resize-edge';
+        el.dataset.dir = dir;
+        el.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            enterFreeMode();
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startW = panel.offsetWidth;
+            const startH = panel.offsetHeight;
+            const startL = panel.getBoundingClientRect().left;
+            const startT = panel.getBoundingClientRect().top;
+            const cs     = getComputedStyle(panel);
+            const minW   = parseInt(cs.minWidth)  || 260;
+            const minH   = parseInt(cs.minHeight) || 260;
+            const maxW   = Math.min(parseInt(cs.maxWidth)  || 900, window.innerWidth  - 8);
+            const maxH   = Math.min(parseInt(cs.maxHeight) || 900, window.innerHeight - 8);
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor     = getComputedStyle(el).cursor;
+            function onMove(ev) {
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+                let w = startW, h = startH, l = startL, t = startT;
+                if (dir.includes('e')) {
+                    w = Math.max(minW, Math.min(maxW, startW + dx));
+                }
+                if (dir.includes('s')) {
+                    h = Math.max(minH, Math.min(maxH, startH + dy));
+                }
+                if (dir.includes('w')) {
+                    const nw = Math.max(minW, Math.min(maxW, startW - dx));
+                    l = startL + (startW - nw);
+                    w = nw;
+                }
+                if (dir.includes('n')) {
+                    const nh = Math.max(minH, Math.min(maxH, startH - dy));
+                    t = startT + (startH - nh);
+                    h = nh;
+                }
+                panel.style.width  = w + 'px';
+                panel.style.height = h + 'px';
+                panel.style.left   = l + 'px';
+                panel.style.top    = t + 'px';
+                localStorage.setItem('ft-chat-width',  w + 'px');
+                localStorage.setItem('ft-chat-height', h + 'px');
+                localStorage.setItem('ft-chat-left',   l + 'px');
+                localStorage.setItem('ft-chat-top',    t + 'px');
+            }
+            function onUp() {
+                document.body.style.userSelect = '';
+                document.body.style.cursor     = '';
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup',   onUp);
+            }
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup',   onUp);
+        });
+        panel.appendChild(el);
+    }
+
+    // --- Drag: move panel by header ---
+    const header = panel.querySelector('.chat-header');
+    if (header) {
+        header.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('button,input,select,textarea,a')) return;
+            e.preventDefault();
+            enterFreeMode();
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startL = panel.getBoundingClientRect().left;
+            const startT = panel.getBoundingClientRect().top;
+            document.body.style.cursor     = 'grabbing';
+            document.body.style.userSelect = 'none';
+            function onMove(ev) {
+                const l = Math.max(-(panel.offsetWidth - 100),
+                              Math.min(window.innerWidth - 100,
+                                startL + (ev.clientX - startX)));
+                const t = Math.max(0,
+                              Math.min(window.innerHeight - 42,
+                                startT + (ev.clientY - startY)));
+                panel.style.left = l + 'px';
+                panel.style.top  = t + 'px';
+                localStorage.setItem('ft-chat-left', l + 'px');
+                localStorage.setItem('ft-chat-top',  t + 'px');
+            }
+            function onUp() {
+                document.body.style.cursor     = '';
+                document.body.style.userSelect = '';
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup',   onUp);
+            }
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup',   onUp);
+        });
+    }
 }
 
 function _updateChatVideoBar() {
