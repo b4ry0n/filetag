@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/css/cards.css">
     <link rel="stylesheet" href="/css/detail.css">
     <link rel="stylesheet" href="/css/viewer.css">
+    <link rel="stylesheet" href="/css/chat.css">
 </head>
 <body>
     <header class="header">
@@ -99,6 +100,7 @@
                             <hr>
                             <div class="toolbar-dropdown-section" data-i18n="toolbar.section-ai">AI</div>
                             <button id="ai-analyse-btn" onclick="aiAnalyseBatch()" data-i18n="toolbar.ai-batch">Analyse images (AI)</button>
+                            <button id="ai-chat-btn" onclick="openChat()" data-i18n="toolbar.ai-chat">Chat about selection&hellip;</button>
                             <hr>
                             <div class="toolbar-dropdown-section" data-i18n="toolbar.section-app">App</div>
                             <button id="settings-btn" onclick="openSettings()" data-i18n="toolbar.settings">Settings&hellip;</button>
@@ -413,5 +415,36 @@
     <script src="/js/lightbox.js"></script>
     <script src="/js/viewer.js"></script>
     <script src="/js/main.js"></script>
+    <script src="/js/chat.js"></script>
+
+    <!-- Chat panel -->
+    <div id="chat-panel" class="chat-panel" hidden>
+        <div class="chat-resize-handle" id="chat-resize-handle"></div>
+        <div class="chat-header">
+            <span class="chat-title" data-i18n="chat.title">Chat</span>
+            <div id="chat-file-thumbs" class="chat-file-thumbs"></div>
+            <div class="chat-header-actions">
+                <button class="chat-icon-btn" onclick="chatClearHistory()" title="Clear history">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                        <polyline points="1,4 2.5,2.5 4,4"/><path d="M2.5 2.5 A6 6 0 1 1 2.5 9.5"/>
+                    </svg>
+                </button>
+                <button class="chat-icon-btn" onclick="closeChat()" title="Close">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                        <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div id="chat-messages" class="chat-messages">
+            <p class="chat-hint" data-i18n="chat.hint">Ask anything about the selected file(s).</p>
+        </div>
+        <div class="chat-input-wrap">
+            <textarea id="chat-input" class="chat-input" rows="2"
+                placeholder="Ask anything…"
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage()}"></textarea>
+            <button id="chat-send-btn" class="chat-send-btn" onclick="sendChatMessage()" data-i18n="chat.send">Send</button>
+        </div>
+    </div>
 </body>
 </html>

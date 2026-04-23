@@ -311,6 +311,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Panel resize handles
     initResizeHandles();
+    _initChatResize();
 });
 
 // ---------------------------------------------------------------------------

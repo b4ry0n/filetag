@@ -43,6 +43,34 @@
     background: var(--bg-surface);
 }
 
+.detail-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.detail-chat-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-tertiary);
+    border: 1px solid transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.detail-chat-btn:hover {
+    background: var(--bg-hover);
+    color: var(--primary);
+    border-color: var(--border);
+}
+
 .detail-header h3 {
     font-size: 14px;
     white-space: nowrap;
