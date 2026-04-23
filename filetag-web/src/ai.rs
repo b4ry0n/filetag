@@ -2132,7 +2132,7 @@ pub async fn api_ai_chat(
 
                 if let Some(frames) = frames_b64 {
                     video_context.push_str(&format!(
-                        "[Video context: the following image(s) are from \"{file_name}\" ({duration_str}). Use these to answer questions about the video content.]\n"
+                        "[Video context: the following image(s) are sampled frames from \"{file_name}\" ({duration_str}), presented as a contact sheet. Use these to answer questions about the video content. Do NOT tag or comment on the contact-sheet format itself.]\n"
                     ));
                     b64_images.extend(frames);
                     video_slots += 1;
