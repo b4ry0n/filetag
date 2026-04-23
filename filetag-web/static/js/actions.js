@@ -103,8 +103,13 @@ function navigateToParent(filePath) {
 
 /// Quote a tag name for the query language if it contains special characters.
 function quoteTag(name) {
-    if (/[\s()"']/.test(name)) return '"' + name.replace(/"/g, "'") + '"';
+    if (!/^[a-zA-Z0-9_\-\/.:*]+$/.test(name)) return '"' + name.replace(/"/g, "'") + '"';
     return name;
+}
+
+function handleTagSearch(val) {
+    state.tagFilter = val.trim();
+    renderTags();
 }
 
 async function doTagSearch(tagName) {
@@ -166,9 +171,10 @@ async function selectFile(path, event) {
     const isShift = event && event.shiftKey;
 
     if (isMulti) {
-        // When transitioning from single-select: ensure the already-selected file has its data
-        // in selectedFilesData (plain click only sets state.selectedFile, not selectedFilesData).
-        if (state.selectedFile && !state.selectedFilesData.has(state.selectedFile.path)) {
+        // When transitioning from single-select: sync the currently selected file's
+        // data into selectedFilesData. Always overwrite to avoid using stale cached data
+        // (e.g. tags added after the last multi-select were only reflected in selectedFile).
+        if (state.selectedFile) {
             state.selectedFilesData.set(state.selectedFile.path, state.selectedFile);
         }
         // Toggle this path in the multi-select set
@@ -554,20 +560,20 @@ async function toggleShowHidden() {
     }
 }
 
-function toggleCacheMenu(e) {
+function toggleMoreMenu(e) {
     e.stopPropagation();
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     menu.hidden = !menu.hidden;
 }
 
 document.addEventListener('click', () => {
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
 });
 
 async function clearCache(all = false) {
     // Close dropdown if open
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
 
     // A root must always be explicitly selected. Never write to other roots.
@@ -576,7 +582,7 @@ async function clearCache(all = false) {
         return;
     }
 
-    const btn = document.getElementById('cache-clear-page-btn');
+    const btn = document.getElementById('more-btn');
     btn.disabled = true;
     const toast = showToast(all ? t('toast.cache-cleared') + '\u2026' : t('toast.page-cache-cleared') + '\u2026', 0);
     let success = false;
@@ -628,7 +634,7 @@ async function clearCache(all = false) {
 }
 
 async function pregenSprites() {
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
 
     const VIDEO_EXTS = new Set([
@@ -706,7 +712,7 @@ function switchSettingsTab(tab) {
 }
 
 async function openSettings(tab = 'video') {
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
     // Video settings from per-root state
     document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
@@ -1148,7 +1154,7 @@ function aiSetVideoFramesAuto(enabled) {
 }
 
 async function aiAnalyseBatch() {
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
 
     let imagePaths;
@@ -1266,7 +1272,7 @@ function toggleDetailPanel() {
 // ---------------------------------------------------------------------------
 
 function openCacheManager() {
-    const menu = document.getElementById('cache-menu');
+    const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
     document.getElementById('cache-manager-modal').hidden = false;
     document.getElementById('cm-status').textContent = '';
@@ -1385,9 +1391,18 @@ function toggleTagGroup(prefix) {
 }
 
 function toggleTagSortMode() {
-    state.tagSortMode = state.tagSortMode === 'groups-first' ? 'alpha' : 'groups-first';
+    const modes = ['groups-first', 'alpha', 'count'];
+    state.tagSortMode = modes[(modes.indexOf(state.tagSortMode) + 1) % modes.length];
     const btn = document.getElementById('sidebar-sort-btn');
-    if (btn) btn.classList.toggle('active', state.tagSortMode === 'groups-first');
+    if (btn) {
+        const labels = { 'groups-first': 'Groups first', 'alpha': 'A–Z', 'count': 'By count' };
+        const titles = { 'groups-first': 'Sort: groups first', 'alpha': 'Sort: A–Z', 'count': 'Sort: by count' };
+        btn.title = titles[state.tagSortMode];
+        btn.classList.toggle('active', state.tagSortMode !== 'alpha');
+        // Update the label text node
+        const label = btn.querySelector('.sort-label');
+        if (label) label.textContent = labels[state.tagSortMode];
+    }
     renderTags();
 }
 

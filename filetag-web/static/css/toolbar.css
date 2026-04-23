@@ -85,6 +85,16 @@
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
 }
 
+.more-btn-wrap {
+    position: relative;
+}
+
+.more-btn-wrap .more-btn-icon {
+    border: none;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+}
+
 .toolbar-dropdown {
     position: absolute;
     top: calc(100% + 4px);
@@ -94,14 +104,23 @@
     border-radius: var(--radius-sm);
     box-shadow: 0 4px 16px rgba(0,0,0,0.15);
     z-index: 2000;
-    min-width: 180px;
+    min-width: 200px;
     padding: 4px 0;
+}
+.toolbar-dropdown-section {
+    padding: 6px 14px 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    user-select: none;
 }
 .toolbar-dropdown button {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 7px 14px;
+    padding: 7px 14px 7px 14px;
     font-size: 13px;
     color: var(--text);
     background: none;
