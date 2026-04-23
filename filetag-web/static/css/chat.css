@@ -162,6 +162,11 @@
     text-align: center;
 }
 
+.chat-frames-input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .chat-video-bar-hint {
     font-size: 11px;
     color: var(--fg-dim);
