@@ -2021,7 +2021,7 @@ pub async fn api_ai_chat(
                 let n = req
                     .n_frames
                     .map(|v| (v as usize).clamp(2, 256))
-                    .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 24));
+                    .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 64));
                 let use_scene = config.video_frame_selection == "scene";
                 let file_name = abs
                     .file_name()
