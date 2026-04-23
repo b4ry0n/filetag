@@ -990,7 +990,7 @@ function renderDetail() {
             ${isAnalysable ? `
             <div class="ai-analyse-controls">
                 <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? esc(t('ai.analysing')) : esc(t('ai.analyse-btn'))}</button>
-                ${type_ === 'video' ? `<label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label><label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" oninput="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>` : ''}
+                ${type_ === 'video' ? `<label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label><label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" onchange="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>` : ''}
             </div>
             <small class="ai-analyse-note">${type_ === 'video' ? esc(t('ai.video-note')) : ''}</small>` : ''}
                 ${aiAcceptBtn}

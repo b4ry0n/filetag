@@ -434,7 +434,7 @@
                 <span data-i18n="ai.frames-auto-label">auto</span>
             </label>
             <label class="chat-video-bar-label">
-                <input type="number" id="chat-frames-input" class="chat-frames-input" value="12" min="2" max="256" step="1" oninput="aiSetVideoFrames(this.value)">
+                <input type="number" id="chat-frames-input" class="chat-frames-input" value="12" min="2" max="256" step="1" onchange="aiSetVideoFrames(this.value)">
                 <span data-i18n="ai.frames-label">frames</span>
             </label>
             <span class="chat-video-bar-hint" data-i18n="ai.video-note">Analysis is based on sampled frames.</span>
