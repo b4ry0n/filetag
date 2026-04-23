@@ -325,6 +325,7 @@ function initResizeHandles() {
     const root = document.documentElement;
     if (sw)  root.style.setProperty('--sidebar-width',    sw);
     if (dw)  root.style.setProperty('--detail-width',     dw);
+    _syncChatRight();
 
     _colResize(
         document.getElementById('resize-sidebar'),
@@ -343,6 +344,7 @@ function initResizeHandles() {
         (w) => {
             root.style.setProperty('--detail-width', w + 'px');
             localStorage.setItem('ft-detail-width', w + 'px');
+            _syncChatRight();
         },
         180, 800,
         /* leftEdge */ false  // dragging left increases width

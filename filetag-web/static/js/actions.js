@@ -234,6 +234,7 @@ async function selectFile(path, event) {
         state.detailOpen = true;
         layout.classList.remove('detail-collapsed');
         document.getElementById('detail-toggle').classList.add('active');
+        _syncChatRight();
     }
     _updateCardSelection();
     renderDetail();
@@ -1129,6 +1130,14 @@ async function aiAnalyseCommonTraits() {
     }
 }
 
+/** Keep the chat panel to the left of the detail panel when it is visible. */
+function _syncChatRight() {
+    const w = state.detailOpen
+        ? getComputedStyle(document.documentElement).getPropertyValue('--detail-width').trim()
+        : '0px';
+    document.documentElement.style.setProperty('--chat-r', w);
+}
+
 function aiSetVideoFrames(rawValue) {
     const parsed = parseInt(rawValue, 10);
     if (!Number.isFinite(parsed)) return state.aiVideoFrames;
@@ -1255,6 +1264,7 @@ function toggleDetailPanel() {
     const collapsed = layout.classList.toggle('detail-collapsed');
     state.detailOpen = !collapsed;
     document.getElementById('detail-toggle').classList.toggle('active', !collapsed);
+    _syncChatRight();
     restoreScrollAnchor(anchor);
 }
 
@@ -1422,6 +1432,7 @@ function closeDetail() {
     state.detailOpen = false;
     document.querySelector('.layout').classList.add('detail-collapsed');
     document.getElementById('detail-toggle').classList.remove('active');
+    _syncChatRight();
     _updateCardSelection();
     renderDetail();
     restoreScrollAnchor(anchor);

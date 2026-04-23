@@ -549,14 +549,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 30px;
+    height: 30px;
     padding: 0;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: transparent;
     color: var(--fg-dim);
-    font-size: 14px;
+    font-size: 17px;
     cursor: pointer;
     transition: background .15s, color .15s;
     line-height: 1;

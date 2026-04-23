@@ -1847,6 +1847,8 @@ pub struct AiChatRequest {
     pub files: Vec<String>,
     /// Full conversation history so far (NOT including the placeholder reply).
     pub messages: Vec<AiChatMessage>,
+    /// Override frame count for video analysis (None = auto based on duration).
+    pub n_frames: Option<u32>,
 }
 
 /// Response for `POST /api/ai/chat`.
@@ -2011,7 +2013,10 @@ pub async fn api_ai_chat(
             // A contact sheet (grid of frames) lets the model perceive the video
             // as a whole rather than treating each frame as an independent image.
             if let Some(info) = video_info(&abs).await {
-                let n = sprites_for_duration(info.duration, 8, 16);
+                let n = req
+                    .n_frames
+                    .map(|v| (v as usize).clamp(2, 256))
+                    .unwrap_or_else(|| sprites_for_duration(info.duration, 8, 16));
                 let use_scene = config.video_frame_selection == "scene";
                 let file_name = abs
                     .file_name()

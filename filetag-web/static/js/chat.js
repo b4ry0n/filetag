@@ -130,6 +130,7 @@ async function sendChatMessage() {
             dir:      currentAbsDir(),
             files:    _chatFiles,
             messages: _chatMessages.slice(0, -1),  // exclude placeholder
+            n_frames: state.aiVideoFramesAuto ? null : (state.aiVideoFrames || null),
         });
         _chatMessages[_chatMessages.length - 1] = { role: 'assistant', content: res.reply };
     } catch (e) {
