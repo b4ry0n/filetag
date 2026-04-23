@@ -48,6 +48,26 @@ function _nodeCount(node) {
     return n;
 }
 
+/** Returns true if this node or any descendant matches the filter string. */
+function _nodeMatchesFilter(node, f) {
+    if (node.fullPath.toLowerCase().includes(f)) return true;
+    for (const child of node.children.values()) {
+        if (_nodeMatchesFilter(child, f)) return true;
+    }
+    return false;
+}
+
+/** Wrap matching substring in a highlight span (safe, operates on escaped text). */
+function _highlightMatch(text, f) {
+    if (!f) return esc(text);
+    const lower = text.toLowerCase();
+    const idx = lower.indexOf(f);
+    if (idx === -1) return esc(text);
+    return esc(text.slice(0, idx))
+        + '<mark class="tag-filter-match">' + esc(text.slice(idx, idx + f.length)) + '</mark>'
+        + esc(text.slice(idx + f.length));
+}
+
 function _anyDescendantActive(nodeMap) {
     for (const node of nodeMap.values()) {
         if (node.tag && state.activeTags.has(node.fullPath)) return true;
@@ -62,8 +82,15 @@ function _anyDescendantActive(nodeMap) {
  * depth>0: inside a group; pure alphabetical by segment.
  */
 function renderTagTreeNodes(nodeMap, depth) {
-    const nodes = [...nodeMap.values()];
-    if (depth === 0 && state.tagSortMode === 'groups-first') {
+    const f = state.tagFilter.toLowerCase();
+    let nodes = [...nodeMap.values()];
+    if (f) {
+        nodes = nodes.filter(n => _nodeMatchesFilter(n, f));
+    }
+    const mode = state.tagSortMode;
+    if (mode === 'count') {
+        nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
+    } else if (depth === 0 && mode === 'groups-first' && !f) {
         nodes.sort((a, b) => {
             const ag = a.children.size > 0 ? 0 : 1;
             const bg = b.children.size > 0 ? 0 : 1;
@@ -85,18 +112,23 @@ function renderTagTreeNode(node, depth) {
     // --- Leaf node ---
     if (!hasChildren) {
         if (!tag) return '';
-        if (tag.has_values) return _renderKvNode(tag, segment, marginStyle);
+        const f = state.tagFilter.toLowerCase();
+        if (tag.has_values) return _renderKvNode(tag, segment, marginStyle, f);
         const active = state.activeTags.has(fullPath) ? ' active' : '';
         const synBadge = (tag.synonyms || []).length
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
-        return `<button class="${cls}${active}" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')">${colorDot(tag.color)}${esc(segment)}${synBadge} <span class="count">${tag.count}</span></button>`;
+        const check = active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>';
+        return `<button class="${cls}${active}" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node (has children; may also have a tag at this exact path) ---
+    const f = state.tagFilter.toLowerCase();
     const totalCount = _nodeCount(node);
-    const expanded = state.expandedGroups.has(fullPath);
-    const expandedClass = expanded ? ' expanded' : '';
+    const expanded = state.expandedGroups.has(fullPath) || (!!f && _anyDescendantActive(children));
+    // When a filter is active, auto-expand groups that have matching children.
+    const filterExpand = !!f;
+    const expandedClass = (expanded || filterExpand) ? ' expanded' : '';
     const anyActive = (tag && state.activeTags.has(fullPath)) || _anyDescendantActive(children);
     const searchQuery = tag ? `${fullPath} or ${fullPath}/*` : `${fullPath}/*`;
     const groupActiveClass =
@@ -106,21 +138,22 @@ function renderTagTreeNode(node, depth) {
     const rootContextMenu = tag ? ` oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')"` : '';
     const synBadge = tag && (tag.synonyms || []).length
         ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
+    const showOpen = expanded || filterExpand;
     return `<div class="tag-group"${marginStyle}>
         <div class="tag-group-label${groupActiveClass}${expandedClass}">
             <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(fullPath)}')"${rootContextMenu}>${colorDot(groupColor)}${esc(segment)}${synBadge} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(fullPath)}')"${rootContextMenu}>${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${totalCount}</span></button>
         </div>
-        <div class="tag-group-items${expanded ? ' open' : ''}">
-            ${expanded ? renderTagTreeNodes(children, depth + 1) : ''}
+        <div class="tag-group-items${showOpen ? ' open' : ''}">
+            ${showOpen ? renderTagTreeNodes(children, depth + 1) : ''}
         </div>
     </div>`;
 }
 
 /** Render a k=v tag as an expandable group-like element. */
-function _renderKvNode(tag, segment, marginStyle) {
+function _renderKvNode(tag, segment, marginStyle, f = '') {
     const active = state.activeTags.has(tag.name) ? ' active' : '';
     const synBadge = (tag.synonyms || []).length
         ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
@@ -134,7 +167,7 @@ function _renderKvNode(tag, segment, marginStyle) {
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="tag-group-name" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')">
-                ${colorDot(tag.color)}${esc(segment)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
+                ${active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>'}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
             </button>
         </div>`;
     if (expanded) {
@@ -161,29 +194,26 @@ function _renderKvNode(tag, segment, marginStyle) {
 
 function renderTags() {
     const el = document.getElementById('tag-list');
-    const filtersEl = document.getElementById('tag-filters');
     if (!state.tags.length) {
         el.innerHTML = '<div class="empty-state"><span class="empty-state-text">No tags</span></div>';
-        if (filtersEl) filtersEl.innerHTML = '';
         return;
     }
 
-    // Active filter chips — rendered in the sticky #tag-filters container (outside the scrolling list)
-    if (filtersEl) {
-        let filterHtml = '';
-        if (state.activeTags.size > 0) {
-            filterHtml += '<div class="active-filters">';
-            for (const t of state.activeTags) {
-                filterHtml += `<button class="filter-chip" onclick="toggleTagFilter('${jesc(t)}')" title="Remove filter">${esc(t)} \xd7</button>`;
-            }
-            filterHtml += `<button class="active-filters-clear" onclick="clearTagFilters()">Clear all</button>`;
-            filterHtml += '</div>';
-        }
-        filtersEl.innerHTML = filterHtml;
-    }
+    // Update clear-button visibility for the tag search filter
+    const tagSearchClear = document.getElementById('tag-search-clear');
+    if (tagSearchClear) tagSearchClear.hidden = !state.tagFilter;
 
     const tree = buildTagTree(state.tags);
-    el.innerHTML = renderTagTreeNodes(tree, 0);
+    const listHtml = renderTagTreeNodes(tree, 0);
+
+    // Compact "Clear filters" bar — only shown when tags are active, takes minimal space
+    const clearBar = state.activeTags.size > 0
+        ? `<div class="active-filters-bar"><span class="active-filters-count">${state.activeTags.size} active</span><button class="active-filters-clear" onclick="clearTagFilters()">Clear</button></div>`
+        : '';
+
+    el.innerHTML = clearBar + (listHtml || (state.tagFilter
+        ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
+        : ''));
 }
 
 async function toggleKvExpand(tagName) {
@@ -409,6 +439,16 @@ async function deleteKvValue(tagName, value) {
 
 let _tmSelectedTag = null;
 let _tmSearchQuery = '';
+let _tmCollapsedGroups = new Set();
+
+function tmToggleGroup(prefix) {
+    if (_tmCollapsedGroups.has(prefix)) {
+        _tmCollapsedGroups.delete(prefix);
+    } else {
+        _tmCollapsedGroups.add(prefix);
+    }
+    renderTmList();
+}
 
 function showTagManager(selectTag) {
     if (document.getElementById('tag-manager-overlay')) return;
@@ -441,6 +481,7 @@ function showTagManager(selectTag) {
 
     _tmSelectedTag = selectTag || null;
     _tmSearchQuery = '';
+    _tmCollapsedGroups = new Set();
     renderTmList();
     if (_tmSelectedTag) renderTmDetail(_tmSelectedTag);
 
@@ -517,20 +558,31 @@ function renderTmList() {
         const { root, children } = groups[prefix];
         const totalCount = children.reduce((s, c) => s + c.count, 0) + (root?.count || 0);
         const rootSel = _tmSelectedTag === prefix ? ' selected' : '';
+        // When searching or a child is selected, always expand.
+        const hasSelectedChild = children.some(c => c.name === _tmSelectedTag);
+        const collapsed = _tmCollapsedGroups.has(prefix) && !q && !hasSelectedChild;
+        const chevronClass = collapsed ? 'tm-chevron' : 'tm-chevron tm-chevron-open';
         html += `<div class="tm-group">
-            <div class="tm-group-header${rootSel}" onclick="tmSelectTag('${jesc(prefix)}')">
-                ${colorDot(root?.color || null)}<span class="tm-group-name">${esc(prefix)}</span>
-                <span class="tm-count">${totalCount}</span>
+            <div class="tm-group-header${rootSel}">
+                <button class="${chevronClass}" onclick="tmToggleGroup('${jesc(prefix)}')" title="Expand/collapse">
+                    <svg viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <span class="tm-group-label" onclick="tmSelectTag('${jesc(prefix)}')">
+                    ${colorDot(root?.color || null)}<span class="tm-group-name">${esc(prefix)}</span>
+                    <span class="tm-count">${totalCount}</span>
+                </span>
             </div>`;
-        for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
-            const suffix = child.name.slice(prefix.length + 1);
-            const sel = _tmSelectedTag === child.name ? ' selected' : '';
-            const synBadge = (child.synonyms || []).length ? ` <span class="tm-syn-badge">\u2261</span>` : '';
-            const kvBadge = child.has_values ? ` <span class="tm-kv-badge">k=v</span>` : '';
-            html += `<div class="tm-tag-row${sel}" onclick="tmSelectTag('${jesc(child.name)}')">
-                ${colorDot(child.color)}${esc(suffix)}${kvBadge}${synBadge}
-                <span class="tm-count">${child.count}</span>
-            </div>`;
+        if (!collapsed) {
+            for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
+                const suffix = child.name.slice(prefix.length + 1);
+                const sel = _tmSelectedTag === child.name ? ' selected' : '';
+                const synBadge = (child.synonyms || []).length ? ` <span class="tm-syn-badge">\u2261</span>` : '';
+                const kvBadge = child.has_values ? ` <span class="tm-kv-badge">k=v</span>` : '';
+                html += `<div class="tm-tag-row tm-tag-child${sel}" onclick="tmSelectTag('${jesc(child.name)}')">
+                    ${colorDot(child.color)}${esc(suffix)}${kvBadge}${synBadge}
+                    <span class="tm-count">${child.count}</span>
+                </div>`;
+            }
         }
         html += `</div>`;
     }

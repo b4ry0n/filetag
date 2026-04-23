@@ -21,7 +21,8 @@ const state = {
     info: null,
     detailOpen: true,
     expandedGroups: new Set(), // tag group full paths that are expanded
-    tagSortMode: 'groups-first', // 'groups-first' | 'alpha'
+    tagSortMode: 'groups-first', // 'groups-first' | 'alpha' | 'count'
+    tagFilter: '',             // sidebar tag search filter string
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
     kvValueCache: {},          // tagName → [{value, count}] loaded lazily for k/v tags
     aiAnalysing: new Set(),    // paths currently being analysed by AI
@@ -180,6 +181,10 @@ async function searchFiles(query) {
 async function loadFileDetail(path) {
     state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
     state.selectedDir = null;
+    // Keep selectedFilesData in sync so multi-select tag aggregation stays fresh.
+    if (state.selectedFilesData.has(path)) {
+        state.selectedFilesData.set(path, state.selectedFile);
+    }
 }
 
 async function selectDir(path, name, fileCount) {

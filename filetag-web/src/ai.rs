@@ -48,7 +48,7 @@ pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and samp
 /// Default output-format instruction appended to every prompt.
 /// Users can override this via `ai.output_format` in the settings.
 pub const AI_OUTPUT_FORMAT: &str = "\
-Output ONLY a JSON array of short descriptive tags (English, lowercase). \
+Output ONLY a JSON array of short descriptive tags (English). \
 Return at most 10 tags; include only the most relevant and specific ones. \
 Prefer tags that describe the main subject, genre, mood, or defining visual elements. \
 Avoid vague, generic, or overly broad tags. \
@@ -961,7 +961,7 @@ fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
                 .trim_matches(|c: char| {
                     c.is_ascii_punctuation() && c != '/' && c != '=' && c != '-' && c != '_'
                 })
-                .to_lowercase();
+                .to_string();
             if prefix.is_empty() {
                 clean
             } else {
