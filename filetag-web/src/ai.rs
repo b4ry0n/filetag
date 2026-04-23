@@ -2004,6 +2004,11 @@ pub async fn api_ai_chat(
             if let Some(bytes) = ai_prepare_jpeg(&abs, &root.root).await {
                 // Only accept actual JPEG output — not raw bytes of non-image files.
                 if bytes.starts_with(&[0xFF, 0xD8]) {
+                    let file_name = abs
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(file_path.as_str());
+                    video_context.push_str(&format!("[Image: \"{file_name}\"]\n"));
                     b64_images.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
                     image_slots += 1;
                 }
@@ -2134,7 +2139,14 @@ pub async fn api_ai_chat(
                 }
             }
         }
-        // All other file types: omit visual context; model answers from filename + conversation.
+        // All other file types: pass filename only so the model can use it as context.
+        else {
+            let file_name = abs
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path.as_str());
+            video_context.push_str(&format!("[File: \"{file_name}\"]\n"));
+        }
     }
 
     // Text files: read content and prepend to the first user message as context.
