@@ -327,17 +327,9 @@
                     </label>
                     <label>Video input mode
                         <small class="settings-desc-inline">
-                            <b>Sprite</b>: contact-sheet JPEG (widely compatible).
-                            <b>Full video</b>: send the raw file; falls back to sprite if the file is too large or the backend rejects it.
+                            Contact-sheet JPEG: multiple frames from the video combined in a grid image.
                         </small>
-                        <select id="ai-video-mode" onchange="aiVideoModeChanged()">
-                            <option value="sprite">Sprite (contact sheet)</option>
-                            <option value="full">Full video</option>
-                        </select>
-                    </label>
-                    <label id="ai-video-max-mb-row">Max video size (MiB)
-                        <small class="settings-desc-inline">Files larger than this fall back to sprite mode.</small>
-                        <input type="number" id="ai-video-max-mb" value="50" min="1" max="2048">
+                        <input type="hidden" id="ai-video-mode" value="sprite">
                     </label>
                     <label>Max frames per AI sprite sheet
                         <small class="settings-desc-inline">Used in sprite mode. Lower values create more sheets with better per-frame detail.</small>

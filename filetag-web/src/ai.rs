@@ -158,10 +158,8 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .unwrap_or_else(|| "openai".to_string());
-    let video_mode = db::get_setting(conn, "ai.video_mode")
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "sprite".to_string());
+    // Full video mode is currently disabled; always use sprite mode.
+    let video_mode = "sprite".to_string();
     let video_max_mb = db::get_setting(conn, "ai.video_max_mb")
         .ok()
         .flatten()
@@ -1568,12 +1566,9 @@ pub async fn api_ai_config_set(
         db::set_setting(&conn, "ai.format", v).map_err(AppError)?;
     }
     if let Some(v) = &body.video_mode {
-        if v != "sprite" && v != "full" {
-            return Err(AppError(anyhow::anyhow!(
-                "video_mode must be 'sprite' or 'full'"
-            )));
-        }
-        db::set_setting(&conn, "ai.video_mode", v).map_err(AppError)?;
+        // Full video mode is currently disabled; always store sprite.
+        let _ = v;
+        db::set_setting(&conn, "ai.video_mode", "sprite").map_err(AppError)?;
     }
     if let Some(v) = body.video_max_mb {
         db::set_setting(&conn, "ai.video_max_mb", &v.to_string()).map_err(AppError)?;
