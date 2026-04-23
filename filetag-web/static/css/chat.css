@@ -5,7 +5,7 @@
 .chat-panel {
     position: fixed;
     bottom: 0;
-    right: 0;
+    right: var(--chat-r, var(--detail-width, 380px));
     width: 380px;
     height: 520px;
     min-width: 260px;

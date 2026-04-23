@@ -198,6 +198,7 @@ async function selectDir(path, name, fileCount) {
         state.detailOpen = true;
         document.querySelector('.layout').classList.remove('detail-collapsed');
         document.getElementById('detail-toggle').classList.add('active');
+        _syncChatRight();
     }
     _updateCardSelection();
     renderDetail();
