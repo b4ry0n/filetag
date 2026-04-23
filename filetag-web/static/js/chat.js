@@ -63,6 +63,15 @@ function _updateChatVideoBar() {
         inputEl.value    = state.aiVideoFrames;
         inputEl.disabled = state.aiVideoFramesAuto;
     }
+    // Disable controls once the conversation has started — the video context
+    // was set with the first message and cannot be changed mid-conversation.
+    const started = _chatMessages.some(m => m.role === 'user');
+    bar.classList.toggle('chat-video-bar--locked', started);
+    bar.querySelectorAll('input').forEach(el => {
+        if (started) el.setAttribute('disabled', '');
+        else if (el.type === 'number') el.disabled = state.aiVideoFramesAuto;
+        else el.removeAttribute('disabled');
+    });
 }
 
 function openChat() {
@@ -99,6 +108,7 @@ function closeChat() {
 function chatClearHistory() {
     _chatMessages = [];
     _renderChatMessages();
+    _updateChatVideoBar();
     document.getElementById('chat-input').focus();
 }
 
@@ -158,6 +168,7 @@ async function sendChatMessage() {
         _chatSending = false;
         document.getElementById('chat-send-btn').disabled = false;
         _renderChatMessages();
+        _updateChatVideoBar();
         input.focus();
     }
 }
