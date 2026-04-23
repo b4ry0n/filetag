@@ -29,7 +29,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Clear all cache',
         'toolbar.sprites-gen': 'Generate video sprites',
         'toolbar.ai-batch':   'Analyse images (AI)',
-        'toolbar.cache-mgr':  'Cache manager\u2026',
+        'toolbar.ai-chat':    'Chat about selection…',
+        'toolbar.ai-settings': 'AI settings…',\u2026',
         'toolbar.settings':   'Settings',
         'toolbar.signout':    'Sign out',
 
@@ -224,7 +225,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Volledige cache wissen',
         'toolbar.sprites-gen': 'Video-sprites genereren',
         'toolbar.ai-batch':   'Afbeeldingen analyseren (AI)',
-        'toolbar.cache-mgr':  'Cachebeheer\u2026',
+        'toolbar.ai-chat':    'Chatten over selectie…',
+        'toolbar.ai-settings': 'AI-instellingen…',\u2026',
         'toolbar.settings':   'Instellingen',
         'toolbar.signout':    'Afmelden',
 
@@ -406,7 +408,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Gesamten Cache leeren',
         'toolbar.sprites-gen': 'Video-Sprites generieren',
         'toolbar.ai-batch':   'Bilder analysieren (KI)',
-        'toolbar.cache-mgr':  'Cache-Verwaltung\u2026',
+        'toolbar.ai-chat':    'Über Auswahl chatten…',
+        'toolbar.ai-settings': 'KI-Einstellungen…',\u2026',
         'toolbar.settings':   'Einstellungen',
         'toolbar.signout':    'Abmelden',
 
@@ -588,7 +591,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Vider tout le cache',
         'toolbar.sprites-gen': 'Générer des sprites vidéo',
         'toolbar.ai-batch':   'Analyser les images (IA)',
-        'toolbar.cache-mgr':  'Gestionnaire de cache\u2026',
+        'toolbar.ai-chat':    'Discuter de la sélection…',
+        'toolbar.ai-settings': 'Paramètres IA…',\u2026',
         'toolbar.settings':   'Paramètres',
         'toolbar.signout':    'Se déconnecter',
 
@@ -770,7 +774,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Limpiar toda la caché',
         'toolbar.sprites-gen': 'Generar sprites de vídeo',
         'toolbar.ai-batch':   'Analizar imágenes (IA)',
-        'toolbar.cache-mgr':  'Gestor de caché\u2026',
+        'toolbar.ai-chat':    'Chatear sobre la selección…',
+        'toolbar.ai-settings': 'Ajustes de IA…',\u2026',
         'toolbar.settings':   'Ajustes',
         'toolbar.signout':    'Cerrar sesión',
 
@@ -952,7 +957,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Svuota tutta la cache',
         'toolbar.sprites-gen': 'Genera sprite video',
         'toolbar.ai-batch':   'Analizza immagini (IA)',
-        'toolbar.cache-mgr':  'Gestione cache\u2026',
+        'toolbar.ai-chat':    'Chatta della selezione…',
+        'toolbar.ai-settings': 'Impostazioni IA…',\u2026',
         'toolbar.settings':   'Impostazioni',
         'toolbar.signout':    'Esci',
 
@@ -1134,7 +1140,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Limpar toda a cache',
         'toolbar.sprites-gen': 'Gerar sprites de vídeo',
         'toolbar.ai-batch':   'Analisar imagens (IA)',
-        'toolbar.cache-mgr':  'Gestor de cache\u2026',
+        'toolbar.ai-chat':    'Conversar sobre a seleção…',
+        'toolbar.ai-settings': 'Definições de IA…',\u2026',
         'toolbar.settings':   'Definições',
         'toolbar.signout':    'Terminar sessão',
 
@@ -1316,7 +1323,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Wyczyść cały cache',
         'toolbar.sprites-gen': 'Generuj sprite\'y wideo',
         'toolbar.ai-batch':   'Analizuj obrazy (AI)',
-        'toolbar.cache-mgr':  'Menedżer cache\u2026',
+        'toolbar.ai-chat':    'Czatuj o wyborze…',
+        'toolbar.ai-settings': 'Ustawienia AI…',\u2026',
         'toolbar.settings':   'Ustawienia',
         'toolbar.signout':    'Wyloguj',
 
@@ -1498,7 +1506,8 @@ const TRANSLATIONS = {
         'toolbar.cache-clear-all': 'Rensa all cache',
         'toolbar.sprites-gen': 'Generera videospritar',
         'toolbar.ai-batch':   'Analysera bilder (AI)',
-        'toolbar.cache-mgr':  'Cachehanterare\u2026',
+        'toolbar.ai-chat':    'Chatta om urvalet…',
+        'toolbar.ai-settings': 'AI-inställningar…',\u2026',
         'toolbar.settings':   'Inställningar',
         'toolbar.signout':    'Logga ut',
 
