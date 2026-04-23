@@ -850,6 +850,7 @@ function aiUseDefault(type) {
 }
 
 async function aiSaveSettings() {
+    try {
     const body = {
         endpoint: document.getElementById('ai-endpoint').value.trim(),
         model: document.getElementById('ai-model').value.trim(),
@@ -862,7 +863,6 @@ async function aiSaveSettings() {
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         format: document.getElementById('ai-format').value,
         video_mode: 'sprite',
-        video_max_mb: parseInt(document.getElementById('ai-video-max-mb').value, 10) || 50,
         video_sheet_max_frames: parseInt(document.getElementById('ai-video-sheet-max-frames').value, 10) || 16,
         video_frame_selection: document.getElementById('ai-video-frame-selection').value,
         enabled: document.getElementById('ai-enabled').checked,
@@ -870,7 +870,6 @@ async function aiSaveSettings() {
     };
     const apiKey = document.getElementById('ai-api-key').value;
     if (apiKey) body.api_key = apiKey;
-    try {
         await apiPost('/api/ai/config', body);
         closeAiSettings();
     } catch (e) {
