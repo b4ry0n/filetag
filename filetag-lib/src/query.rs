@@ -424,14 +424,14 @@ impl QueryBuilder {
                     let like_pat = pattern.replace('*', "%");
                     let p = self.param(&like_pat);
                     format!(
-                        "f.id IN (SELECT DISTINCT file_id FROM file_tags \\
+                        "f.id IN (SELECT DISTINCT file_id FROM file_tags \
                          WHERE subject LIKE {})",
                         p
                     )
                 } else {
                     let p = self.param(pattern);
                     format!(
-                        "f.id IN (SELECT DISTINCT file_id FROM file_tags \\
+                        "f.id IN (SELECT DISTINCT file_id FROM file_tags \
                          WHERE subject = {})",
                         p
                     )
