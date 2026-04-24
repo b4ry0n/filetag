@@ -295,8 +295,11 @@ function renderSubjectTreeNode(node, depth) {
         // Leaf node
         const activeClass = isActive ? ' active' : '';
         const count = tag ? ` <span class="count">${tag.count}</span>` : '';
+        const clickFn = state.tagPickerMode
+            ? `applySubjectToSelection('${jesc(fullPath)}')`
+            : `doSubjectSearch('${jesc(fullPath)}')`;
         return `<button class="subject-item${activeClass}"${marginStyle}
-            onclick="doSubjectSearch('${jesc(fullPath)}')"
+            onclick="${clickFn}"
             ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')"
             title="subject:${esc(fullPath)}">${esc(segment)}${count}</button>`;
     }
@@ -309,12 +312,15 @@ function renderSubjectTreeNode(node, depth) {
     const totalCount = tag
         ? tag.count
         : [...children.values()].reduce((acc, c) => acc + (c.tag ? c.tag.count : 0), 0);
+    const groupClickFn = state.tagPickerMode
+        ? `applySubjectToSelection('${jesc(fullPath)}')`
+        : `doSubjectSearch('${jesc(fullPath)}')`;
     return `<div class="tag-group subject-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${activeClass}">
             <button class="tag-group-chevron" onclick="toggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="doSubjectSearch('${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name" onclick="${groupClickFn}" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
         </div>
         <div class="tag-group-items${expanded ? ' open' : ''}">
             ${expanded ? renderSubjectTreeNodes(children, depth + 1) : ''}
@@ -332,9 +338,37 @@ function toggleSubjectGroup(fullPath) {
     renderSubjects();
 }
 
-function doSubjectSearch(subject) {
-    state.searchQuery = 'subject:' + subject;
-    searchFiles(state.searchQuery).then(() => render());
+async function doSubjectSearch(subject) {
+    const q = 'subject:' + quoteTag(subject);
+    document.getElementById('search-input').value = q;
+    document.getElementById('search-clear').hidden = false;
+    await searchFiles(q);
+    render();
+}
+
+async function applySubjectToSelection(subjectName) {
+    const paths = state.selectedPaths.size > 0
+        ? [...state.selectedPaths]
+        : state.selectedFile ? [state.selectedFile.path] : [];
+    if (!paths.length) return;
+    const dir = currentAbsDir();
+    // Re-apply every existing tag on each file with the new subject.
+    for (const p of paths) {
+        const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
+        const tags = data?.tags || [];
+        if (!tags.length) continue;
+        await Promise.all(tags.map(t =>
+            apiPost('/api/tag', {
+                path: p,
+                tags: [t.value ? `${t.name}=${t.value}` : t.name],
+                subject: subjectName,
+                dir,
+            })
+        ));
+    }
+    showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    renderDetailTagsOnly();
 }
 
 async function toggleKvExpand(tagName) {
@@ -534,18 +568,17 @@ async function subjectDrop(event, subjectName) {
     const raw = event.dataTransfer.getData('text/filetag-paths');
     if (!raw) return;
     const paths = JSON.parse(raw);
-    // Apply the subject to every tag already on each file.
-    // We re-apply each existing tag with the new subject name.
+    const dir = currentAbsDir();
     for (const p of paths) {
-        const detail = state.selectedFile?.path === p ? state.selectedFile : null;
-        const tags = detail?.tags || [];
+        const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
+        const tags = data?.tags || [];
         if (!tags.length) continue;
         await Promise.all(tags.map(t =>
             apiPost('/api/tag', {
                 path: p,
                 tags: [t.value ? `${t.name}=${t.value}` : t.name],
                 subject: subjectName,
-                dir: currentAbsDir()
+                dir,
             })
         ));
     }
