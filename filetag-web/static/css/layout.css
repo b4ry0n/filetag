@@ -357,6 +357,18 @@ mark.tag-filter-match {
 }
 
 /* "Tag files" toggle button active state */
+.sidebar-tag-picker-btn {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 7px;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+.sidebar-tag-picker-btn:hover { background: var(--bg-hover); color: var(--text); }
 .sidebar-tag-picker-btn.active {
     color: var(--primary);
     border-color: var(--primary);
