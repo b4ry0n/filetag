@@ -63,6 +63,15 @@ pub struct ApiTagValue {
     pub count: i64,
 }
 
+/// A subject as returned by `GET /api/subjects`.
+#[derive(Serialize)]
+pub struct ApiSubject {
+    /// The subject label (e.g. `"person/alice"` or `"car-1"`).
+    pub name: String,
+    /// Number of distinct files that carry at least one tag under this subject.
+    pub count: i64,
+}
+
 /// A directory listing as returned by `GET /api/files`.
 #[derive(Serialize)]
 pub struct ApiDirListing {

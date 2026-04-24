@@ -575,6 +575,21 @@ pub async fn api_tag_values(
     ))
 }
 
+/// `GET /api/subjects` — list all distinct subjects with file counts.
+pub async fn api_subjects(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<Vec<ApiSubject>>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let rows = db::all_subjects(&conn).map_err(AppError)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(name, count)| ApiSubject { name, count })
+            .collect(),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Synonym management
 // ---------------------------------------------------------------------------
