@@ -615,11 +615,21 @@ fn build_sprite_filter(chunk_n: usize) -> (String, usize, usize) {
             continue;
         }
         let row_len = end - start;
-        if row_len == 1 {
-            filter_parts.push(format!("[f{start}]null[r{row}]"));
-        } else {
+        if row_len == cols {
+            // Full row — no padding needed.
             let row_inputs: String = (start..end).map(|i| format!("[f{i}]")).collect();
             filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
+        } else {
+            // Partial last row: pad to full row width so vstack heights match.
+            let pad_w = cols * 320;
+            if row_len == 1 {
+                filter_parts.push(format!("[f{start}]pad={pad_w}:ih:0:0[r{row}]"));
+            } else {
+                let row_inputs: String = (start..end).map(|i| format!("[f{i}]")).collect();
+                filter_parts.push(format!(
+                    "{row_inputs}hstack={row_len},pad={pad_w}:ih:0:0[r{row}]"
+                ));
+            }
         }
     }
     if rows == 1 {
