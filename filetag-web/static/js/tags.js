@@ -214,6 +214,91 @@ function renderTags() {
     el.innerHTML = clearBar + (listHtml || (state.tagFilter
         ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
         : ''));
+    renderSubjects();
+}
+
+/**
+ * Render the subjects section below the tag list.
+ * Each subject is a clickable button that triggers a `subject:name` search.
+ * Subjects with a `/` separator are shown in a collapsible hierarchy.
+ */
+function renderSubjects() {
+    const el = document.getElementById('subject-list');
+    if (!el) return;
+    if (!state.subjects || !state.subjects.length) {
+        el.innerHTML = '';
+        return;
+    }
+
+    // Build a prefix tree from subjects (reuse the same logic as tags).
+    // state.subjects is [{ name, count }], same shape expected by buildTagTree
+    // except without color/synonyms/has_values.  We adapt by remapping.
+    const subjectTags = state.subjects.map(s => ({
+        name: s.name,
+        count: s.count,
+        color: null,
+        synonyms: [],
+        has_values: false,
+    }));
+    const tree = buildTagTree(subjectTags);
+
+    let html = `<div class="subject-section-header">Subjects</div>`;
+    html += renderSubjectTreeNodes(tree, 0);
+    el.innerHTML = html;
+}
+
+function renderSubjectTreeNodes(nodes, depth) {
+    return nodes.map(n => renderSubjectTreeNode(n, depth)).join('');
+}
+
+function renderSubjectTreeNode(node, depth) {
+    const { segment, fullPath, tag, children } = node;
+    const marginStyle = depth > 0 ? ` style="margin-left:${depth * 12}px"` : '';
+    const isActive = state.mode === 'search' && state.searchQuery === ('subject:' + fullPath);
+
+    if (!children.length) {
+        // Leaf node
+        const activeClass = isActive ? ' active' : '';
+        const count = tag ? ` <span class="count">${tag.count}</span>` : '';
+        return `<button class="subject-item${activeClass}"${marginStyle}
+            onclick="doSubjectSearch('${jesc(fullPath)}')"
+            title="subject:${esc(fullPath)}">${esc(segment)}${count}</button>`;
+    }
+
+    // Group node
+    const groupKey = '\x01subj:' + fullPath;
+    const expanded = state.expandedGroups.has(groupKey);
+    const expandedClass = expanded ? ' expanded' : '';
+    const activeClass = isActive ? ' active' : '';
+    const totalCount = tag
+        ? tag.count
+        : children.reduce((acc, c) => acc + (c.tag ? c.tag.count : 0), 0);
+    return `<div class="tag-group subject-group"${marginStyle}>
+        <div class="tag-group-label${expandedClass}${activeClass}">
+            <button class="tag-group-chevron" onclick="toggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="tag-group-name" onclick="doSubjectSearch('${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
+        </div>
+        <div class="tag-group-items${expanded ? ' open' : ''}">
+            ${expanded ? renderSubjectTreeNodes(children, depth + 1) : ''}
+        </div>
+    </div>`;
+}
+
+function toggleSubjectGroup(fullPath) {
+    const key = '\x01subj:' + fullPath;
+    if (state.expandedGroups.has(key)) {
+        state.expandedGroups.delete(key);
+    } else {
+        state.expandedGroups.add(key);
+    }
+    renderSubjects();
+}
+
+function doSubjectSearch(subject) {
+    state.searchQuery = 'subject:' + subject;
+    searchFiles(state.searchQuery).then(() => render());
 }
 
 async function toggleKvExpand(tagName) {

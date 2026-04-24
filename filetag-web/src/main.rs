@@ -244,6 +244,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/cache/clear-subdir", post(api::api_cache_clear_subdir))
         .route("/api/tags", get(api::api_tags))
         .route("/api/tag-values", get(api::api_tag_values))
+        .route("/api/subjects", get(api::api_subjects))
         .route("/api/files", get(api::api_files))
         .route("/api/search", get(api::api_search))
         .route("/api/file", get(api::api_file_detail))

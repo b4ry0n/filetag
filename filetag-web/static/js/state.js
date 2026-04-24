@@ -6,6 +6,7 @@ const state = {
     viewMode: 'grid',
     showHidden: false,
     tags: [],
+    subjects: [],
     entries: [],
     searchQuery: '',
     searchResults: [],
@@ -131,7 +132,14 @@ async function loadAuthStatus() {
 }
 
 async function loadTags() {
-    state.tags = await api('/api/tags' + dirParam('?'));
+    [state.tags, state.subjects] = await Promise.all([
+        api('/api/tags' + dirParam('?')),
+        api('/api/subjects' + dirParam('?')),
+    ]);
+}
+
+async function loadSubjects() {
+    state.subjects = await api('/api/subjects' + dirParam('?'));
 }
 
 async function loadFiles(path) {

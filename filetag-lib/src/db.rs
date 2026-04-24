@@ -630,6 +630,26 @@ pub fn tag_values(conn: &Connection, name: &str) -> Result<Vec<(String, i64)>> {
     Ok(result)
 }
 
+/// List all distinct non-empty subjects with the number of files they appear on.
+/// Results are ordered alphabetically by subject name.
+pub fn all_subjects(conn: &Connection) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT ft.subject, COUNT(DISTINCT ft.file_id) \
+         FROM file_tags ft \
+         WHERE ft.subject != '' \
+         GROUP BY ft.subject \
+         ORDER BY ft.subject",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
 /// Set or clear the color for a tag.
 pub fn set_tag_color(conn: &Connection, name: &str, color: Option<&str>) -> Result<bool> {
     let changed = conn.execute(

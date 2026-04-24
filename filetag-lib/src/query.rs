@@ -41,6 +41,8 @@ pub enum Expr {
     /// Subject-scoped constraint: all inner conditions must be satisfied by tag
     /// rows that share the same non-empty `subject` on the same file.
     Subject(Box<Expr>),
+    /// Filter by subject name (exact or glob), e.g. `subject:person/alice` or `subject:person/*`.
+    SubjectName(String),
     /// Both child expressions must match.
     And(Box<Expr>, Box<Expr>),
     /// At least one child expression must match.
@@ -284,6 +286,14 @@ impl Parser {
             return Ok(Expr::FileType(canonical));
         }
 
+        // subject:name filter
+        if let Some(subj) = token.strip_prefix("subject:") {
+            if subj.is_empty() {
+                anyhow::bail!("expected a subject name after 'subject:'");
+            }
+            return Ok(Expr::SubjectName(subj.to_string()));
+        }
+
         // Check for comparison operator
         if let Some(op) = self.peek().and_then(parse_cmp_op) {
             self.advance();
@@ -409,6 +419,24 @@ impl QueryBuilder {
                     inner_sql
                 )
             }
+            Expr::SubjectName(pattern) => {
+                if pattern.contains('*') {
+                    let like_pat = pattern.replace('*', "%");
+                    let p = self.param(&like_pat);
+                    format!(
+                        "f.id IN (SELECT DISTINCT file_id FROM file_tags \\
+                         WHERE subject LIKE {})",
+                        p
+                    )
+                } else {
+                    let p = self.param(pattern);
+                    format!(
+                        "f.id IN (SELECT DISTINCT file_id FROM file_tags \\
+                         WHERE subject = {})",
+                        p
+                    )
+                }
+            }
             Expr::And(a, b) => {
                 let ca = self.build_condition(a);
                 let cb = self.build_condition(b);
@@ -494,7 +522,9 @@ impl QueryBuilder {
             }
             // FileType and nested Subject fall back to the file-level condition;
             // they are not subject-sensitive.
-            Expr::FileType(_) | Expr::Subject(_) => self.build_condition(expr),
+            Expr::FileType(_) | Expr::Subject(_) | Expr::SubjectName(_) => {
+                self.build_condition(expr)
+            }
         }
     }
 }
@@ -513,6 +543,7 @@ fn resolve_aliases(conn: &Connection, expr: Expr) -> Result<Expr> {
         Expr::Glob(p) => Expr::Glob(p),
         Expr::FileType(k) => Expr::FileType(k),
         Expr::Subject(inner) => Expr::Subject(Box::new(resolve_aliases(conn, *inner)?)),
+        Expr::SubjectName(s) => Expr::SubjectName(s),
         Expr::And(a, b) => Expr::And(
             Box::new(resolve_aliases(conn, *a)?),
             Box::new(resolve_aliases(conn, *b)?),
