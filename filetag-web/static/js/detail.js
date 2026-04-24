@@ -1036,7 +1036,7 @@ function renderDetail() {
     const zipEntry = parseZipEntryPath(f.path);
     const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
     const type_ = zipEntry ? fileType(zipEntry.entryName) : fileType(name);
-    const previewUrl = '/preview/' + encodeURI(f.path) + dirParam('?');
+    const previewUrl = '/preview/' + encodePath(f.path) + dirParam('?');
 
     let preview;
     if (zipEntry) {
@@ -1073,7 +1073,7 @@ function renderDetail() {
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
         preview = `<div class="zip-cover-wrap">
-            <img src="/thumb/${encodeURI(f.path)}${dirParam('?')}" alt="${esc(name)}" class="zip-cover"
+            <img src="/thumb/${encodePath(f.path)}${dirParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
             <button class="tag-action-btn" onclick="openMediaViewer('${jesc(f.path)}')">Open in viewer</button>
         </div>`;

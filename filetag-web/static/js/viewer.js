@@ -54,13 +54,13 @@ function _cvPrefetch(idx) {
 
 // Return the URL for a single page image.
 function cvPageUrl(i) {
-    if (_cv.mode === 'dir') return '/preview/' + encodeURI(_cv.filePaths[i]) + dirParam('?');
+    if (_cv.mode === 'dir') return '/preview/' + encodePath(_cv.filePaths[i]) + dirParam('?');
     return `/api/zip/page?${new URLSearchParams({ path: _cv.path, page: i })}` + dirParam('&');
 }
 
 // Return the URL for a thumbnail of a single page.
 function cvThumbUrl(i) {
-    if (_cv.mode === 'dir') return '/thumb/' + encodeURI(_cv.filePaths[i]) + dirParam('?');
+    if (_cv.mode === 'dir') return '/thumb/' + encodePath(_cv.filePaths[i]) + dirParam('?');
     return `/api/zip/thumb?${new URLSearchParams({ path: _cv.path, page: i })}` + dirParam('&');
 }
 

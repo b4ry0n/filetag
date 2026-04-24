@@ -400,3 +400,10 @@ function jesc(s) {
              .replace(/>/g, '&gt;')
              .replace(/"/g, '&quot;'); // HTML-encode " to avoid breaking attribute
 }
+
+// Encode a relative file path for use as a URL path component.
+// Unlike encodeURI, this encodes '#' and '?' which would otherwise be
+// interpreted as URL fragment / query separators by the browser.
+function encodePath(p) {
+    return p.split('/').map(encodeURIComponent).join('/');
+}

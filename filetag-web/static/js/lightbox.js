@@ -81,7 +81,7 @@ function openLightbox(path, type, duration) {
     // Pause any audio playing in the detail panel.
     document.querySelectorAll('#detail audio').forEach(m => m.pause());
 
-    const url = '/preview/' + encodeURI(path) + dirParam('?');
+    const url = '/preview/' + encodePath(path) + dirParam('?');
     const lb = document.getElementById('lightbox');
     const content = document.getElementById('lightbox-content');
     _lb.scale = 1; _lb.dx = 0; _lb.dy = 0; _lb.dragging = false;
