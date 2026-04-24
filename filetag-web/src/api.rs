@@ -1072,6 +1072,17 @@ pub async fn api_prune_tags(
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
+/// `POST /api/create-subject` — create an empty subject entity.
+pub async fn api_create_subject(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let created = db::create_subject(&conn, &body.name).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "created": created })))
+}
+
 /// `POST /api/rename-subject` — rename a subject label across all file-tag assignments.
 pub async fn api_rename_subject(
     State(state): State<Arc<AppState>>,

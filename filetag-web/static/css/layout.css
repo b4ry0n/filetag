@@ -805,6 +805,14 @@ mark.tag-filter-match {
     text-align: center;
 }
 
+.tm-new-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+}
+
 /* Tag Manager: right detail panel */
 
 .tm-detail {

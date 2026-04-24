@@ -263,6 +263,14 @@ pub struct RenameSubjectRequest {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/create-subject`.
+#[derive(Deserialize)]
+pub struct CreateSubjectRequest {
+    pub name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/delete-subject`.
 #[derive(Deserialize)]
 pub struct DeleteSubjectRequest {

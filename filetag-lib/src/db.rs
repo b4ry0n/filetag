@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -259,6 +259,20 @@ fn migrate(conn: &Connection) -> Result<()> {
              CREATE INDEX IF NOT EXISTS idx_subject_tags_subject ON subject_tags(subject);",
         )?
     }
+    if version < 10 {
+        // Dedicated subjects table so subjects can exist independently of
+        // file-tag assignments or entity properties.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS subjects (
+                 name TEXT PRIMARY KEY
+             );
+             -- Seed from existing subject data so nothing is lost.
+             INSERT OR IGNORE INTO subjects (name)
+                 SELECT DISTINCT subject FROM file_tags   WHERE subject != '';
+             INSERT OR IGNORE INTO subjects (name)
+                 SELECT DISTINCT subject FROM subject_tags WHERE subject != '';",
+        )?
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -494,6 +508,7 @@ pub fn synonyms_for_tag(conn: &Connection, canonical: &str) -> Result<Vec<String
 }
 
 /// Apply a tag (with optional value and optional subject) to a file.
+/// When a non-empty subject is given, it is also registered in the `subjects` table.
 pub fn apply_tag(
     conn: &Connection,
     file_id: i64,
@@ -501,6 +516,14 @@ pub fn apply_tag(
     value: Option<&str>,
     subject: Option<&str>,
 ) -> Result<()> {
+    if let Some(s) = subject
+        && !s.is_empty()
+    {
+        conn.execute(
+            "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
+            params![s],
+        )?;
+    }
     conn.execute(
         "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject) VALUES (?1, ?2, ?3, ?4)",
         params![file_id, tag_id, value.unwrap_or(""), subject.unwrap_or("")],
@@ -645,14 +668,15 @@ pub fn tag_values(conn: &Connection, name: &str) -> Result<Vec<(String, i64)>> {
 }
 
 /// List all distinct non-empty subjects with the number of files they appear on.
+/// Includes subjects that exist only in `subject_tags` (zero file count).
 /// Results are ordered alphabetically by subject name.
 pub fn all_subjects(conn: &Connection) -> Result<Vec<(String, i64)>> {
     let mut stmt = conn.prepare(
-        "SELECT ft.subject, COUNT(DISTINCT ft.file_id) \
-         FROM file_tags ft \
-         WHERE ft.subject != '' \
-         GROUP BY ft.subject \
-         ORDER BY ft.subject",
+        "SELECT s.name, COUNT(DISTINCT ft.file_id) AS cnt
+         FROM subjects s
+         LEFT JOIN file_tags ft ON ft.subject = s.name
+         GROUP BY s.name
+         ORDER BY s.name",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
@@ -664,19 +688,41 @@ pub fn all_subjects(conn: &Connection) -> Result<Vec<(String, i64)>> {
     Ok(result)
 }
 
-/// Rename a subject label across all file-tag assignments.
+/// Create a new subject entry (with no files and no properties yet).
+/// Returns `true` if newly created, `false` if it already existed.
+pub fn create_subject(conn: &Connection, name: &str) -> Result<bool> {
+    let n = conn.execute(
+        "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
+        params![name],
+    )?;
+    Ok(n > 0)
+}
+
+/// Rename a subject label across all file-tag assignments and entity properties.
 /// Returns the number of rows updated.
 pub fn rename_subject(conn: &Connection, old_name: &str, new_name: &str) -> Result<usize> {
+    conn.execute(
+        "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
+        params![new_name],
+    )?;
+    conn.execute(
+        "UPDATE subject_tags SET subject = ?1 WHERE subject = ?2",
+        params![new_name, old_name],
+    )?;
     let n = conn.execute(
         "UPDATE file_tags SET subject = ?1 WHERE subject = ?2",
         params![new_name, old_name],
     )?;
+    conn.execute("DELETE FROM subjects WHERE name = ?1", params![old_name])?;
     Ok(n)
 }
 
-/// Delete a subject label by clearing it on all file-tag assignments.
-/// Returns the number of rows updated.
+/// Delete a subject: remove from the subjects registry, clear all file-tag
+/// assignments (sets subject to ''), and drop all entity properties.
+/// Returns the number of file_tags rows cleared.
 pub fn delete_subject(conn: &Connection, name: &str) -> Result<usize> {
+    conn.execute("DELETE FROM subject_tags WHERE subject = ?1", params![name])?;
+    conn.execute("DELETE FROM subjects WHERE name = ?1", params![name])?;
     let n = conn.execute(
         "UPDATE file_tags SET subject = '' WHERE subject = ?1",
         params![name],
@@ -704,10 +750,19 @@ pub fn tags_for_subject(conn: &Connection, subject: &str) -> Result<Vec<(String,
     Ok(result)
 }
 
-/// Clone a subject: insert copies of all file_tags rows where subject = `old_name`
-/// with `subject = new_name`.  Rows that already exist are silently skipped.
-/// Returns the number of rows inserted.
+/// Clone a subject: insert copies of all file_tags and subject_tags rows for
+/// `old_name` under `new_name`.  Rows that already exist are silently skipped.
+/// Returns the number of file_tags rows inserted.
 pub fn clone_subject(conn: &Connection, old_name: &str, new_name: &str) -> Result<usize> {
+    conn.execute(
+        "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
+        params![new_name],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO subject_tags (subject, tag_id, value, created_at) \
+         SELECT ?1, tag_id, value, created_at FROM subject_tags WHERE subject = ?2",
+        params![new_name, old_name],
+    )?;
     let n = conn.execute(
         "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
          SELECT file_id, tag_id, value, ?1, created_at FROM file_tags WHERE subject = ?2",
@@ -767,6 +822,7 @@ pub fn get_subject_props(conn: &Connection, subject: &str) -> Result<Vec<(String
 }
 
 /// Add (or silently ignore if already present) a property to a subject entity.
+/// Also ensures the subject is registered in the `subjects` table.
 /// Returns the number of rows inserted (0 or 1).
 pub fn set_subject_prop(
     conn: &Connection,
@@ -774,6 +830,10 @@ pub fn set_subject_prop(
     tag_name: &str,
     value: &str,
 ) -> Result<usize> {
+    conn.execute(
+        "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
+        params![subject],
+    )?;
     let tag_id = get_or_create_tag(conn, tag_name)?;
     let n = conn.execute(
         "INSERT OR IGNORE INTO subject_tags (subject, tag_id, value) VALUES (?1, ?2, ?3)",
