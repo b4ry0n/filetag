@@ -2000,7 +2000,39 @@ pub async fn api_ai_chat(
             .unwrap_or("")
             .to_lowercase();
 
-        if AI_IMAGE_EXTS.contains(&ext.as_str()) && image_slots < 4 {
+        if file_path.contains("::") && image_slots < 4 {
+            // Virtual archive entry path (e.g. "comics/book.cbz::page001.jpg").
+            // Must be checked before the plain-image branch because the virtual path
+            // has an image extension but the file does not exist on disk.
+            if let Some((archive_rel, entry_name)) = file_path.split_once("::") {
+                let archive_abs = root.root.join(archive_rel);
+                let ename = entry_name.to_string();
+                let arc = archive_abs.clone();
+                let entry_result =
+                    tokio::task::spawn_blocking(move || archive_read_entry(&arc, &ename))
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok());
+                if let Some((bytes, _)) = entry_result {
+                    let entry_ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    if let Some(jpeg) = ai_prepare_jpeg_from_bytes(bytes, &entry_ext).await
+                        && jpeg.starts_with(&[0xFF, 0xD8])
+                    {
+                        let label = format!(
+                            "{}::{}",
+                            archive_abs
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(archive_rel),
+                            entry_name
+                        );
+                        video_context.push_str(&format!("[Image: \"{label}\"]\n"));
+                        b64_images.push(base64::engine::general_purpose::STANDARD.encode(&jpeg));
+                        image_slots += 1;
+                    }
+                }
+            }
+        } else if AI_IMAGE_EXTS.contains(&ext.as_str()) && image_slots < 4 {
             if let Some(bytes) = ai_prepare_jpeg(&abs, &root.root).await {
                 // Only accept actual JPEG output — not raw bytes of non-image files.
                 if bytes.starts_with(&[0xFF, 0xD8]) {
@@ -2185,37 +2217,6 @@ pub async fn api_ai_chat(
                 ));
                 image_slots += sample_b64.len();
                 b64_images.extend(sample_b64);
-            }
-        } else if file_path.contains("::") && image_slots < 4 {
-            // Virtual archive entry path (e.g. "comics/book.cbz::page001.jpg").
-            // Split on "::" to get the archive path and entry name.
-            if let Some((archive_rel, entry_name)) = file_path.split_once("::") {
-                let archive_abs = root.root.join(archive_rel);
-                let ename = entry_name.to_string();
-                let arc = archive_abs.clone();
-                let entry_result =
-                    tokio::task::spawn_blocking(move || archive_read_entry(&arc, &ename))
-                        .await
-                        .ok()
-                        .and_then(|r| r.ok());
-                if let Some((bytes, _)) = entry_result {
-                    let entry_ext = entry_name.rsplit('.').next().unwrap_or("").to_lowercase();
-                    if let Some(jpeg) = ai_prepare_jpeg_from_bytes(bytes, &entry_ext).await
-                        && jpeg.starts_with(&[0xFF, 0xD8])
-                    {
-                        let label = format!(
-                            "{}::{}",
-                            archive_abs
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or(archive_rel),
-                            entry_name
-                        );
-                        video_context.push_str(&format!("[Image: \"{label}\"]\n"));
-                        b64_images.push(base64::engine::general_purpose::STANDARD.encode(&jpeg));
-                        image_slots += 1;
-                    }
-                }
             }
         } else {
             let file_name = abs
