@@ -809,6 +809,7 @@ function renderDetail() {
                 <p class="bulk-section-label" style="margin-top:12px">${esc(t('bulk.add-label'))}</p>
                 <div class="tag-add-form">
                     <input type="text" id="bulk-tag-input" placeholder="${esc(t('bulk.tag-input'))}">
+                    <input type="text" id="bulk-tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
                     <button onclick="doBulkAddTag()">${esc(t('bulk.add-btn'))}</button>
                 </div>
                 ${aiAcceptBulkBtn}
@@ -817,6 +818,7 @@ function renderDetail() {
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
         attachTagAutocomplete(document.getElementById('bulk-tag-input'), () => doBulkAddTag());
+        attachSubjectAutocomplete(document.getElementById('bulk-tag-subject'), collectBulkSubjects);
         return;
     }
 
@@ -1017,7 +1019,10 @@ function renderDetail() {
             ${aiBtn}
         </div>`;
 
-    if (covered) attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
+    if (covered) {
+        attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
+        attachSubjectAutocomplete(document.getElementById('tag-subject'), collectSingleFileSubjects);
+    }
     initDetailVHandle(document.getElementById('detail-v-handle'));
 
     // Async-fetch text/markdown content after DOM is set
