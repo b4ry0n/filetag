@@ -248,6 +248,7 @@ async function doAddTag() {
     const tagStr = input.value.trim();
     if (!tagStr) return;
     const subject = subjectInput?.value.trim() || undefined;
+    if (!_assertSubjectExists(subject)) return;
     await addTagToFile(state.selectedFile.path, tagStr, subject);
     input.value = '';
     renderTags();
@@ -315,6 +316,16 @@ function collectBulkSubjects() {
     }
     const all = (state.subjects || []).map(s => s.name);
     return [...own, ...all.filter(s => !own.has(s))];
+}
+
+/// Returns true if `subjectName` exists in the known subject list.
+/// Shows a toast and returns false if it does not exist.
+function _assertSubjectExists(subjectName) {
+    if (!subjectName) return true; // no subject = OK
+    const known = (state.subjects || []).map(s => s.name);
+    if (known.includes(subjectName)) return true;
+    showToast(`Subject "${subjectName}" does not exist. Create it first in the Subjects manager.`);
+    return false;
 }
 
 /// Attach a simple autocomplete dropdown to a subject text input.
@@ -680,6 +691,7 @@ async function doBulkAddTag() {
     const tagStr = input.value.trim();
     if (!tagStr) return;
     const subject = subjectInput?.value.trim() || undefined;
+    if (!_assertSubjectExists(subject)) return;
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
@@ -1769,6 +1781,8 @@ async function applyTagPicker() {
     const toRemove = [...state.tagPickerOriginal].filter(t => !state.tagPickerPicks.has(t));
     const subjectChanged = state.tagPickerSubject !== state.tagPickerOriginalSubject;
     const subject = state.tagPickerSubject || undefined;
+
+    if (!_assertSubjectExists(subject)) return;
 
     if (toAdd.length === 0 && toRemove.length === 0 && !subjectChanged) {
         cancelTagPickerMode();

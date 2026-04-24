@@ -516,14 +516,6 @@ pub fn apply_tag(
     value: Option<&str>,
     subject: Option<&str>,
 ) -> Result<()> {
-    if let Some(s) = subject
-        && !s.is_empty()
-    {
-        conn.execute(
-            "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
-            params![s],
-        )?;
-    }
     conn.execute(
         "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject) VALUES (?1, ?2, ?3, ?4)",
         params![file_id, tag_id, value.unwrap_or(""), subject.unwrap_or("")],
@@ -976,6 +968,15 @@ pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<Renam
             params![key_id, value, from_id],
         )?;
         conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![from_id])?;
+        // Migrate subject entity properties to the target tag before the cascade
+        // delete removes them.
+        if key_id != from_id {
+            conn.execute(
+                "INSERT OR IGNORE INTO subject_tags (subject, tag_id, value, created_at) \
+                 SELECT subject, ?1, value, created_at FROM subject_tags WHERE tag_id = ?2",
+                params![key_id, from_id],
+            )?;
+        }
         conn.execute("DELETE FROM tags WHERE id = ?1", params![from_id])?;
         return Ok(RenameOutcome::Merged { assignments: moved });
     }
@@ -993,6 +994,13 @@ pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<Renam
             params![to_id, from_id],
         )?;
         conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![from_id])?;
+        // Migrate subject entity properties to the surviving tag before the
+        // cascade delete removes them from subject_tags.
+        conn.execute(
+            "INSERT OR IGNORE INTO subject_tags (subject, tag_id, value, created_at) \
+             SELECT subject, ?1, value, created_at FROM subject_tags WHERE tag_id = ?2",
+            params![to_id, from_id],
+        )?;
         conn.execute("DELETE FROM tags WHERE id = ?1", params![from_id])?;
         return Ok(RenameOutcome::Merged { assignments: moved });
     }

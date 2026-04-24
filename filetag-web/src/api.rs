@@ -974,6 +974,26 @@ pub async fn api_tag(
     let (conn, effective_root, effective_rel) =
         open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
+    // If a subject is specified it must already exist; we no longer auto-create
+    // subjects during file tagging to prevent accidental subject creation.
+    if let Some(ref s) = body.subject
+        && !s.is_empty()
+    {
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM subjects WHERE name = ?1",
+                rusqlite::params![s.as_str()],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if !exists {
+            return Err(AppError(anyhow::anyhow!(
+                "Subject '{}' does not exist. Create it first in the Subjects manager.",
+                s
+            )));
+        }
+    }
+
     let file_id = if body.path.contains("::") {
         ensure_zip_entry_record(&conn, &effective_rel).map_err(AppError)?
     } else {
