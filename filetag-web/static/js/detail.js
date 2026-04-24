@@ -116,7 +116,7 @@ function renderZipGrid(entries) {
         let preview;
         if (entry.is_image) {
             const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + dirParam('&');
-            preview = `<div class="card-icon" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}">${fileIcon(displayName)}</div>`;
+            preview = `<div class="card-icon" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}" data-thumb-hover="1">${fileIcon(displayName)}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
         }
@@ -460,6 +460,136 @@ function _trickplayAttach(img, path) {
 }
 
 // ---------------------------------------------------------------------------
+// Thumb hover popup: full-image floating preview for images / archives
+// ---------------------------------------------------------------------------
+// On hover the thumbnail is shown as a fixed-position popup sized to the
+// image's natural aspect ratio (similar to video trickplay but without
+// frame scrubbing).  Clicking pins the image inline inside the card;
+// clicking again removes the pinned view.
+
+/**
+ * Attach hover-popup behaviour to an <img> whose blob URL is already known.
+ * @param {HTMLImageElement} img     The thumbnail image element inside .card-preview.
+ * @param {string}           blobUrl The already-loaded blob URL for this thumb.
+ */
+function _thumbHoverAttach(img, blobUrl) {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-trickplay'; // reuse positioning wrapper
+    img.replaceWith(wrap);
+    wrap.appendChild(img);
+    const card = wrap.closest('.card') || wrap;
+
+    let popupEl  = null;
+    let pinnedEl = null;
+
+    // Natural dimensions become known once the img has loaded.
+    function getNatAR() {
+        if (img.naturalWidth && img.naturalHeight) return img.naturalWidth / img.naturalHeight;
+        return 1;
+    }
+
+    function buildPopup() {
+        if (popupEl || pinnedEl) return;
+        const cardRect = wrap.getBoundingClientRect();
+        if (!cardRect.width) return;
+        const ar = getNatAR();
+        const isPortrait = ar < 1;
+
+        let popupW, popupH;
+        if (isPortrait) {
+            const clampedAR = Math.max(ar, 9 / 16);
+            popupW = cardRect.width;
+            popupH = popupW / clampedAR;
+        } else {
+            const clampedAR = Math.min(ar, 16 / 9);
+            popupH = cardRect.height;
+            popupW = popupH * clampedAR;
+        }
+        popupW = Math.round(popupW);
+        popupH = Math.round(popupH);
+
+        let left = cardRect.left + (cardRect.width - popupW) / 2;
+        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+
+        popupEl = document.createElement('div');
+        popupEl.className = 'card-thumb-popup';
+        Object.assign(popupEl.style, {
+            width:  popupW + 'px',
+            height: popupH + 'px',
+            left:   left.toFixed(1) + 'px',
+            top:    top.toFixed(1)  + 'px',
+        });
+        const popupImg = document.createElement('img');
+        popupImg.src = blobUrl;
+        popupImg.alt = '';
+        popupEl.appendChild(popupImg);
+        document.body.appendChild(popupEl);
+        window.addEventListener('scroll', repositionPopup, { passive: true, capture: true });
+    }
+
+    function repositionPopup() {
+        if (!popupEl) return;
+        const cardRect = wrap.getBoundingClientRect();
+        const popupW = parseFloat(popupEl.style.width);
+        const popupH = parseFloat(popupEl.style.height);
+        let left = cardRect.left + (cardRect.width  - popupW) / 2;
+        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+        popupEl.style.left = left.toFixed(1) + 'px';
+        popupEl.style.top  = top.toFixed(1)  + 'px';
+    }
+
+    function teardownPopup() {
+        if (popupEl) {
+            popupEl.remove();
+            popupEl = null;
+            window.removeEventListener('scroll', repositionPopup, { capture: true });
+        }
+    }
+
+    function buildPinned() {
+        if (pinnedEl && pinnedEl.isConnected) return;
+        pinnedEl = document.createElement('div');
+        pinnedEl.className = 'card-thumb-pinned';
+        const pinnedImg = document.createElement('img');
+        pinnedImg.src = blobUrl;
+        pinnedImg.alt = '';
+        pinnedEl.appendChild(pinnedImg);
+        wrap.appendChild(pinnedEl);
+    }
+
+    function teardownPinned() {
+        if (pinnedEl) { pinnedEl.remove(); pinnedEl = null; }
+    }
+
+    card.addEventListener('mouseenter', () => {
+        if (!pinnedEl) buildPopup();
+    }, { passive: true });
+
+    card.addEventListener('mouseleave', () => {
+        teardownPopup();
+    });
+
+    card.addEventListener('click', e => {
+        if (e.target.closest('button, a')) return;
+        teardownPopup();
+        // Unpin any other card.
+        document.querySelectorAll('.card-thumb-pinned').forEach(el => {
+            if (!wrap.contains(el)) el.remove();
+        });
+        if (pinnedEl && pinnedEl.isConnected) {
+            teardownPinned();
+        } else {
+            pinnedEl = null;
+            buildPinned();
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Directory trickplay: Dolphin-style animated folder preview
 // ---------------------------------------------------------------------------
 // On hover over a directory card, a sprite sheet (N × 240 × 240 px) is
@@ -692,6 +822,9 @@ function _thumbReplace(el, blobUrl) {
     // Attach trickplay for video cards.
     if (el.dataset.videoPath) {
         _trickplayAttach(img, el.dataset.videoPath);
+    } else if (el.dataset.thumbHover) {
+        // Image / archive cards: hover shows full-thumb popup.
+        _thumbHoverAttach(img, blobUrl);
     }
 }
 
