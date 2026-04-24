@@ -350,6 +350,8 @@ function initResizeHandles() {
         180, 800,
         /* leftEdge */ false  // dragging left increases width
     );
+
+    _initSidebarSubjectDivider();
 }
 
 /** Wire up col-resize drag on an element.
@@ -379,6 +381,44 @@ function _colResize(el, getWidth, setWidth, minW, maxW, leftEdge) {
         }
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
+    });
+}
+
+/** Wire up the draggable divider between the tag pane and subject pane in the sidebar. */
+function _initSidebarSubjectDivider() {
+    const el      = document.getElementById('sidebar-subject-divider');
+    const subjEl  = document.getElementById('subject-list');
+    if (!el || !subjEl) return;
+
+    // Restore saved height
+    const saved = localStorage.getItem('ft-subject-pane-height');
+    if (saved) subjEl.style.flex = `0 0 ${saved}`;
+
+    el.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const startY   = e.clientY;
+        const startH   = subjEl.getBoundingClientRect().height;
+        el.classList.add('dragging');
+        document.body.style.cursor    = 'row-resize';
+        document.body.style.userSelect = 'none';
+
+        function onMove(ev) {
+            // Dragging up increases subject pane height
+            const delta  = startY - ev.clientY;
+            const newH   = Math.max(40, Math.min(startH + delta, window.innerHeight * 0.7));
+            subjEl.style.flex = `0 0 ${newH}px`;
+            localStorage.setItem('ft-subject-pane-height', `${newH}px`);
+        }
+        function onUp() {
+            el.classList.remove('dragging');
+            document.body.style.cursor    = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup',   onUp);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup',   onUp);
     });
 }
 

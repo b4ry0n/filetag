@@ -188,8 +188,8 @@ mark.tag-filter-match {
 
 .sidebar-content {
     padding: 4px 0;
-    flex: 1;
-    min-height: 0;
+    flex: 1 1 0;
+    min-height: 40px;
     overflow-y: auto;
 }
 
@@ -200,7 +200,7 @@ mark.tag-filter-match {
     align-items: center;
     width: 100%;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text);
 }
 
@@ -233,7 +233,7 @@ mark.tag-filter-match {
     padding: 6px 16px 6px 2px;
     text-align: left;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 500;
     color: inherit;
 }
 
@@ -255,8 +255,9 @@ mark.tag-filter-match {
     width: 100%;
     padding: 5px 16px 5px 22px;
     font-size: 13px;
+    font-weight: 500;
     text-align: left;
-    color: var(--text-secondary);
+    color: var(--text);
     border-radius: 0;
 }
 
@@ -273,8 +274,6 @@ mark.tag-filter-match {
     /* padding-left: 6px → check-placeholder(12) + margin-right(4) = 22px for colorDot,
        matching the 22px start of group label text (chevron 20px + name padding 2px). */
     padding-left: 6px;
-    color: var(--text);
-    font-weight: 500;
 }
 
 /* Active filter bar \u2014 compact single line at top of scrollable list */
@@ -596,6 +595,7 @@ mark.tag-filter-match {
     padding-left: 34px;
     color: var(--text-secondary);
     font-size: 12px;
+    font-weight: 400;
 }
 
 .tag-item-loading {
@@ -1280,19 +1280,64 @@ mark.tag-filter-match {
 }
 
 /* ---------------------------------------------------------------------------
- * Subjects section (sidebar, below tag list)
+ * Subjects section (inline in tag list)
  * -------------------------------------------------------------------------*/
 
+/* Subjects now live in their own scrollable pane at the bottom of the sidebar. */
 .sidebar-subject-section {
-    border-top: 1px solid var(--border);
-    padding: 4px 0 8px;
-    flex-shrink: 0;
-    max-height: 260px;
+    flex: 0 0 auto;
+    min-height: 40px;
+    max-height: 50%;
     overflow-y: auto;
+    padding: 4px 0;
 }
 
-.subject-section-header {
-    padding: 8px 16px 4px;
+.sidebar-subject-section:empty {
+    display: none;
+}
+
+/* Draggable divider between tag pane and subject pane */
+.sidebar-subject-divider {
+    flex-shrink: 0;
+    height: 5px;
+    cursor: row-resize;
+    background: transparent;
+    border-top: 1px solid var(--border);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    transition: background 0.1s;
+}
+
+.sidebar-subject-divider[hidden] {
+    display: none;
+}
+
+.sidebar-subject-divider::after {
+    content: '';
+    display: block;
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    margin-top: 1px;
+}
+
+.sidebar-subject-divider:hover,
+.sidebar-subject-divider.dragging {
+    background: var(--bg-hover);
+}
+
+.sidebar-subject-divider:hover::after,
+.sidebar-subject-divider.dragging::after {
+    background: var(--text-tertiary);
+}
+
+/* Subjects divider label */
+.subjects-section-label {
+    padding: 6px 16px 3px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -1301,28 +1346,7 @@ mark.tag-filter-match {
     user-select: none;
 }
 
-.subject-item {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    padding: 4px 16px 4px 22px;
-    font-size: 13px;
-    text-align: left;
-    color: var(--text-secondary);
-    border-radius: 0;
-    gap: 4px;
-}
+/* No longer used (subjects are in own pane now) */
+.subjects-section-divider { display: none; }
 
-.subject-item:hover { background: var(--bg-hover); color: var(--text); }
-.subject-item.active { background: var(--primary-light); color: var(--primary); font-weight: 500; }
-
-.subject-item .count {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--text-tertiary);
-}
-
-.subject-group .tag-group-name {
-    font-weight: 500;
-    color: var(--text-secondary);
-}
+/* Subject leaf items: padding-left is set inline per depth (base 22px + 12px per level). */

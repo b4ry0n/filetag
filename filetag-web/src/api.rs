@@ -795,6 +795,7 @@ pub async fn api_search(
                         name,
                         value,
                         subject: None,
+                        implicit: false,
                     })
                     .collect(),
             })
@@ -881,11 +882,34 @@ pub async fn api_file_detail(
         && let Some(record) = db::file_by_path(&conn, &effective_rel).map_err(AppError)?
     {
         let tags = db::tags_for_file_with_subject(&conn, record.id).map_err(AppError)?;
+        let implicit_tags = db::subject_props_for_file(&conn, record.id).map_err(AppError)?;
         let indexed_at: String = conn.query_row(
             "SELECT indexed_at FROM files WHERE id = ?1",
             rusqlite::params![record.id],
             |r| r.get(0),
         )?;
+
+        let mut all_tags: Vec<ApiFileTag> = tags
+            .into_iter()
+            .map(|(name, value, subject)| ApiFileTag {
+                name,
+                value,
+                subject: if subject.is_empty() {
+                    None
+                } else {
+                    Some(subject)
+                },
+                implicit: false,
+            })
+            .collect();
+        for (subject, name, value) in implicit_tags {
+            all_tags.push(ApiFileTag {
+                name,
+                value: if value.is_empty() { None } else { Some(value) },
+                subject: Some(subject),
+                implicit: true,
+            });
+        }
 
         return Ok(Json(ApiFileDetail {
             path: params.path,
@@ -894,18 +918,7 @@ pub async fn api_file_detail(
             mtime: record.mtime_ns,
             indexed_at,
             covered: true,
-            tags: tags
-                .into_iter()
-                .map(|(name, value, subject)| ApiFileTag {
-                    name,
-                    value,
-                    subject: if subject.is_empty() {
-                        None
-                    } else {
-                        Some(subject)
-                    },
-                })
-                .collect(),
+            tags: all_tags,
             duration,
         }));
     }
@@ -1105,19 +1118,24 @@ pub async fn api_delete_subject(
     Ok(Json(serde_json::json!({ "updated": updated })))
 }
 
-/// `GET /api/subject/tags` — list distinct tags used under a subject with file counts.
-pub async fn api_subject_tags(
+/// `POST /api/assign-subject` — assign a file to a subject by moving its
+/// unassigned file-tag rows (subject = '') to the given subject name.
+pub async fn api_assign_subject(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<SubjectTagsParams>,
-) -> Result<Json<Vec<ApiTagValue>>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let rows = db::tags_for_subject(&conn, &params.name).map_err(AppError)?;
-    Ok(Json(
-        rows.into_iter()
-            .map(|(value, count)| ApiTagValue { value, count })
-            .collect(),
-    ))
+    Json(body): Json<AssignSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let (conn, effective_root, effective_rel) =
+        open_for_file_op(db_root, &body.path).map_err(AppError)?;
+    let file_id = if body.path.contains("::") {
+        ensure_zip_entry_record(&conn, &effective_rel).map_err(AppError)?
+    } else {
+        db::get_or_index_file(&conn, &effective_rel, &effective_root)
+            .map_err(AppError)?
+            .id
+    };
+    let updated = db::assign_file_to_subject(&conn, file_id, &body.subject).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "updated": updated })))
 }
 
 /// `POST /api/clone-subject` — copy all file-tag assignments from one subject to another.
@@ -1129,28 +1147,6 @@ pub async fn api_clone_subject(
     let conn = open_conn(db_root)?;
     let inserted = db::clone_subject(&conn, &body.name, &body.new_name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "inserted": inserted })))
-}
-
-/// `POST /api/subject/add-tag` — add a tag to all files that have the given subject.
-pub async fn api_subject_add_tag(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<SubjectTagRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let inserted = db::add_tag_to_subject(&conn, &body.subject, &body.tag).map_err(AppError)?;
-    Ok(Json(serde_json::json!({ "inserted": inserted })))
-}
-
-/// `POST /api/subject/remove-tag` — remove a tag from all file-tag assignments under a subject.
-pub async fn api_subject_remove_tag(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<SubjectTagRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let removed = db::remove_tag_from_subject(&conn, &body.subject, &body.tag).map_err(AppError)?;
-    Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
 /// `GET /api/subject/props` — list entity properties of a subject.

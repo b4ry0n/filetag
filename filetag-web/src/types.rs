@@ -129,6 +129,9 @@ pub struct ApiFileTag {
     /// Subject group; absent when the tag was applied without a subject.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// True when the tag comes from the subject entity (implicit), not directly from the file.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub implicit: bool,
 }
 
 /// Search result envelope returned by `GET /api/search`.
@@ -279,29 +282,22 @@ pub struct DeleteSubjectRequest {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/assign-subject` — assign a file to a subject.
+#[derive(Deserialize)]
+pub struct AssignSubjectRequest {
+    /// Absolute file path.
+    pub path: String,
+    /// Subject name to assign.
+    pub subject: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/clone-subject`.
 #[derive(Deserialize)]
 pub struct CloneSubjectRequest {
     pub name: String,
     pub new_name: String,
-    /// Absolute filesystem path of the currently browsed directory.
-    pub dir: Option<String>,
-}
-
-/// Query parameters for `GET /api/subject/tags`.
-#[derive(Deserialize)]
-pub struct SubjectTagsParams {
-    /// Subject label to query.
-    pub name: String,
-    /// Absolute filesystem path of the currently browsed directory.
-    pub dir: Option<String>,
-}
-
-/// Body for `POST /api/subject/add-tag` and `POST /api/subject/remove-tag`.
-#[derive(Deserialize)]
-pub struct SubjectTagRequest {
-    pub subject: String,
-    pub tag: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }
