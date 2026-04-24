@@ -309,6 +309,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Media viewer stage events (wheel, drag, pinch)
     _cvInitStageEvents();
+    _cvInitFsToolbar();
 
     // Panel resize handles
     initResizeHandles();

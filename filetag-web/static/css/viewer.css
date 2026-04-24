@@ -230,6 +230,29 @@
     max-height: 100%;
 }
 
+/* Fullscreen overlay toolbar: toolbar floats at top, hidden until mouse nears */
+#media-viewer.cv-fs .cv-toolbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    transform: translateY(-6px);
+}
+#media-viewer.cv-fs .cv-toolbar.cv-toolbar-peek {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+}
+/* Body and pages fill full viewport height when toolbar is overlaid */
+#media-viewer.cv-fs .cv-page        { max-height: 100vh; }
+#media-viewer.cv-fs .cv-thumbs      { max-height: 100vh; }
+#media-viewer.cv-fs .cv-stage.cv-scroll-mode  .cv-page { max-height: none; }
+#media-viewer.cv-fs .cv-stage.cv-hscroll-mode .cv-page { max-height: 100%; }
+
 /* ------------------------------------------------------------------ */
 /* AI settings modal                                                  */
 /* ------------------------------------------------------------------ */

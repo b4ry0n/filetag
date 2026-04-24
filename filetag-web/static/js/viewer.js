@@ -556,7 +556,60 @@ document.addEventListener('fullscreenchange', () => {
     const inFS = !!document.fullscreenElement;
     btn.innerHTML = inFS ? _cvCompressIcon : _cvExpandIcon;
     btn.title = inFS ? 'Exit full screen (F)' : 'Full screen (F)';
+    const overlay = document.getElementById('media-viewer');
+    overlay.classList.toggle('cv-fs', inFS);
+    if (!inFS) {
+        const toolbar = overlay.querySelector('.cv-toolbar');
+        if (toolbar) toolbar.classList.remove('cv-toolbar-peek');
+        if (_cvFsHideTimer) { clearTimeout(_cvFsHideTimer); _cvFsHideTimer = null; }
+    }
 });
+
+// ---------------------------------------------------------------------------
+// Fullscreen toolbar overlay (hide until mouse nears the top)
+// ---------------------------------------------------------------------------
+
+let _cvFsHideTimer = null;
+
+function _cvShowFsToolbar() {
+    const toolbar = document.querySelector('#media-viewer .cv-toolbar');
+    if (!toolbar) return;
+    toolbar.classList.add('cv-toolbar-peek');
+    if (_cvFsHideTimer) { clearTimeout(_cvFsHideTimer); _cvFsHideTimer = null; }
+    _cvFsHideTimer = setTimeout(() => {
+        _cvFsHideTimer = null;
+        if (!toolbar.matches(':hover')) toolbar.classList.remove('cv-toolbar-peek');
+    }, 3000);
+}
+
+function _cvScheduleHideFsToolbar() {
+    if (_cvFsHideTimer) { clearTimeout(_cvFsHideTimer); _cvFsHideTimer = null; }
+    _cvFsHideTimer = setTimeout(() => {
+        _cvFsHideTimer = null;
+        const toolbar = document.querySelector('#media-viewer .cv-toolbar');
+        if (toolbar) toolbar.classList.remove('cv-toolbar-peek');
+    }, 600);
+}
+
+function _cvInitFsToolbar() {
+    const overlay = document.getElementById('media-viewer');
+    const toolbar = overlay.querySelector('.cv-toolbar');
+
+    overlay.addEventListener('mousemove', e => {
+        if (!overlay.classList.contains('cv-fs')) return;
+        if (e.clientY < 80) _cvShowFsToolbar();
+    });
+
+    toolbar.addEventListener('mouseenter', () => {
+        if (!overlay.classList.contains('cv-fs')) return;
+        if (_cvFsHideTimer) { clearTimeout(_cvFsHideTimer); _cvFsHideTimer = null; }
+    });
+
+    toolbar.addEventListener('mouseleave', () => {
+        if (!overlay.classList.contains('cv-fs')) return;
+        _cvScheduleHideFsToolbar();
+    });
+}
 
 function cvShowPage(idx) {
     if (!_cv.pages.length) return;
@@ -656,10 +709,14 @@ function cvToggleSpread() {
 function _cvKeyHandler(e) {
     if (document.getElementById('media-viewer').hidden) return;
     // ArrowRight = forward in reading direction (RTL: lower index; LTR: higher index)
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || (e.key === ' ' && !_cv.scroll)) {
-        e.preventDefault(); _cv.rtl ? cvPrev() : cvNext();
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+        e.preventDefault();
+        if (_cv.scroll) _cvScrollNav(_cv.rtl ? -1 : 1);
+        else { _cv.rtl ? cvPrev() : cvNext(); }
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault(); _cv.rtl ? cvNext() : cvPrev();
+        e.preventDefault();
+        if (_cv.scroll) _cvScrollNav(_cv.rtl ? 1 : -1);
+        else { _cv.rtl ? cvNext() : cvPrev(); }
     } else if (e.key === 'f' || e.key === 'F') cvToggleFullscreen();
     else if (e.key === 't' || e.key === 'T') cvToggleThumbs();
     else if (e.key === 'r' || e.key === 'R') cvToggleRtl();
@@ -684,5 +741,61 @@ function cvClickNav(e) {
     } else {
         if (x < 0.3) cvPrev();
         else if (x > 0.7) cvNext();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scroll-mode keyboard navigation
+// ---------------------------------------------------------------------------
+
+// Scrolls by one viewport-unit in the given direction (+1 forward, -1 back).
+// Jumps to the next/previous page when the current page boundary is already visible.
+function _cvScrollNav(dir) {
+    const stage = document.getElementById('cv-stage');
+    if (!stage) return;
+
+    if (_cv.scrollDir === 'h') {
+        const step = (_cv.rtl ? -dir : dir) * stage.clientWidth * 0.9;
+        const newLeft = stage.scrollLeft + step;
+        const maxLeft = stage.scrollWidth - stage.clientWidth;
+        stage.scrollTo({ left: Math.max(0, Math.min(maxLeft, newLeft)), behavior: 'smooth' });
+        return;
+    }
+
+    // Vertical scroll mode
+    const stageRect = stage.getBoundingClientRect();
+    const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
+
+    if (dir > 0) {
+        // If the bottom of the current page is already within view, jump to next page start
+        if (curImg) {
+            const imgRect = curImg.getBoundingClientRect();
+            if (imgRect.bottom <= stageRect.bottom + 20) {
+                const nextIdx = _cv.current + 1;
+                if (nextIdx < _cv.pages.length) {
+                    const nextImg = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
+                    if (nextImg) nextImg.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                return;
+            }
+        }
+        // Otherwise scroll down by one viewport height
+        const newTop = stage.scrollTop + stage.clientHeight * 0.9;
+        stage.scrollTo({ top: Math.min(newTop, stage.scrollHeight - stage.clientHeight), behavior: 'smooth' });
+    } else {
+        // If the top of the current page is already within view, jump to previous page start
+        if (curImg) {
+            const imgRect = curImg.getBoundingClientRect();
+            if (imgRect.top >= stageRect.top - 20) {
+                const prevIdx = _cv.current - 1;
+                if (prevIdx >= 0) {
+                    const prevImg = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
+                    if (prevImg) prevImg.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                return;
+            }
+        }
+        // Otherwise scroll up by one viewport height
+        stage.scrollTo({ top: Math.max(0, stage.scrollTop - stage.clientHeight * 0.9), behavior: 'smooth' });
     }
 }
