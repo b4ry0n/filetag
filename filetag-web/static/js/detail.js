@@ -1247,7 +1247,7 @@ function renderFileTagChips(f, covered) {
         const hasImplicit = implicitTags.length > 0;
         if (!hasExplicit && !hasImplicit) continue;
         html += `<div class="subject-group">`;
-        html += `<span class="subject-label">${esc(subj)}</span>`;
+        html += `<span class="subject-label" title="Click to fill subject field" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}</span>`;
         html += explicitTags.map(chipHtml).join('');
         if (hasImplicit) {
             html += `<span class="subject-implicit-sep" title="Subject tags (read-only)"></span>`;

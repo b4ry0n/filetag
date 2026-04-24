@@ -365,9 +365,12 @@
     letter-spacing: .04em;
     color: var(--text-secondary, #888);
     margin-right: 2px;
-    cursor: default;
+    cursor: pointer;
     user-select: none;
     white-space: nowrap;
+}
+.subject-label:hover {
+    color: var(--accent, #5b9cf6);
 }
 .subject-remove {
     background: none;

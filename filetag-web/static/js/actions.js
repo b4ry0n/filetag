@@ -328,6 +328,16 @@ function _assertSubjectExists(subjectName) {
     return false;
 }
 
+/// Toggle the subject input field: fill it with `subjectName`, or clear it if
+/// it already contains that value. Called by clicking a subject label in the
+/// detail panel.
+function toggleSubjectInput(subjectName) {
+    const input = document.getElementById('tag-subject');
+    if (!input) return;
+    input.value = input.value === subjectName ? '' : subjectName;
+    input.focus();
+}
+
 /// Attach a simple autocomplete dropdown to a subject text input.
 /// `getSubjects` is called each time to retrieve the current subject list.
 
