@@ -1086,7 +1086,7 @@ function tmSelectSubject(name) {
     renderTmSubjectDetail(name);
 }
 
-function renderTmSubjectDetail(name) {
+async function renderTmSubjectDetail(name) {
     const panel = document.getElementById('tm-subject-detail');
     if (!panel) return;
 
@@ -1096,11 +1096,53 @@ function renderTmSubjectDetail(name) {
         return;
     }
 
+    // Show skeleton while loading tags
     panel.innerHTML = `
         <div class="tm-detail-header">
             <div class="tm-detail-name">${esc(name)}</div>
             <div class="tm-detail-meta">${subj.count} file${subj.count !== 1 ? 's' : ''}</div>
         </div>
+        <div class="tm-detail-placeholder" style="padding:12px 16px">Loading tags\u2026</div>
+    `;
+
+    let subjTags = [];
+    try {
+        subjTags = await api('/api/subject/tags?' + new URLSearchParams({ name }) + dirParam('&'));
+    } catch (_) { /* ignore */ }
+
+    if (document.getElementById('tm-subject-detail') !== panel) return; // closed meanwhile
+
+    const tagRows = subjTags.map(t => `
+        <div class="tm-val-row">
+            <span class="tm-val-name" onclick="tmSubjectTagSearch('${jesc(name)}','${jesc(t.value)}')"
+                title="Search ${esc(name)} and ${esc(t.value)}">${esc(t.value)}</span>
+            <span class="tm-val-count">${t.count}</span>
+            <button class="tm-val-rename" onclick="tmSubjectRemoveTag('${jesc(name)}','${jesc(t.value)}')"
+                title="Remove this tag from subject">\u2715</button>
+        </div>`).join('');
+
+    panel.innerHTML = `
+        <div class="tm-detail-header">
+            <div class="tm-detail-name">${esc(name)}</div>
+            <div class="tm-detail-meta">${subj.count} file${subj.count !== 1 ? 's' : ''}</div>
+        </div>
+
+        <section class="tm-section">
+            <div class="tm-section-title">Tags <span class="tm-section-hint">(click to search, \u2715 to remove from subject)</span></div>
+            ${subjTags.length
+                ? `<div class="tm-val-list">${tagRows}</div>`
+                : `<div class="tm-empty-hint">No tags assigned yet.</div>`}
+            <div class="tm-syn-add" style="margin-top:6px">
+                <input id="tm-subj-tag-input" class="tm-input" type="text"
+                    placeholder="Add tag to all files in subject\u2026"
+                    list="tm-subj-tag-datalist"
+                    onkeydown="if(event.key==='Enter') tmSubjectAddTag('${jesc(name)}')">
+                <datalist id="tm-subj-tag-datalist">
+                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
+                </datalist>
+                <button class="tm-btn" onclick="tmSubjectAddTag('${jesc(name)}')">Add</button>
+            </div>
+        </section>
 
         <section class="tm-section tm-ops">
             <div class="tm-section-title">Operations</div>
@@ -1115,6 +1157,17 @@ function renderTmSubjectDetail(name) {
                 </div>
                 <div class="tm-op-hint">All tag assignments with this subject label are updated.</div>
             </div>
+
+            <div class="tm-op-row">
+                <label class="tm-op-label">Clone as</label>
+                <div class="tm-op-inputs">
+                    <input id="tm-subj-clone-input" class="tm-input" type="text"
+                        placeholder="New subject name\u2026"
+                        onkeydown="if(event.key==='Enter') tmCloneSubject('${jesc(name)}')">
+                    <button class="tm-btn" onclick="tmCloneSubject('${jesc(name)}')">Clone</button>
+                </div>
+                <div class="tm-op-hint">Copies all tag assignments to a new subject name.</div>
+            </div>
         </section>
 
         <div class="tm-danger-zone">
@@ -1123,6 +1176,70 @@ function renderTmSubjectDetail(name) {
             </button>
         </div>
     `;
+}
+
+async function tmSubjectAddTag(subject) {
+    const input = document.getElementById('tm-subj-tag-input');
+    const tag = input ? input.value.trim() : '';
+    if (!tag) return;
+    try {
+        const res = await apiPost('/api/subject/add-tag', { subject, tag, dir: currentAbsDir() });
+        showToast(`Added "${tag}" to ${res.inserted ?? 0} file(s) in subject "${subject}".`);
+        if (input) input.value = '';
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await loadTags();
+    renderTmSubjectList();
+    await renderTmSubjectDetail(subject);
+    renderSubjects();
+}
+
+async function tmSubjectRemoveTag(subject, tag) {
+    if (!confirm(`Remove tag "${tag}" from all files in subject "${subject}"?\nThis deletes ${tag} on files where it was assigned under this subject.`)) return;
+    try {
+        const res = await apiPost('/api/subject/remove-tag', { subject, tag, dir: currentAbsDir() });
+        showToast(`Removed "${tag}" from ${res.removed ?? 0} file(s) in subject "${subject}".`);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await loadTags();
+    renderTmSubjectList();
+    await renderTmSubjectDetail(subject);
+    renderSubjects();
+}
+
+async function tmCloneSubject(name) {
+    const input = document.getElementById('tm-subj-clone-input');
+    const newName = input ? input.value.trim() : '';
+    if (!newName || newName === name) return;
+    if (state.subjects.find(s => s.name === newName)) {
+        if (!confirm(`Subject "${newName}" already exists. Merge into it?`)) return;
+    }
+    try {
+        const res = await apiPost('/api/clone-subject', { name, new_name: newName, dir: currentAbsDir() });
+        showToast(`Cloned "${name}" to "${newName}" (${res.inserted ?? 0} rows).`);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await loadTags();
+    _tmSelectedSubject = newName;
+    renderTmSubjectList();
+    await renderTmSubjectDetail(newName);
+    renderSubjects();
+}
+
+function tmSubjectTagSearch(subject, tag) {
+    closeTagManager();
+    const query = `subject:${subject} and ${tag}`;
+    document.getElementById('search-input').value = query;
+    searchFiles(query).then(() => {
+        document.getElementById('search-clear').hidden = false;
+        render();
+    });
 }
 
 async function tmDoRenameSubject(oldName) {

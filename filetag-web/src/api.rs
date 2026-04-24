@@ -1094,6 +1094,54 @@ pub async fn api_delete_subject(
     Ok(Json(serde_json::json!({ "updated": updated })))
 }
 
+/// `GET /api/subject/tags` — list distinct tags used under a subject with file counts.
+pub async fn api_subject_tags(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubjectTagsParams>,
+) -> Result<Json<Vec<ApiTagValue>>, AppError> {
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let rows = db::tags_for_subject(&conn, &params.name).map_err(AppError)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(value, count)| ApiTagValue { value, count })
+            .collect(),
+    ))
+}
+
+/// `POST /api/clone-subject` — copy all file-tag assignments from one subject to another.
+pub async fn api_clone_subject(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CloneSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let inserted = db::clone_subject(&conn, &body.name, &body.new_name).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "inserted": inserted })))
+}
+
+/// `POST /api/subject/add-tag` — add a tag to all files that have the given subject.
+pub async fn api_subject_add_tag(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SubjectTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let inserted = db::add_tag_to_subject(&conn, &body.subject, &body.tag).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "inserted": inserted })))
+}
+
+/// `POST /api/subject/remove-tag` — remove a tag from all file-tag assignments under a subject.
+pub async fn api_subject_remove_tag(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SubjectTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let removed = db::remove_tag_from_subject(&conn, &body.subject, &body.tag).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
 /// `GET /api/settings` — read per-root settings (trickplay counts + feature flags).
 pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,
