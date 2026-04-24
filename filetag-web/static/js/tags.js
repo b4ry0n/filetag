@@ -247,7 +247,8 @@ function renderSubjects() {
     el.innerHTML = html;
 }
 
-function renderSubjectTreeNodes(nodes, depth) {
+function renderSubjectTreeNodes(nodeMap, depth) {
+    const nodes = [...nodeMap.values()].sort((a, b) => a.segment.localeCompare(b.segment));
     return nodes.map(n => renderSubjectTreeNode(n, depth)).join('');
 }
 
@@ -256,7 +257,7 @@ function renderSubjectTreeNode(node, depth) {
     const marginStyle = depth > 0 ? ` style="margin-left:${depth * 12}px"` : '';
     const isActive = state.mode === 'search' && state.searchQuery === ('subject:' + fullPath);
 
-    if (!children.length) {
+    if (!children.size) {
         // Leaf node
         const activeClass = isActive ? ' active' : '';
         const count = tag ? ` <span class="count">${tag.count}</span>` : '';
@@ -272,7 +273,7 @@ function renderSubjectTreeNode(node, depth) {
     const activeClass = isActive ? ' active' : '';
     const totalCount = tag
         ? tag.count
-        : children.reduce((acc, c) => acc + (c.tag ? c.tag.count : 0), 0);
+        : [...children.values()].reduce((acc, c) => acc + (c.tag ? c.tag.count : 0), 0);
     return `<div class="tag-group subject-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${activeClass}">
             <button class="tag-group-chevron" onclick="toggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
@@ -535,6 +536,10 @@ function tmToggleGroup(prefix) {
     renderTmList();
 }
 
+let _tmTab = 'tags'; // 'tags' | 'subjects'
+let _tmSelectedSubject = null;
+let _tmSubjectSearch = '';
+
 function showTagManager(selectTag) {
     if (document.getElementById('tag-manager-overlay')) return;
 
@@ -545,18 +550,28 @@ function showTagManager(selectTag) {
         <div class="tm-modal" onclick="event.stopPropagation()">
             <div class="tm-header">
                 <span class="tm-title">Tag Manager</span>
-                <button class="tm-prune-btn" onclick="pruneUnusedTags()" title="Remove all tags with no file assignments">Prune unused</button>
+                <div class="tm-tabs">
+                    <button class="tm-tab active" id="tm-tab-tags" onclick="tmSwitchTab('tags')">Tags</button>
+                    <button class="tm-tab" id="tm-tab-subjects" onclick="tmSwitchTab('subjects')">Subjects</button>
+                </div>
+                <button class="tm-prune-btn" id="tm-prune-btn" onclick="pruneUnusedTags()" title="Remove all tags with no file assignments">Prune unused</button>
                 <button class="tm-close" onclick="closeTagManager()" title="Close">\u2715</button>
             </div>
-            <div class="tm-search-row">
+            <div class="tm-search-row" id="tm-search-row">
                 <input id="tm-search" class="tm-search-input" type="text"
                     placeholder="Filter tags\u2026" oninput="tmSearch(this.value)"
                     onkeydown="if(event.key==='Escape') closeTagManager()">
             </div>
-            <div class="tm-body">
+            <div class="tm-body" id="tm-body-tags">
                 <div class="tm-list" id="tm-list"></div>
                 <div class="tm-detail" id="tm-detail">
                     <div class="tm-detail-placeholder">Select a tag to edit it.</div>
+                </div>
+            </div>
+            <div class="tm-body" id="tm-body-subjects" style="display:none">
+                <div class="tm-list" id="tm-subject-list"></div>
+                <div class="tm-detail" id="tm-subject-detail">
+                    <div class="tm-detail-placeholder">Select a subject to edit it.</div>
                 </div>
             </div>
         </div>
@@ -564,9 +579,12 @@ function showTagManager(selectTag) {
     overlay.addEventListener('click', closeTagManager);
     document.body.appendChild(overlay);
 
+    _tmTab = 'tags';
     _tmSelectedTag = selectTag || null;
     _tmSearchQuery = '';
     _tmCollapsedGroups = new Set();
+    _tmSelectedSubject = null;
+    _tmSubjectSearch = '';
     renderTmList();
     if (_tmSelectedTag) renderTmDetail(_tmSelectedTag);
 
@@ -575,10 +593,30 @@ function showTagManager(selectTag) {
     });
 }
 
+function tmSwitchTab(tab) {
+    _tmTab = tab;
+    document.getElementById('tm-tab-tags').classList.toggle('active', tab === 'tags');
+    document.getElementById('tm-tab-subjects').classList.toggle('active', tab === 'subjects');
+    document.getElementById('tm-body-tags').style.display = tab === 'tags' ? '' : 'none';
+    document.getElementById('tm-body-subjects').style.display = tab === 'subjects' ? '' : 'none';
+    document.getElementById('tm-prune-btn').style.display = tab === 'tags' ? '' : 'none';
+    const searchInput = document.getElementById('tm-search');
+    if (searchInput) {
+        searchInput.placeholder = tab === 'tags' ? 'Filter tags\u2026' : 'Filter subjects\u2026';
+        searchInput.value = tab === 'tags' ? _tmSearchQuery : _tmSubjectSearch;
+        searchInput.oninput = tab === 'tags'
+            ? (e => tmSearch(e.target.value))
+            : (e => tmSubjectSearch(e.target.value));
+    }
+    if (tab === 'subjects') renderTmSubjectList();
+}
+
 function closeTagManager() {
     const el = document.getElementById('tag-manager-overlay');
     if (el) el.remove();
     _tmSelectedTag = null;
+    _tmSelectedSubject = null;
+    _tmTab = 'tags';
 }
 
 async function pruneUnusedTags() {
@@ -1006,4 +1044,111 @@ async function tmRenameValue(tagName, oldValue) {
     renderTmList();
     await renderTmDetail(tagName);
     render();
+}
+
+// ---------------------------------------------------------------------------
+// Subject Manager (tab inside Tag Manager)
+// ---------------------------------------------------------------------------
+
+function tmSubjectSearch(q) {
+    _tmSubjectSearch = q.toLowerCase();
+    renderTmSubjectList();
+}
+
+function renderTmSubjectList() {
+    const el = document.getElementById('tm-subject-list');
+    if (!el) return;
+
+    const q = _tmSubjectSearch;
+    const filtered = q
+        ? state.subjects.filter(s => s.name.toLowerCase().includes(q))
+        : state.subjects;
+
+    if (!filtered.length) {
+        el.innerHTML = '<div class="tm-empty">No subjects found.</div>';
+        return;
+    }
+
+    let html = '';
+    for (const s of [...filtered].sort((a, b) => a.name.localeCompare(b.name))) {
+        const sel = _tmSelectedSubject === s.name ? ' selected' : '';
+        html += `<div class="tm-tag-row tm-tag-standalone${sel}" onclick="tmSelectSubject('${jesc(s.name)}')">
+            ${esc(s.name)}
+            <span class="tm-count">${s.count}</span>
+        </div>`;
+    }
+    el.innerHTML = html;
+}
+
+function tmSelectSubject(name) {
+    _tmSelectedSubject = name;
+    renderTmSubjectList();
+    renderTmSubjectDetail(name);
+}
+
+function renderTmSubjectDetail(name) {
+    const panel = document.getElementById('tm-subject-detail');
+    if (!panel) return;
+
+    const subj = state.subjects.find(s => s.name === name);
+    if (!subj) {
+        panel.innerHTML = `<div class="tm-detail-placeholder">Subject not found.</div>`;
+        return;
+    }
+
+    panel.innerHTML = `
+        <div class="tm-detail-header">
+            <div class="tm-detail-name">${esc(name)}</div>
+            <div class="tm-detail-meta">${subj.count} file${subj.count !== 1 ? 's' : ''}</div>
+        </div>
+
+        <section class="tm-section tm-ops">
+            <div class="tm-section-title">Operations</div>
+
+            <div class="tm-op-row">
+                <label class="tm-op-label">Rename to</label>
+                <div class="tm-op-inputs">
+                    <input id="tm-subj-rename-input" class="tm-input" type="text" value="${esc(name)}"
+                        placeholder="New name\u2026"
+                        onkeydown="if(event.key==='Enter') tmDoRenameSubject('${jesc(name)}')">
+                    <button class="tm-btn" onclick="tmDoRenameSubject('${jesc(name)}')">Rename</button>
+                </div>
+                <div class="tm-op-hint">All tag assignments with this subject label are updated.</div>
+            </div>
+        </section>
+
+        <div class="tm-danger-zone">
+            <button class="tm-btn tm-btn-danger" onclick="tmDeleteSubject('${jesc(name)}')">
+                Remove subject (${subj.count} file${subj.count !== 1 ? 's' : ''})
+            </button>
+        </div>
+    `;
+}
+
+async function tmDoRenameSubject(oldName) {
+    const input = document.getElementById('tm-subj-rename-input');
+    const newName = input ? input.value.trim() : '';
+    if (!newName || newName === oldName) return;
+    if (!confirm(`Rename subject "${oldName}" to "${newName}"?`)) return;
+    await apiPost('/api/rename-subject', { name: oldName, new_name: newName, dir: currentAbsDir() });
+    showToast(`Renamed subject "${oldName}" to "${newName}".`);
+    await loadTags();
+    _tmSelectedSubject = newName;
+    renderTmSubjectList();
+    renderTmSubjectDetail(newName);
+    renderSubjects();
+}
+
+async function tmDeleteSubject(name) {
+    const subj = state.subjects.find(s => s.name === name);
+    const count = subj?.count || 0;
+    if (!confirm(`Remove subject "${name}"?\nThis clears the subject label from ${count} file(s). The tags themselves are not removed.`)) return;
+    await apiPost('/api/delete-subject', { name, dir: currentAbsDir() });
+    showToast(`Subject "${name}" removed.`);
+    await loadTags();
+    _tmSelectedSubject = null;
+    renderTmSubjectList();
+    const panel = document.getElementById('tm-subject-detail');
+    if (panel) panel.innerHTML = `<div class="tm-detail-placeholder">Subject removed.</div>`;
+    renderSubjects();
 }

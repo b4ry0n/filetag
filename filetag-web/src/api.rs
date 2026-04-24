@@ -1072,6 +1072,28 @@ pub async fn api_prune_tags(
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
+/// `POST /api/rename-subject` — rename a subject label across all file-tag assignments.
+pub async fn api_rename_subject(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RenameSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let updated = db::rename_subject(&conn, &body.name, &body.new_name).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "updated": updated })))
+}
+
+/// `POST /api/delete-subject` — remove a subject label by clearing it on all file-tag assignments.
+pub async fn api_delete_subject(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DeleteSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let updated = db::delete_subject(&conn, &body.name).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "updated": updated })))
+}
+
 /// `GET /api/settings` — read per-root settings (trickplay counts + feature flags).
 pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,

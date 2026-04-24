@@ -254,6 +254,23 @@ pub struct DeleteTagRequest {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/rename-subject`.
+#[derive(Deserialize)]
+pub struct RenameSubjectRequest {
+    pub name: String,
+    pub new_name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/delete-subject`.
+#[derive(Deserialize)]
+pub struct DeleteSubjectRequest {
+    pub name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Minimal request body carrying only a directory.
 #[derive(Deserialize, Default)]
 pub struct DirBody {

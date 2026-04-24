@@ -606,12 +606,38 @@ mark.tag-filter-match {
     padding: 14px 16px 10px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    gap: 6px;
 }
 
 .tm-title {
     font-size: 15px;
     font-weight: 700;
+    margin-right: 4px;
+}
+
+.tm-tabs {
+    display: flex;
+    gap: 2px;
     flex: 1;
+}
+
+.tm-tab {
+    background: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    padding: 3px 10px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.tm-tab:hover { background: var(--bg-hover); color: var(--text); }
+.tm-tab.active {
+    background: var(--primary-light);
+    color: var(--primary);
+    border-color: var(--primary-light);
 }
 
 .tm-close {
