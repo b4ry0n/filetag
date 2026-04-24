@@ -1035,7 +1035,7 @@ fn apply_ai_tags(
             if name.starts_with(prefix)
                 && let Ok(tag_id) = db::get_or_create_tag(conn, name)
             {
-                let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref());
+                let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref(), None);
             }
         }
     }
@@ -1058,7 +1058,7 @@ fn apply_ai_tags(
             continue;
         }
         let tag_id = db::get_or_create_tag(conn, &name)?;
-        db::apply_tag(conn, file_rec.id, tag_id, value.as_deref())?;
+        db::apply_tag(conn, file_rec.id, tag_id, value.as_deref(), None)?;
     }
 
     Ok(())
@@ -1081,7 +1081,7 @@ fn remove_prefixed_tags(
         if name.starts_with(prefix)
             && let Ok(tag_id) = db::get_or_create_tag(conn, name)
         {
-            let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref());
+            let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref(), None);
         }
     }
     Ok(())
@@ -1432,7 +1432,7 @@ pub async fn api_ai_analyse_batch(
                         db::get_or_index_file(&conn2, &eff_rel2, &eff_root2)?
                     };
                     let tid = db::get_or_create_tag(&conn2, &marker)?;
-                    db::apply_tag(&conn2, rec.id, tid, None)?;
+                    db::apply_tag(&conn2, rec.id, tid, None, None)?;
                     Ok(())
                 })();
             }

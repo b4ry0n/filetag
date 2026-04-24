@@ -50,6 +50,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Preview unavailable \u2014 install dcraw, ffmpeg, or ImageMagick and enable the corresponding feature in Settings',
         'detail.no-play':     'Browser cannot play this format',
         'detail.promote-title': 'Save without ai/ prefix',
+        'detail.subject-placeholder': 'subject (optional)',
+        'detail.subject-label':  'Subject',
+        'detail.subject-remove-title': 'Remove all tags for this subject',
 
         // Detail panel — multi-select
         'bulk.n-selected':    '{n} files selected',
@@ -249,6 +252,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Voorbeeld niet beschikbaar \u2014 installeer dcraw, ffmpeg of ImageMagick en activeer de bijbehorende functie in Instellingen',
         'detail.no-play':     'Browser kan dit formaat niet afspelen',
         'detail.promote-title': 'Opslaan zonder ai/-voorvoegsel',
+        'detail.subject-placeholder': 'onderwerp (optioneel)',
+        'detail.subject-label':  'Onderwerp',
+        'detail.subject-remove-title': 'Alle tags voor dit onderwerp verwijderen',
 
         'bulk.n-selected':    '{n} bestanden geselecteerd',
         'bulk.tags-label':    'Tags op geselecteerde bestanden',
@@ -438,6 +444,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Vorschau nicht verfügbar \u2014 installieren Sie dcraw, ffmpeg oder ImageMagick und aktivieren Sie die entsprechende Funktion in den Einstellungen',
         'detail.no-play':     'Browser kann dieses Format nicht abspielen',
         'detail.promote-title': 'Ohne ai/-Präfix speichern',
+        'detail.subject-placeholder': 'Subjekt (optional)',
+        'detail.subject-label':  'Subjekt',
+        'detail.subject-remove-title': 'Alle Tags für dieses Subjekt entfernen',
 
         'bulk.n-selected':    '{n} Dateien ausgewählt',
         'bulk.tags-label':    'Tags der ausgewählten Dateien',
@@ -627,6 +636,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Aperçu non disponible \u2014 installez dcraw, ffmpeg ou ImageMagick et activez la fonction correspondante dans les paramètres',
         'detail.no-play':     'Le navigateur ne peut pas lire ce format',
         'detail.promote-title': 'Enregistrer sans le préfixe ai/',
+        'detail.subject-placeholder': 'sujet (optionnel)',
+        'detail.subject-label':  'Sujet',
+        'detail.subject-remove-title': 'Supprimer tous les tags pour ce sujet',
 
         'bulk.n-selected':    '{n} fichiers sélectionnés',
         'bulk.tags-label':    'Tags des fichiers sélectionnés',
@@ -816,6 +828,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Vista previa no disponible \u2014 instala dcraw, ffmpeg o ImageMagick y activa la función correspondiente en Ajustes',
         'detail.no-play':     'El navegador no puede reproducir este formato',
         'detail.promote-title': 'Guardar sin el prefijo ai/',
+        'detail.subject-placeholder': 'sujeto (opcional)',
+        'detail.subject-label':  'Sujeto',
+        'detail.subject-remove-title': 'Eliminar todas las etiquetas de este sujeto',
 
         'bulk.n-selected':    '{n} archivos seleccionados',
         'bulk.tags-label':    'Etiquetas de los archivos seleccionados',
@@ -1005,6 +1020,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Anteprima non disponibile \u2014 installa dcraw, ffmpeg o ImageMagick e attiva la funzione corrispondente nelle impostazioni',
         'detail.no-play':     'Il browser non può riprodurre questo formato',
         'detail.promote-title': 'Salva senza prefisso ai/',
+        'detail.subject-placeholder': 'soggetto (opzionale)',
+        'detail.subject-label':  'Soggetto',
+        'detail.subject-remove-title': 'Rimuovi tutti i tag per questo soggetto',
 
         'bulk.n-selected':    '{n} file selezionati',
         'bulk.tags-label':    'Tag dei file selezionati',
@@ -1194,6 +1212,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Pré-visualização indisponível \u2014 instale dcraw, ffmpeg ou ImageMagick e active a função correspondente nas Definições',
         'detail.no-play':     'O browser não consegue reproduzir este formato',
         'detail.promote-title': 'Guardar sem o prefixo ai/',
+        'detail.subject-placeholder': 'sujeito (opcional)',
+        'detail.subject-label':  'Sujeito',
+        'detail.subject-remove-title': 'Remover todas as etiquetas para este sujeito',
 
         'bulk.n-selected':    '{n} ficheiros seleccionados',
         'bulk.tags-label':    'Etiquetas dos ficheiros seleccionados',
@@ -1383,6 +1404,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Podgląd niedostępny \u2014 zainstaluj dcraw, ffmpeg lub ImageMagick i włącz odpowiednią funkcję w Ustawieniach',
         'detail.no-play':     'Przeglądarka nie może odtworzyć tego formatu',
         'detail.promote-title': 'Zapisz bez prefiksu ai/',
+        'detail.subject-placeholder': 'temat (opcjonalnie)',
+        'detail.subject-label':  'Temat',
+        'detail.subject-remove-title': 'Usuń wszystkie tagi dla tego tematu',
 
         'bulk.n-selected':    'Wybrano {n} pliki/ów',
         'bulk.tags-label':    'Tagi wybranych plików',
@@ -1572,6 +1596,9 @@ const TRANSLATIONS = {
         'detail.preview-unavail': 'Förhandsgranskning ej tillgänglig \u2014 installera dcraw, ffmpeg eller ImageMagick och aktivera motsvarande funktion i Inställningar',
         'detail.no-play':     'Webbläsaren kan inte spela upp det här formatet',
         'detail.promote-title': 'Spara utan ai/-prefix',
+        'detail.subject-placeholder': 'ämne (valfritt)',
+        'detail.subject-label':  'Ämne',
+        'detail.subject-remove-title': 'Ta bort alla taggar för detta ämne',
 
         'bulk.n-selected':    '{n} filer valda',
         'bulk.tags-label':    'Taggar för valda filer',

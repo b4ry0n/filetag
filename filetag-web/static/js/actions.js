@@ -244,9 +244,11 @@ async function selectFile(path, event) {
 async function doAddTag() {
     if (!state.selectedFile) return;
     const input = document.getElementById('tag-input');
+    const subjectInput = document.getElementById('tag-subject');
     const tagStr = input.value.trim();
     if (!tagStr) return;
-    await addTagToFile(state.selectedFile.path, tagStr);
+    const subject = subjectInput?.value.trim() || undefined;
+    await addTagToFile(state.selectedFile.path, tagStr, subject);
     input.value = '';
     renderTags();
     _updateCardTagBadges();
@@ -265,8 +267,20 @@ async function doDirAddTag() {
     _updateCardTagBadges();
 }
 
-async function doRemoveTag(path, tagStr) {
-    await removeTagFromFile(path, tagStr);
+async function doRemoveTag(path, tagStr, subject) {
+    await removeTagFromFile(path, tagStr, subject);
+    renderTags();
+    _updateCardTagBadges();
+    renderDetailTagsOnly();
+}
+
+async function doRemoveSubject(path, subject) {
+    const f = state.selectedFilesData.get(path) || state.selectedFile;
+    if (!f) return;
+    const subjectTags = (f.tags || []).filter(tag => (tag.subject || '') === subject);
+    for (const tag of subjectTags) {
+        await removeTagFromFile(path, formatTag(tag), subject);
+    }
     renderTags();
     _updateCardTagBadges();
     renderDetailTagsOnly();
