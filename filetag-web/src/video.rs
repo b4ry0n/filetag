@@ -528,6 +528,7 @@ pub async fn extract_video_frames(
     duration_secs: f64,
     use_scene_select: bool,
 ) -> anyhow::Result<Vec<Vec<u8>>> {
+    let n = n.clamp(1, 256);
     let positions = if use_scene_select {
         match scene_positions(abs, n, duration_secs).await {
             Ok(v) if !v.is_empty() => v,
