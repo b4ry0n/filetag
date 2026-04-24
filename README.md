@@ -46,6 +46,7 @@ A web interface is included for browsing, previewing, searching, and tagging thr
 - Full boolean query language: `and`, `or`, `not`, glob patterns (`genre/*`), and value comparisons (`year>=2020 and not live`).
 - Hierarchical tags with `/` as separator: tag with `genre/rock`, query with `genre/*`.
 - Key=value tags for metadata: `year=2024`, `rating=5`.
+- Subject-grouped tags: attach a subject label to a set of tags to describe multiple distinct entities within one file (e.g. two cars, two people). Query with `{colour=red and make=Toyota}` to find files where a single subject has both properties.
 
 **Composability**
 
@@ -126,13 +127,22 @@ filetag tag FILE... -t TAG[,TAG...]
 filetag untag FILE... -t TAG[,TAG...]
 fd -e flac | filetag tag -t lossless
 find . -name '*.jpg' -print0 | filetag tag -0 -t photo
+
+# Tag properties of a specific subject within a file
+filetag tag photo.jpg -t colour=red,make=Toyota -s car-1
+filetag tag photo.jpg -t colour=blue,make=BMW -s car-2
+filetag untag photo.jpg -t colour=red -s car-1   # remove one tag from a subject
+filetag untag photo.jpg -t colour=red            # remove from all subjects
 ```
 
 | Option             | Description |
 | :----------------- | :---------- |
 | `-t, --tags`       | Tags to add or remove, comma-separated; use `key=value` for values |
+| `-s, --subject`    | Group these tags under a subject label (e.g. `car-1`, `person/alice`); omit for subject-less tags |
 | `-r, --recursive`  | Tag all files under the given directories (`tag` only) |
 | `-0, --null`       | Read NUL-delimited paths from stdin |
+
+A **subject** is a free-form label (any non-empty string) that groups related tags within a single file. It is useful when a file contains multiple distinct entities whose properties you want to track separately — for example two cars in one photo, or two speakers in one recording. Subject-less tags (the default) work exactly as before.
 
 ### tags / show
 
@@ -263,7 +273,12 @@ genre/rock and not live           # boolean
 type:image                        # file type filter
 type:video and year>=2020         # combine with other expressions
 type:audio and genre/*            # find tagged audio files
+
+{colour=red and make=Toyota}      # subject query: a single subject has both
+{colour=red} and {colour=blue}    # file has one subject that is red AND another that is blue
 ```
+
+**Subject queries** (`{...}`) match files where at least one subject satisfies all the conditions inside the braces simultaneously. Without braces, `colour=red and colour=blue` would match a file that has those tags on *any* combination of subjects; with braces, both tags must belong to the *same* subject.
 
 **Supported type names:** `image` (aliases: `img`, `photo`, `pic`), `video` (aliases: `vid`, `movie`), `audio` (aliases: `aud`, `music`), `document` (alias: `doc`), `archive` (aliases: `arc`, `compressed`), `text`, `font`. Type filters match by file extension.
 
@@ -276,6 +291,21 @@ filetag-web [PATH] [OPTIONS]
 ```
 
 Open `http://127.0.0.1:3000` (default) in your browser. The full query language works in the search bar.
+
+### Subjects in the web interface
+
+The detail panel shows each file's tags grouped by subject. Tags without a subject are listed first. Tags that belong to a subject appear together in a labelled box.
+
+To add a tag with a subject:
+
+1. Open the detail panel for a file (click the file).
+2. Type the tag in the **Add tag** field (e.g. `colour=red`).
+3. Type the subject label in the **subject** field next to it (e.g. `car-1`).
+4. Click **Add** (or press Enter).
+
+Leave the subject field empty to add a subject-less tag.
+
+To remove all tags of a subject at once, click the × button on the subject box.
 
 ### Options
 
