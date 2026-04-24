@@ -955,24 +955,12 @@ function renderDetail() {
     const covered = f.covered !== false;
 
     const hasAiTags = covered && f.tags.some(tag => tag.name.startsWith('ai/'));
-    const tagChips = f.tags.length === 0
-        ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
-        : f.tags.map(tag => {
-            const tagStr = formatTag(tag);
-            const stateTag = state.tags.find(st => st.name === tag.name);
-            const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-            if (!covered) {
-                return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
-            }
-            const promoteBtn = tag.name.startsWith('ai/')
-                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}')">&uarr;</button>`
-                : '';
-            return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
-        }).join('');
+    const tagChips = renderFileTagChips(f, covered);
 
     const tagAddSection = covered
         ? `<div class="tag-add-form">
                 <input type="text" id="tag-input" placeholder="${esc(t('detail.tag-add'))}">
+                <input type="text" id="tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
                 <button onclick="doAddTag()">${esc(t('detail.tag-add-btn'))}</button>
             </div>`
         : `<div class="uncovered-notice">${esc(t('detail.uncovered'))}</div>`;
@@ -1067,18 +1055,54 @@ function renderDetailTagsOnly() {
     const tagsEl = document.querySelector('#detail .detail-tags');
     if (!tagsEl) return;
     const f = state.selectedFile;
-    const tagChips = f.tags.length === 0
-        ? `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`
-        : f.tags.map(tag => {
-            const tagStr = formatTag(tag);
-            const stateTag = state.tags.find(st => st.name === tag.name);
-            const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-            const promoteBtn = tag.name.startsWith('ai/')
-                ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}')">&uarr;</button>`
-                : '';
-            return `<span class="tag-chip"${chipColor}>${promoteBtn}${esc(tagStr)}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}')">&times;</button></span>`;
-        }).join('');
-    tagsEl.innerHTML = tagChips;
+    const covered = f.covered !== false;
+    tagsEl.innerHTML = renderFileTagChips(f, covered);
+}
+
+// Render tag chips for a file, grouped by subject.
+function renderFileTagChips(f, covered) {
+    if (f.tags.length === 0)
+        return `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`;
+
+    // Separate tags into subject groups (empty string = no subject).
+    const groups = new Map(); // subject -> tag[]
+    for (const tag of f.tags) {
+        const subj = tag.subject || '';
+        if (!groups.has(subj)) groups.set(subj, []);
+        groups.get(subj).push(tag);
+    }
+
+    function chipHtml(tag) {
+        const tagStr = formatTag(tag);
+        const stateTag = state.tags.find(st => st.name === tag.name);
+        const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+        if (!covered) {
+            return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
+        }
+        const promoteBtn = tag.name.startsWith('ai/')
+            ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}')">&uarr;</button>`
+            : '';
+        const subjArg = tag.subject ? `'${jesc(tag.subject)}'` : 'null';
+        return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}',${subjArg})">&times;</button></span>`;
+    }
+
+    let html = '';
+    // Render no-subject tags first.
+    const noSubj = groups.get('');
+    if (noSubj) html += noSubj.map(chipHtml).join('');
+
+    // Render subject groups.
+    for (const [subj, tags] of groups) {
+        if (subj === '') continue;
+        html += `<div class="subject-group">`;
+        html += `<span class="subject-label">${esc(subj)}</span>`;
+        html += tags.map(chipHtml).join('');
+        if (covered) {
+            html += `<button class="subject-remove" title="${esc(t('detail.subject-remove-title'))}" onclick="doRemoveSubject('${jesc(f.path)}','${jesc(subj)}')">&times;</button>`;
+        }
+        html += `</div>`;
+    }
+    return html;
 }
 
 // ---------------------------------------------------------------------------

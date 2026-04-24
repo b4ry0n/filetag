@@ -270,16 +270,20 @@ function handleZipClick(path, event) {
     }
 }
 
-async function addTagToFile(path, tagStr) {
-    await apiPost('/api/tag', { path, tags: [tagStr], dir: currentAbsDir() });
+async function addTagToFile(path, tagStr, subject) {
+    const body = { path, tags: [tagStr], dir: currentAbsDir() };
+    if (subject) body.subject = subject;
+    await apiPost('/api/tag', body);
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     if (state.mode === 'zip')    await refreshZipEntries();
 }
 
-async function removeTagFromFile(path, tagStr) {
-    await apiPost('/api/untag', { path, tags: [tagStr], dir: currentAbsDir() });
+async function removeTagFromFile(path, tagStr, subject) {
+    const body = { path, tags: [tagStr], dir: currentAbsDir() };
+    if (subject) body.subject = subject;
+    await apiPost('/api/untag', body);
     await loadFileDetail(path);
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);

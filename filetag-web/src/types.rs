@@ -111,12 +111,15 @@ pub struct ApiFileDetail {
     pub duration: Option<f64>,
 }
 
-/// A tag attached to a file, optionally with a value.
+/// A tag attached to a file, optionally with a value and a subject group.
 #[derive(Serialize)]
 pub struct ApiFileTag {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Subject group; absent when the tag was applied without a subject.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 /// Search result envelope returned by `GET /api/search`.
@@ -185,6 +188,8 @@ pub struct FileDetailParams {
 pub struct TagRequest {
     pub path: String,
     pub tags: Vec<String>,
+    /// Optional subject group for the tags being added/removed.
+    pub subject: Option<String>,
     /// Absolute filesystem path of the currently browsed directory.
     /// The backend resolves the entry-point root from this path.
     pub dir: Option<String>,

@@ -776,7 +776,11 @@ pub async fn api_search(
                 path,
                 tags: tags
                     .into_iter()
-                    .map(|(name, value)| ApiFileTag { name, value })
+                    .map(|(name, value)| ApiFileTag {
+                        name,
+                        value,
+                        subject: None,
+                    })
                     .collect(),
             })
             .collect(),
@@ -861,7 +865,7 @@ pub async fn api_file_detail(
     if let Some((conn, effective_rel)) = db_lookup
         && let Some(record) = db::file_by_path(&conn, &effective_rel).map_err(AppError)?
     {
-        let tags = db::tags_for_file(&conn, record.id).map_err(AppError)?;
+        let tags = db::tags_for_file_with_subject(&conn, record.id).map_err(AppError)?;
         let indexed_at: String = conn.query_row(
             "SELECT indexed_at FROM files WHERE id = ?1",
             rusqlite::params![record.id],
@@ -877,7 +881,15 @@ pub async fn api_file_detail(
             covered: true,
             tags: tags
                 .into_iter()
-                .map(|(name, value)| ApiFileTag { name, value })
+                .map(|(name, value, subject)| ApiFileTag {
+                    name,
+                    value,
+                    subject: if subject.is_empty() {
+                        None
+                    } else {
+                        Some(subject)
+                    },
+                })
                 .collect(),
             duration,
         }));
@@ -946,7 +958,14 @@ pub async fn api_tag(
     for tag_str in &body.tags {
         let (name, value) = parse_tag(tag_str);
         let tag_id = db::get_or_create_tag(&conn, &name).map_err(AppError)?;
-        db::apply_tag(&conn, file_id, tag_id, value.as_deref()).map_err(AppError)?;
+        db::apply_tag(
+            &conn,
+            file_id,
+            tag_id,
+            value.as_deref(),
+            body.subject.as_deref(),
+        )
+        .map_err(AppError)?;
         added += 1;
     }
 
@@ -973,7 +992,14 @@ pub async fn api_untag(
             "SELECT id FROM tags WHERE name = ?1",
             rusqlite::params![&name],
             |r| r.get::<_, i64>(0),
-        ) && db::remove_tag(&conn, record.id, tag_id, value.as_deref()).map_err(AppError)?
+        ) && db::remove_tag(
+            &conn,
+            record.id,
+            tag_id,
+            value.as_deref(),
+            body.subject.as_deref(),
+        )
+        .map_err(AppError)?
         {
             removed += 1;
         }

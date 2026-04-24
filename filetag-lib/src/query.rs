@@ -7,10 +7,14 @@
 //! or_expr  = and_expr ("or"  and_expr)*
 //! and_expr = not_expr ("and" not_expr)*
 //! not_expr = "not" not_expr | primary
-//! primary  = "(" expr ")" | tag_value | tag_or_glob
+//! primary  = "(" expr ")" | "{" expr "}" | tag_value | tag_or_glob
 //! tag_value = IDENT op VALUE
 //! op       = "=" | "!=" | "<" | "<=" | ">" | ">=" | "eq" | "ne" | "lt" | "le" | "gt" | "ge"
 //! ```
+//!
+//! Curly braces `{A AND B}` express a *subject-scoped* constraint: all
+//! conditions inside the braces must be satisfied by tag rows that share the
+//! same non-empty `subject` value on the same file.
 //!
 //! Tag names may contain `/` (e.g. `genre/rock`). Glob patterns use `*`
 //! (e.g. `genre/*`). Quoted strings (double-quoted) are supported for names
@@ -34,6 +38,9 @@ pub enum Expr {
     Glob(String),
     /// Logical file-type filter, e.g. `type:image`.
     FileType(String),
+    /// Subject-scoped constraint: all inner conditions must be satisfied by tag
+    /// rows that share the same non-empty `subject` on the same file.
+    Subject(Box<Expr>),
     /// Both child expressions must match.
     And(Box<Expr>, Box<Expr>),
     /// At least one child expression must match.
@@ -105,7 +112,7 @@ fn tokenize(input: &str) -> Result<Vec<String>> {
             chars.next();
             continue;
         }
-        if ch == '(' || ch == ')' {
+        if ch == '(' || ch == ')' || ch == '{' || ch == '}' {
             tokens.push(ch.to_string());
             chars.next();
             continue;
@@ -238,6 +245,17 @@ impl Parser {
             }
             self.advance();
             return Ok(expr);
+        }
+
+        // Subject-scoped block: {A and B}
+        if self.peek() == Some("{") {
+            self.advance();
+            let expr = self.parse_or()?;
+            if self.peek() != Some("}") {
+                bail!("expected '}}'");
+            }
+            self.advance();
+            return Ok(Expr::Subject(Box::new(expr)));
         }
 
         let token = self
@@ -379,6 +397,18 @@ impl QueryBuilder {
                     .collect();
                 format!("({})", conditions.join(" OR "))
             }
+            Expr::Subject(inner) => {
+                // Find files where at least one subject group satisfies all inner
+                // conditions.  The anchor alias `fa` iterates over distinct
+                // (file_id, subject) pairs; all inner conditions are expressed as
+                // correlated EXISTS subqueries.
+                let inner_sql = self.build_subject_condition(inner);
+                format!(
+                    "f.id IN (SELECT DISTINCT fa.file_id FROM file_tags fa \
+                     WHERE fa.subject != '' AND {})",
+                    inner_sql
+                )
+            }
             Expr::And(a, b) => {
                 let ca = self.build_condition(a);
                 let cb = self.build_condition(b);
@@ -393,6 +423,78 @@ impl QueryBuilder {
                 let ci = self.build_condition(inner);
                 format!("NOT {}", ci)
             }
+        }
+    }
+
+    /// Build a WHERE-clause fragment for a subject-scoped query.
+    ///
+    /// All leaf conditions are expressed as `EXISTS` subqueries correlated on
+    /// `fa.file_id` and `fa.subject` (the anchor from the outer
+    /// [`Expr::Subject`] handler).
+    fn build_subject_condition(&mut self, expr: &Expr) -> String {
+        match expr {
+            Expr::Tag(name) => {
+                let p = self.param(name);
+                format!(
+                    "EXISTS (SELECT 1 FROM file_tags ft \
+                     JOIN tags t ON t.id = ft.tag_id \
+                     WHERE ft.file_id = fa.file_id AND ft.subject = fa.subject \
+                     AND t.name = {})",
+                    p
+                )
+            }
+            Expr::Glob(pattern) => {
+                let like_pattern = pattern.replace('*', "%");
+                let p = self.param(&like_pattern);
+                format!(
+                    "EXISTS (SELECT 1 FROM file_tags ft \
+                     JOIN tags t ON t.id = ft.tag_id \
+                     WHERE ft.file_id = fa.file_id AND ft.subject = fa.subject \
+                     AND t.name LIKE {})",
+                    p
+                )
+            }
+            Expr::TagValue(name, op, value) => {
+                let pn = self.param(name);
+                let pv = self.param(value);
+                let sql_op = match op {
+                    CmpOp::Eq => "=",
+                    CmpOp::Ne => "!=",
+                    CmpOp::Lt => "<",
+                    CmpOp::Le => "<=",
+                    CmpOp::Gt => ">",
+                    CmpOp::Ge => ">=",
+                };
+                let value_expr = if value.parse::<f64>().is_ok() {
+                    format!("CAST(ft.value AS REAL) {} CAST({} AS REAL)", sql_op, pv)
+                } else {
+                    format!("ft.value {} {}", sql_op, pv)
+                };
+                format!(
+                    "EXISTS (SELECT 1 FROM file_tags ft \
+                     JOIN tags t ON t.id = ft.tag_id \
+                     WHERE ft.file_id = fa.file_id AND ft.subject = fa.subject \
+                     AND t.name = {} AND {})",
+                    pn, value_expr
+                )
+            }
+            Expr::And(a, b) => {
+                let ca = self.build_subject_condition(a);
+                let cb = self.build_subject_condition(b);
+                format!("({} AND {})", ca, cb)
+            }
+            Expr::Or(a, b) => {
+                let ca = self.build_subject_condition(a);
+                let cb = self.build_subject_condition(b);
+                format!("({} OR {})", ca, cb)
+            }
+            Expr::Not(inner) => {
+                let ci = self.build_subject_condition(inner);
+                format!("NOT {}", ci)
+            }
+            // FileType and nested Subject fall back to the file-level condition;
+            // they are not subject-sensitive.
+            Expr::FileType(_) | Expr::Subject(_) => self.build_condition(expr),
         }
     }
 }
@@ -410,6 +512,7 @@ fn resolve_aliases(conn: &Connection, expr: Expr) -> Result<Expr> {
         Expr::TagValue(name, op, val) => Expr::TagValue(canonical_name(conn, &name)?, op, val),
         Expr::Glob(p) => Expr::Glob(p),
         Expr::FileType(k) => Expr::FileType(k),
+        Expr::Subject(inner) => Expr::Subject(Box::new(resolve_aliases(conn, *inner)?)),
         Expr::And(a, b) => Expr::And(
             Box::new(resolve_aliases(conn, *a)?),
             Box::new(resolve_aliases(conn, *b)?),

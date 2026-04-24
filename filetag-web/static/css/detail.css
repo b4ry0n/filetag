@@ -315,6 +315,48 @@
 }
 .tag-chip .promote:hover { opacity: 1; color: var(--accent, #4dabf7); }
 
+/* Subject group: a labelled cluster of related tags */
+.subject-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-hover, rgba(0,0,0,.05));
+    border: 1px solid var(--border, rgba(0,0,0,.12));
+    border-radius: var(--radius-sm, 4px);
+    padding: 3px 6px 3px 4px;
+    margin: 2px 0;
+}
+.subject-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-secondary, #888);
+    margin-right: 2px;
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
+}
+.subject-remove {
+    background: none;
+    border: none;
+    color: var(--fg-muted, #aaa);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 2px;
+    line-height: 1;
+    margin-left: 2px;
+    opacity: .5;
+    transition: opacity .15s;
+}
+.subject-remove:hover { opacity: 1; color: var(--danger, #e74c3c); }
+
+.tag-subject-input {
+    width: 110px;
+    flex-shrink: 0;
+}
+
 .uncovered-notice {
     margin-top: 8px;
     padding: 6px 10px;

@@ -77,6 +77,10 @@ enum Command {
         #[arg(short, long, value_delimiter = ',', required = true)]
         tags: Vec<String>,
 
+        /// Subject label to group these tags under (e.g. "car-1")
+        #[arg(short, long)]
+        subject: Option<String>,
+
         /// Tag files recursively (treat arguments as directories)
         #[arg(short, long)]
         recursive: bool,
@@ -95,6 +99,10 @@ enum Command {
         /// Tags to remove, comma-separated
         #[arg(short, long, value_delimiter = ',', required = true)]
         tags: Vec<String>,
+
+        /// Only remove tags belonging to this subject (omit to remove from all subjects)
+        #[arg(short, long)]
+        subject: Option<String>,
 
         /// Read NUL-delimited paths from stdin
         #[arg(short = '0', long)]
@@ -361,10 +369,23 @@ fn main() -> Result<()> {
         Command::Tag {
             files,
             tags,
+            subject,
             recursive,
             null,
-        } => cmd_tag(&cli, files.clone(), tags.clone(), *recursive, *null),
-        Command::Untag { files, tags, null } => cmd_untag(&cli, files.clone(), tags.clone(), *null),
+        } => cmd_tag(
+            &cli,
+            files.clone(),
+            tags.clone(),
+            subject.as_deref(),
+            *recursive,
+            *null,
+        ),
+        Command::Untag {
+            files,
+            tags,
+            subject,
+            null,
+        } => cmd_untag(&cli, files.clone(), tags.clone(), subject.as_deref(), *null),
         Command::Tags {
             files,
             isolated,
@@ -588,6 +609,7 @@ fn cmd_tag(
     cli: &Cli,
     files: Vec<PathBuf>,
     tags: Vec<String>,
+    subject: Option<&str>,
     recursive: bool,
     null: bool,
 ) -> Result<()> {
@@ -614,7 +636,7 @@ fn cmd_tag(
 
         for (tag_name, tag_value) in &parsed_tags {
             let tag_id = db::get_or_create_tag(&tx, tag_name)?;
-            db::apply_tag(&tx, record.id, tag_id, tag_value.as_deref())?;
+            db::apply_tag(&tx, record.id, tag_id, tag_value.as_deref(), subject)?;
         }
         tagged_count += 1;
         pb.inc(1);
@@ -631,7 +653,13 @@ fn cmd_tag(
     Ok(())
 }
 
-fn cmd_untag(cli: &Cli, files: Vec<PathBuf>, tags: Vec<String>, null: bool) -> Result<()> {
+fn cmd_untag(
+    cli: &Cli,
+    files: Vec<PathBuf>,
+    tags: Vec<String>,
+    subject: Option<&str>,
+    null: bool,
+) -> Result<()> {
     let (conn, root) = open_db(cli)?;
     let parsed_tags = parse_tag_args(&tags);
 
@@ -651,7 +679,7 @@ fn cmd_untag(cli: &Cli, files: Vec<PathBuf>, tags: Vec<String>, null: bool) -> R
                     "SELECT id FROM tags WHERE name = ?1",
                     rusqlite::params![tag_name],
                     |r| r.get::<_, i64>(0),
-                ) && db::remove_tag(&tx, record.id, tag_id, tag_value.as_deref())?
+                ) && db::remove_tag(&tx, record.id, tag_id, tag_value.as_deref(), subject)?
                 {
                     removed_count += 1;
                 }
@@ -1591,13 +1619,18 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                 )?;
 
                 // Copy tags
-                for (tag_name, value) in &f.tags {
+                for (tag_name, value, subject) in &f.tags {
                     let tag_id = db::get_or_create_tag(&linked_conn, tag_name)?;
                     db::apply_tag(
                         &linked_conn,
                         linked_file_id,
                         tag_id,
                         if value.is_empty() { None } else { Some(value) },
+                        if subject.is_empty() {
+                            None
+                        } else {
+                            Some(subject)
+                        },
                     )?;
                 }
 
@@ -1669,13 +1702,18 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                 )?;
 
                 // Copy tags
-                for (tag_name, value) in &f.tags {
+                for (tag_name, value, subject) in &f.tags {
                     let tag_id = db::get_or_create_tag(&parent_tx, tag_name)?;
                     db::apply_tag(
                         &parent_tx,
                         parent_file_id,
                         tag_id,
                         if value.is_empty() { None } else { Some(value) },
+                        if subject.is_empty() {
+                            None
+                        } else {
+                            Some(subject)
+                        },
                     )?;
                 }
 

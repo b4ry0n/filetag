@@ -1,7 +1,7 @@
 //! Database layer: initialisation, schema migration, and all CRUD operations.
 //!
 //! Each filetag database lives at `<root>/.filetag/db.sqlite3`. The current
-//! schema version is 6.
+//! schema version is 8.
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -224,6 +224,25 @@ fn migrate(conn: &Connection) -> Result<()> {
                  canonical_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
                  PRIMARY KEY (alias)
              );",
+        )?
+    }
+    if version < 8 {
+        // Add `subject` column to file_tags and extend the PRIMARY KEY to include it.
+        // SQLite cannot alter primary keys, so we recreate the table.
+        conn.execute_batch(
+            "ALTER TABLE file_tags RENAME TO file_tags_v7;
+             CREATE TABLE file_tags (
+                 file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                 tag_id     INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
+                 value      TEXT NOT NULL DEFAULT '',
+                 subject    TEXT NOT NULL DEFAULT '',
+                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                 PRIMARY KEY (file_id, tag_id, value, subject)
+             );
+             CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
+             INSERT INTO file_tags (file_id, tag_id, value, created_at)
+                 SELECT file_id, tag_id, value, created_at FROM file_tags_v7;
+             DROP TABLE file_tags_v7;",
         )?
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -460,50 +479,100 @@ pub fn synonyms_for_tag(conn: &Connection, canonical: &str) -> Result<Vec<String
     Ok(result)
 }
 
-/// Apply a tag (with optional value) to a file.
-pub fn apply_tag(conn: &Connection, file_id: i64, tag_id: i64, value: Option<&str>) -> Result<()> {
+/// Apply a tag (with optional value and optional subject) to a file.
+pub fn apply_tag(
+    conn: &Connection,
+    file_id: i64,
+    tag_id: i64,
+    value: Option<&str>,
+    subject: Option<&str>,
+) -> Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value) VALUES (?1, ?2, ?3)",
-        params![file_id, tag_id, value.unwrap_or("")],
+        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject) VALUES (?1, ?2, ?3, ?4)",
+        params![file_id, tag_id, value.unwrap_or(""), subject.unwrap_or("")],
     )?;
     Ok(())
 }
 
-/// Remove a tag (with optional value) from a file.
+/// Remove a tag (with optional value and optional subject) from a file.
+///
+/// When `subject` is `None` the operation applies to all rows matching the
+/// (file_id, tag_id[, value]) constraint regardless of subject, preserving
+/// backward compatibility.  Pass `Some("")` to target only unsubjectted rows.
 pub fn remove_tag(
     conn: &Connection,
     file_id: i64,
     tag_id: i64,
     value: Option<&str>,
+    subject: Option<&str>,
 ) -> Result<bool> {
-    let changed = if let Some(v) = value {
-        conn.execute(
+    let changed = match (value, subject) {
+        (Some(v), Some(s)) => conn.execute(
+            "DELETE FROM file_tags WHERE file_id = ?1 AND tag_id = ?2 AND value = ?3 AND subject = ?4",
+            params![file_id, tag_id, v, s],
+        )?,
+        (Some(v), None) => conn.execute(
             "DELETE FROM file_tags WHERE file_id = ?1 AND tag_id = ?2 AND value = ?3",
             params![file_id, tag_id, v],
-        )?
-    } else {
-        conn.execute(
+        )?,
+        (None, Some(s)) => conn.execute(
+            "DELETE FROM file_tags WHERE file_id = ?1 AND tag_id = ?2 AND subject = ?3",
+            params![file_id, tag_id, s],
+        )?,
+        (None, None) => conn.execute(
             "DELETE FROM file_tags WHERE file_id = ?1 AND tag_id = ?2",
             params![file_id, tag_id],
-        )?
+        )?,
     };
     Ok(changed > 0)
 }
 
 /// List all tags on a file, returned as `(tag_name, Option<value>)`.
+///
+/// Subject information is stripped; use [`tags_for_file_with_subject`] when
+/// subject grouping is needed.
 pub fn tags_for_file(conn: &Connection, file_id: i64) -> Result<Vec<(String, Option<String>)>> {
     let mut stmt = conn.prepare_cached(
         "SELECT t.name, ft.value
          FROM file_tags ft
          JOIN tags t ON t.id = ft.tag_id
          WHERE ft.file_id = ?1
-         ORDER BY t.name, ft.value",
+         ORDER BY ft.subject, t.name, ft.value",
     )?;
     let rows = stmt.query_map(params![file_id], |row| {
         let name: String = row.get(0)?;
         let value: String = row.get(1)?;
         let value = if value.is_empty() { None } else { Some(value) };
         Ok((name, value))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// List all tags on a file including their subject group.
+///
+/// Returns `(tag_name, Option<value>, subject)` triples. The `subject` field
+/// is an empty string for tags that were applied without a subject.
+pub fn tags_for_file_with_subject(
+    conn: &Connection,
+    file_id: i64,
+) -> Result<Vec<(String, Option<String>, String)>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.name, ft.value, ft.subject
+         FROM file_tags ft
+         JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.file_id = ?1
+         ORDER BY ft.subject, t.name, ft.value",
+    )?;
+    let rows = stmt.query_map(params![file_id], |row| {
+        let name: String = row.get(0)?;
+        let value: String = row.get(1)?;
+        let subject: String = row.get(2)?;
+        let value = if value.is_empty() { None } else { Some(value) };
+        Ok((name, value, subject))
     })?;
     let mut result = Vec::new();
     for row in rows {
@@ -634,8 +703,8 @@ pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<Renam
         };
 
         let moved = conn.execute(
-            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at) \
-             SELECT file_id, ?1, ?2, created_at FROM file_tags \
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
+             SELECT file_id, ?1, ?2, subject, created_at FROM file_tags \
              WHERE tag_id = ?3 AND value = ?4",
             params![to_id, to_value, from_id, from_value],
         )?;
@@ -660,12 +729,12 @@ pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<Renam
         let key = &new_name[..eq_pos];
         let value = &new_name[eq_pos + 1..];
         let key_id = get_or_create_tag(conn, key)?;
-        // One row per file (files may have multiple source values; all collapse to
-        // the single target value).
+        // One row per (file, subject) combination (files may have multiple source values;
+        // all collapse to the single target value).
         let moved = conn.execute(
-            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at) \
-             SELECT file_id, ?1, ?2, MIN(created_at) \
-             FROM file_tags WHERE tag_id = ?3 GROUP BY file_id",
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
+             SELECT file_id, ?1, ?2, subject, MIN(created_at) \
+             FROM file_tags WHERE tag_id = ?3 GROUP BY file_id, subject",
             params![key_id, value, from_id],
         )?;
         conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![from_id])?;
@@ -681,8 +750,8 @@ pub fn rename_tag(conn: &Connection, name: &str, new_name: &str) -> Result<Renam
     if let Some(to_id) = to_id {
         // Target already exists: merge all source assignments into it.
         let moved = conn.execute(
-            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at) \
-             SELECT file_id, ?1, value, created_at FROM file_tags WHERE tag_id = ?2",
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
+             SELECT file_id, ?1, value, subject, created_at FROM file_tags WHERE tag_id = ?2",
             params![to_id, from_id],
         )?;
         conn.execute("DELETE FROM file_tags WHERE tag_id = ?1", params![from_id])?;
@@ -829,18 +898,22 @@ pub struct FileWithTags {
     pub file_id: Option<String>,
     pub size: i64,
     pub mtime_ns: i64,
-    /// (tag_name, value) pairs
-    pub tags: Vec<(String, String)>,
+    /// (tag_name, value, subject) triples.
+    pub tags: Vec<(String, String, String)>,
 }
 
-/// Collect tag (name, value) pairs for a file by its `files.id`.
+/// Collect tag (name, value, subject) triples for a file by its `files.id`.
 fn collect_file_tags(
     tag_stmt: &mut rusqlite::Statement<'_>,
     file_id: i64,
-) -> Vec<(String, String)> {
+) -> Vec<(String, String, String)> {
     tag_stmt
         .query_map(params![file_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
@@ -855,7 +928,7 @@ pub fn files_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<FileWit
          WHERE f.path LIKE ?1",
     )?;
     let mut tag_stmt = conn.prepare(
-        "SELECT t.name, ft.value
+        "SELECT t.name, ft.value, ft.subject
          FROM file_tags ft
          JOIN tags t ON t.id = ft.tag_id
          WHERE ft.file_id = ?1",
@@ -894,7 +967,7 @@ pub fn all_files_with_tags(conn: &Connection) -> Result<Vec<FileWithTags>> {
     let mut stmt =
         conn.prepare("SELECT f.id, f.path, f.file_id, f.size, f.mtime_ns FROM files f")?;
     let mut tag_stmt = conn.prepare(
-        "SELECT t.name, ft.value
+        "SELECT t.name, ft.value, ft.subject
          FROM file_tags ft
          JOIN tags t ON t.id = ft.tag_id
          WHERE ft.file_id = ?1",
