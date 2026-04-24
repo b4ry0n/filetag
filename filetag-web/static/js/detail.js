@@ -480,7 +480,9 @@ function _thumbHoverAttach(img, blobUrl) {
     const card = wrap.closest('.card') || wrap;
 
     let popupEl  = null;
-    let pinnedEl = null;
+    // When the user clicks while a popup is showing, suppress the popup
+    // until the mouse leaves and re-enters the card.
+    let _suppressPopup = false;
 
     // Natural dimensions become known once the img has loaded.
     function getNatAR() {
@@ -489,7 +491,7 @@ function _thumbHoverAttach(img, blobUrl) {
     }
 
     function buildPopup() {
-        if (popupEl || pinnedEl) return;
+        if (popupEl || _suppressPopup) return;
         const cardRect = wrap.getBoundingClientRect();
         if (!cardRect.width) return;
         const ar = getNatAR();
@@ -550,41 +552,26 @@ function _thumbHoverAttach(img, blobUrl) {
         }
     }
 
-    function buildPinned() {
-        if (pinnedEl && pinnedEl.isConnected) return;
-        pinnedEl = document.createElement('div');
-        pinnedEl.className = 'card-thumb-pinned';
-        const pinnedImg = document.createElement('img');
-        pinnedImg.src = blobUrl;
-        pinnedImg.alt = '';
-        pinnedEl.appendChild(pinnedImg);
-        wrap.appendChild(pinnedEl);
-    }
-
-    function teardownPinned() {
-        if (pinnedEl) { pinnedEl.remove(); pinnedEl = null; }
-    }
-
     card.addEventListener('mouseenter', () => {
-        if (!pinnedEl) buildPopup();
+        _suppressPopup = false;
+        buildPopup();
     }, { passive: true });
 
     card.addEventListener('mouseleave', () => {
+        _suppressPopup = false;
         teardownPopup();
     });
 
+    // Click: if popup is showing, hide it (suppress until mouse re-enters).
+    // If popup is hidden (suppressed), re-show it.
     card.addEventListener('click', e => {
         if (e.target.closest('button, a')) return;
-        teardownPopup();
-        // Unpin any other card.
-        document.querySelectorAll('.card-thumb-pinned').forEach(el => {
-            if (!wrap.contains(el)) el.remove();
-        });
-        if (pinnedEl && pinnedEl.isConnected) {
-            teardownPinned();
+        if (popupEl) {
+            teardownPopup();
+            _suppressPopup = true;
         } else {
-            pinnedEl = null;
-            buildPinned();
+            _suppressPopup = false;
+            buildPopup();
         }
     });
 }
@@ -905,6 +892,7 @@ function renderDetail() {
     if (state.selectedPaths.size > 1) {
         const count = state.selectedPaths.size;
         const bulkTags = aggregateBulkTags();
+        const bulkSubjects = aggregateBulkSubjects();
         const chipsHtml = renderBulkTagChips(bulkTags, count);
         const paths = [...state.selectedPaths];
         const hasAiTagsBulk = bulkTags.some(t => t.tagStr.startsWith('ai/'));
@@ -938,7 +926,12 @@ function renderDetail() {
                 </div>
             </div>
             <div class="bulk-tag-section">
-                ${bulkTags.length > 0 ? `<p class="bulk-section-label">${esc(t('bulk.tags-label'))}</p>
+                ${bulkSubjects.length > 0 ? `<p class="bulk-section-label">${esc(t('bulk.subjects-label'))}</p>
+                <div class="bulk-subject-chips">${bulkSubjects.map(({ name, count: sc }) => {
+                    const badge = sc < count ? ` <span class="bulk-chip-count">${sc}/${count}</span>` : '';
+                    return `<span class="subject-label bulk-subject-chip">${esc(name)}${badge}</span>`;
+                }).join('')}</div>` : ''}
+                ${bulkTags.length > 0 ? `<p class="bulk-section-label"${bulkSubjects.length > 0 ? ' style="margin-top:10px"' : ''}>${esc(t('bulk.tags-label'))}</p>
                 <div class="bulk-tag-chips" id="bulk-tag-chips">${chipsHtml}</div>` : ''}
                 <p class="bulk-section-label" style="margin-top:12px">${esc(t('bulk.add-label'))}</p>
                 <div class="tag-add-form">
@@ -1277,6 +1270,8 @@ function aggregateBulkTags() {
     for (const [path, data] of state.selectedFilesData) {
         if (!state.selectedPaths.has(path)) continue;
         for (const t of (data.tags || [])) {
+            // Skip linkage tags (subject name == tag name); they are shown in the subjects section.
+            if (t.subject && t.name === t.subject) continue;
             const str = formatTag(t);
             counts.set(str, (counts.get(str) || 0) + 1);
         }
@@ -1284,6 +1279,21 @@ function aggregateBulkTags() {
     return [...counts.entries()]
         .map(([tagStr, count]) => ({ tagStr, count }))
         .sort((a, b) => b.count - a.count || a.tagStr.localeCompare(b.tagStr));
+}
+
+function aggregateBulkSubjects() {
+    const counts = new Map(); // subject name → count of selected files that have it
+    for (const [path, data] of state.selectedFilesData) {
+        if (!state.selectedPaths.has(path)) continue;
+        for (const tag of (data.tags || [])) {
+            if (tag.subject && tag.name === tag.subject) {
+                counts.set(tag.name, (counts.get(tag.name) || 0) + 1);
+            }
+        }
+    }
+    return [...counts.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 function renderBulkTagChips(bulkTags, total) {

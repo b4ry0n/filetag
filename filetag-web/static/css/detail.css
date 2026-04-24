@@ -470,6 +470,27 @@
 /* Bulk-select tag panel */
 .bulk-tag-section { padding: 16px; }
 
+.bulk-subject-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.bulk-subject-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--surface-2, #f0f0f0);
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+
 .bulk-section-label {
     font-size: 11px;
     font-weight: 600;

@@ -64,6 +64,7 @@ const TRANSLATIONS = {
         // Detail panel — multi-select
         'bulk.n-selected':    '{n} files selected',
         'bulk.tags-label':    'Tags on selected files',
+        'bulk.subjects-label': 'Subjects',
         'bulk.add-label':     'Add tag',
         'bulk.tag-input':     'Tag (e.g. genre/rock)',
         'bulk.add-btn':       'Add',
@@ -272,6 +273,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} bestanden geselecteerd',
         'bulk.tags-label':    'Tags op geselecteerde bestanden',
+        'bulk.subjects-label': 'Onderwerpen',
         'bulk.add-label':     'Tag toevoegen',
         'bulk.tag-input':     'Tag (bijv. genre/rock)',
         'bulk.add-btn':       'Toevoegen',
@@ -471,6 +473,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} Dateien ausgewählt',
         'bulk.tags-label':    'Tags der ausgewählten Dateien',
+        'bulk.subjects-label': 'Subjekte',
         'bulk.add-label':     'Tag hinzufügen',
         'bulk.tag-input':     'Tag (z. B. genre/rock)',
         'bulk.add-btn':       'Hinzufügen',
@@ -670,6 +673,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} fichiers sélectionnés',
         'bulk.tags-label':    'Tags des fichiers sélectionnés',
+        'bulk.subjects-label': 'Sujets',
         'bulk.add-label':     'Ajouter un tag',
         'bulk.tag-input':     'Tag (ex. genre/rock)',
         'bulk.add-btn':       'Ajouter',
@@ -869,6 +873,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} archivos seleccionados',
         'bulk.tags-label':    'Etiquetas de los archivos seleccionados',
+        'bulk.subjects-label': 'Sujetos',
         'bulk.add-label':     'Añadir etiqueta',
         'bulk.tag-input':     'Etiqueta (p. ej. genre/rock)',
         'bulk.add-btn':       'Añadir',
@@ -1068,6 +1073,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} file selezionati',
         'bulk.tags-label':    'Tag dei file selezionati',
+        'bulk.subjects-label': 'Soggetti',
         'bulk.add-label':     'Aggiungi tag',
         'bulk.tag-input':     'Tag (es. genre/rock)',
         'bulk.add-btn':       'Aggiungi',
@@ -1267,6 +1273,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} ficheiros seleccionados',
         'bulk.tags-label':    'Etiquetas dos ficheiros seleccionados',
+        'bulk.subjects-label': 'Sujeitos',
         'bulk.add-label':     'Adicionar etiqueta',
         'bulk.tag-input':     'Etiqueta (ex. genre/rock)',
         'bulk.add-btn':       'Adicionar',
@@ -1466,6 +1473,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    'Wybrano {n} pliki/ów',
         'bulk.tags-label':    'Tagi wybranych plików',
+        'bulk.subjects-label': 'Podmioty',
         'bulk.add-label':     'Dodaj tag',
         'bulk.tag-input':     'Tag (np. genre/rock)',
         'bulk.add-btn':       'Dodaj',
@@ -1665,6 +1673,7 @@ const TRANSLATIONS = {
 
         'bulk.n-selected':    '{n} filer valda',
         'bulk.tags-label':    'Taggar för valda filer',
+        'bulk.subjects-label': 'Ämnen',
         'bulk.add-label':     'Lägg till tagg',
         'bulk.tag-input':     'Tagg (t.ex. genre/rock)',
         'bulk.add-btn':       'Lägg till',

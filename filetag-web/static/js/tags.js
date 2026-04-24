@@ -1500,6 +1500,11 @@ async function tmSubjectSetProp(subject) {
         return;
     }
     await renderTmSubjectDetail(subject);
+    // Refresh the info pane so implicit tags from this subject update immediately.
+    if (state.selectedFile) {
+        await loadFileDetail(state.selectedFile.path);
+        renderDetailTagsOnly();
+    }
 }
 
 async function tmSubjectRemoveProp(subject, tag, value) {
@@ -1511,6 +1516,11 @@ async function tmSubjectRemoveProp(subject, tag, value) {
         return;
     }
     await renderTmSubjectDetail(subject);
+    // Refresh the info pane so implicit tags from this subject update immediately.
+    if (state.selectedFile) {
+        await loadFileDetail(state.selectedFile.path);
+        renderDetailTagsOnly();
+    }
 }
 
 async function tmDoRenameSubject(oldName) {
