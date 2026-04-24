@@ -270,8 +270,9 @@ mark.tag-filter-match {
 }
 
 .tag-standalone {
-    /* No padding-left override: inherits 22px from .tag-item, aligning
-       tag text with the label text of group/kv nodes (chevron = 4+14+2+2px). */
+    /* padding-left: 6px → check-placeholder(12) + margin-right(4) = 22px for colorDot,
+       matching the 22px start of group label text (chevron 20px + name padding 2px). */
+    padding-left: 6px;
     color: var(--text);
     font-weight: 500;
 }

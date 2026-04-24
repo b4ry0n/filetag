@@ -167,7 +167,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="tag-group-name" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')">
-                ${active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>'}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
+                ${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
             </button>
         </div>`;
     if (expanded) {
