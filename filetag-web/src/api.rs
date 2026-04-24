@@ -1142,6 +1142,50 @@ pub async fn api_subject_remove_tag(
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
+/// `GET /api/subject/props` — list entity properties of a subject.
+pub async fn api_subject_props(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubjectPropsParams>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let rows = db::get_subject_props(&conn, &params.name).map_err(AppError)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(tag, value)| serde_json::json!({ "tag": tag, "value": value }))
+            .collect(),
+    ))
+}
+
+/// `POST /api/subject/set-prop` — add a property to a subject entity.
+pub async fn api_subject_set_prop(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SubjectPropRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let inserted =
+        db::set_subject_prop(&conn, &body.subject, &body.tag, &body.value).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "inserted": inserted })))
+}
+
+/// `POST /api/subject/remove-prop` — remove a property from a subject entity.
+pub async fn api_subject_remove_prop(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SubjectPropRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let value_opt = if body.value.is_empty() {
+        None
+    } else {
+        Some(body.value.as_str())
+    };
+    let removed =
+        db::remove_subject_prop(&conn, &body.subject, &body.tag, value_opt).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
 /// `GET /api/settings` — read per-root settings (trickplay counts + feature flags).
 pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,

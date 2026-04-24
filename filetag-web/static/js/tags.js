@@ -1096,19 +1096,20 @@ async function renderTmSubjectDetail(name) {
         return;
     }
 
-    // Show skeleton while loading tags
+    // Show skeleton while loading
     panel.innerHTML = `
         <div class="tm-detail-header">
             <div class="tm-detail-name">${esc(name)}</div>
             <div class="tm-detail-meta">${subj.count} file${subj.count !== 1 ? 's' : ''}</div>
         </div>
-        <div class="tm-detail-placeholder" style="padding:12px 16px">Loading tags\u2026</div>
+        <div class="tm-detail-placeholder" style="padding:12px 16px">Loading\u2026</div>
     `;
 
-    let subjTags = [];
-    try {
-        subjTags = await api('/api/subject/tags?' + new URLSearchParams({ name }) + dirParam('&'));
-    } catch (_) { /* ignore */ }
+    // Load file-level tags and entity properties in parallel
+    const [subjTags, subjProps] = await Promise.all([
+        api('/api/subject/tags?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
+        api('/api/subject/props?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
+    ]);
 
     if (document.getElementById('tm-subject-detail') !== panel) return; // closed meanwhile
 
@@ -1118,8 +1119,18 @@ async function renderTmSubjectDetail(name) {
                 title="Search ${esc(name)} and ${esc(t.value)}">${esc(t.value)}</span>
             <span class="tm-val-count">${t.count}</span>
             <button class="tm-val-rename" onclick="tmSubjectRemoveTag('${jesc(name)}','${jesc(t.value)}')"
-                title="Remove this tag from subject">\u2715</button>
+                title="Remove this tag from all files in subject">\u2715</button>
         </div>`).join('');
+
+    const propRows = subjProps.map(p => {
+        const label = p.value ? `${esc(p.tag)} = ${esc(p.value)}` : esc(p.tag);
+        return `
+        <div class="tm-val-row">
+            <span class="tm-val-name">${label}</span>
+            <button class="tm-val-rename" onclick="tmSubjectRemoveProp('${jesc(name)}','${jesc(p.tag)}','${jesc(p.value)}')"
+                title="Remove property">\u2715</button>
+        </div>`;
+    }).join('');
 
     panel.innerHTML = `
         <div class="tm-detail-header">
@@ -1128,7 +1139,33 @@ async function renderTmSubjectDetail(name) {
         </div>
 
         <section class="tm-section">
-            <div class="tm-section-title">Tags <span class="tm-section-hint">(click to search, \u2715 to remove from subject)</span></div>
+            <div class="tm-section-title">Properties
+                <span class="tm-section-hint">(describe what this subject <em>is</em>)</span>
+            </div>
+            ${subjProps.length
+                ? `<div class="tm-val-list">${propRows}</div>`
+                : `<div class="tm-empty-hint">No properties yet.</div>`}
+            <div class="tm-syn-add" style="margin-top:6px">
+                <input id="tm-subj-prop-tag" class="tm-input" type="text"
+                    placeholder="Property (e.g. geslacht, geboren\u2026)"
+                    list="tm-subj-prop-datalist"
+                    style="flex:1.5"
+                    onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
+                <datalist id="tm-subj-prop-datalist">
+                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
+                </datalist>
+                <input id="tm-subj-prop-val" class="tm-input" type="text"
+                    placeholder="Value (optional)"
+                    style="flex:1"
+                    onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
+                <button class="tm-btn" onclick="tmSubjectSetProp('${jesc(name)}')">Add</button>
+            </div>
+        </section>
+
+        <section class="tm-section">
+            <div class="tm-section-title">File tags
+                <span class="tm-section-hint">(tags on files under this subject; click to search, \u2715 to remove)</span>
+            </div>
             ${subjTags.length
                 ? `<div class="tm-val-list">${tagRows}</div>`
                 : `<div class="tm-empty-hint">No tags assigned yet.</div>`}
@@ -1166,7 +1203,7 @@ async function renderTmSubjectDetail(name) {
                         onkeydown="if(event.key==='Enter') tmCloneSubject('${jesc(name)}')">
                     <button class="tm-btn" onclick="tmCloneSubject('${jesc(name)}')">Clone</button>
                 </div>
-                <div class="tm-op-hint">Copies all tag assignments to a new subject name.</div>
+                <div class="tm-op-hint">Copies all file tag assignments to a new subject name.</div>
             </div>
         </section>
 
@@ -1240,6 +1277,35 @@ function tmSubjectTagSearch(subject, tag) {
         document.getElementById('search-clear').hidden = false;
         render();
     });
+}
+
+async function tmSubjectSetProp(subject) {
+    const tagInput = document.getElementById('tm-subj-prop-tag');
+    const valInput = document.getElementById('tm-subj-prop-val');
+    const tag = tagInput ? tagInput.value.trim() : '';
+    const value = valInput ? valInput.value.trim() : '';
+    if (!tag) return;
+    try {
+        await apiPost('/api/subject/set-prop', { subject, tag, value, dir: currentAbsDir() });
+        showToast(`Added property "${tag}${value ? '=' + value : ''}" to "${subject}".`);
+        if (tagInput) tagInput.value = '';
+        if (valInput) valInput.value = '';
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await renderTmSubjectDetail(subject);
+}
+
+async function tmSubjectRemoveProp(subject, tag, value) {
+    try {
+        await apiPost('/api/subject/remove-prop', { subject, tag, value, dir: currentAbsDir() });
+        showToast(`Removed property "${tag}${value ? '=' + value : ''}" from "${subject}".`);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await renderTmSubjectDetail(subject);
 }
 
 async function tmDoRenameSubject(oldName) {

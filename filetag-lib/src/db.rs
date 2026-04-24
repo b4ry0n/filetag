@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -243,6 +243,20 @@ fn migrate(conn: &Connection) -> Result<()> {
              INSERT INTO file_tags (file_id, tag_id, value, created_at)
                  SELECT file_id, tag_id, value, created_at FROM file_tags_v7;
              DROP TABLE file_tags_v7;",
+        )?
+    }
+    if version < 9 {
+        // subject_tags stores properties/tags that describe a subject entity itself
+        // (distinct from file_tags.subject which groups per-file tag assignments).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS subject_tags (
+                 subject    TEXT NOT NULL,
+                 tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                 value      TEXT NOT NULL DEFAULT '',
+                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                 PRIMARY KEY (subject, tag_id, value)
+             );
+             CREATE INDEX IF NOT EXISTS idx_subject_tags_subject ON subject_tags(subject);",
         )?
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -725,6 +739,71 @@ pub fn remove_tag_from_subject(conn: &Connection, subject: &str, tag_name: &str)
          AND tag_id = (SELECT id FROM tags WHERE name = ?2)",
         params![subject, tag_name],
     )?;
+    Ok(n)
+}
+
+// ---------------------------------------------------------------------------
+// Subject entity properties (subject_tags)
+// ---------------------------------------------------------------------------
+
+/// Return all properties of a subject entity as (tag_name, value) pairs,
+/// ordered by tag name then value.
+pub fn get_subject_props(conn: &Connection, subject: &str) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.name, st.value \
+         FROM subject_tags st \
+         JOIN tags t ON t.id = st.tag_id \
+         WHERE st.subject = ?1 \
+         ORDER BY t.name, st.value",
+    )?;
+    let rows = stmt.query_map(params![subject], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// Add (or silently ignore if already present) a property to a subject entity.
+/// Returns the number of rows inserted (0 or 1).
+pub fn set_subject_prop(
+    conn: &Connection,
+    subject: &str,
+    tag_name: &str,
+    value: &str,
+) -> Result<usize> {
+    let tag_id = get_or_create_tag(conn, tag_name)?;
+    let n = conn.execute(
+        "INSERT OR IGNORE INTO subject_tags (subject, tag_id, value) VALUES (?1, ?2, ?3)",
+        params![subject, tag_id, value],
+    )?;
+    Ok(n)
+}
+
+/// Remove a specific property from a subject entity.
+/// If `value` is `None`, all rows for that (subject, tag) are deleted.
+/// Returns the number of rows deleted.
+pub fn remove_subject_prop(
+    conn: &Connection,
+    subject: &str,
+    tag_name: &str,
+    value: Option<&str>,
+) -> Result<usize> {
+    let n = match value {
+        Some(v) => conn.execute(
+            "DELETE FROM subject_tags WHERE subject = ?1 \
+             AND tag_id = (SELECT id FROM tags WHERE name = ?2) \
+             AND value = ?3",
+            params![subject, tag_name, v],
+        )?,
+        None => conn.execute(
+            "DELETE FROM subject_tags WHERE subject = ?1 \
+             AND tag_id = (SELECT id FROM tags WHERE name = ?2)",
+            params![subject, tag_name],
+        )?,
+    };
     Ok(n)
 }
 
