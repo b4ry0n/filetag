@@ -290,6 +290,71 @@ async function doRemoveSubject(path, subject) {
 // Tag autocomplete
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Subject autocomplete
+// ---------------------------------------------------------------------------
+
+/// Collect unique non-empty subjects from the single selected file.
+function collectSingleFileSubjects() {
+    const tags = state.selectedFile?.tags || [];
+    return [...new Set(tags.map(t => t.subject).filter(Boolean))].sort();
+}
+
+/// Collect unique non-empty subjects from all currently selected files.
+function collectBulkSubjects() {
+    const subjects = new Set();
+    for (const [, data] of state.selectedFilesData) {
+        for (const tag of (data.tags || [])) {
+            if (tag.subject) subjects.add(tag.subject);
+        }
+    }
+    return [...subjects].sort();
+}
+
+/// Attach a simple autocomplete dropdown to a subject text input.
+/// `getSubjects` is called each time to retrieve the current subject list.
+function attachSubjectAutocomplete(inputEl, getSubjects) {
+    if (!inputEl) return;
+    let _dropdown = null;
+
+    function buildDropdown(subjects) {
+        if (!_dropdown) {
+            _dropdown = document.createElement('ul');
+            _dropdown.className = 'tag-autocomplete';
+            inputEl.parentElement.appendChild(_dropdown);
+        }
+        const q = inputEl.value.trim().toLowerCase();
+        const matches = q
+            ? subjects.filter(s => s.toLowerCase().includes(q))
+            : subjects;
+        if (!matches.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
+        _dropdown.innerHTML = matches
+            .map(s => `<li data-subject="${esc(s)}"><span class="ac-name">${esc(s)}</span></li>`)
+            .join('');
+        _dropdown.hidden = false;
+        _dropdown.querySelectorAll('li').forEach(li => {
+            li.addEventListener('mousedown', e => {
+                e.preventDefault();
+                inputEl.value = li.dataset.subject;
+                _dropdown.hidden = true;
+            });
+        });
+    }
+
+    function closeDropdown() {
+        if (_dropdown) _dropdown.hidden = true;
+    }
+
+    inputEl.addEventListener('focus', () => buildDropdown(getSubjects()));
+    inputEl.addEventListener('input', () => buildDropdown(getSubjects()));
+    inputEl.addEventListener('blur',  () => setTimeout(closeDropdown, 150));
+    inputEl.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.preventDefault(); closeDropdown(); }
+        if (e.key === 'Enter')
+            setTimeout(closeDropdown, 0);
+    });
+}
+
 function attachTagAutocomplete(inputEl, submitFn) {
     let _dropdown = null;
     let _activeIdx = -1;
@@ -538,12 +603,19 @@ function clearSelection() {
 
 async function doBulkAddTag() {
     const input = document.getElementById('bulk-tag-input');
+    const subjectInput = document.getElementById('bulk-tag-subject');
     const tagStr = input.value.trim();
     if (!tagStr) return;
+    const subject = subjectInput?.value.trim() || undefined;
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
-    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
+    const body = (p) => {
+        const b = { path: p, tags: [tagStr], dir: currentAbsDir() };
+        if (subject) b.subject = subject;
+        return b;
+    };
+    await Promise.all(paths.map(p => apiPost('/api/tag', body(p))));
     // Refresh cached data for all selected files
     await Promise.all(paths.map(async p => {
         const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
@@ -552,7 +624,7 @@ async function doBulkAddTag() {
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     input.value = '';
-    status.textContent = `Added "${tagStr}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    status.textContent = `Added "${tagStr}"${subject ? ` [${subject}]` : ''} to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
     renderTags();
     renderContent();
     _thumbInit();
