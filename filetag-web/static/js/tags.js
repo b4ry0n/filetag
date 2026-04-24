@@ -470,6 +470,11 @@ function startTagRename(tagName) {
 async function renameTag(oldName, newName) {
     if (!newName || newName === oldName) { closeTagMenu(); return; }
     closeTagMenu();
+    // Clear kv value caches for affected tags so the sidebar reflects the rename.
+    for (const n of [oldName, newName]) {
+        const eq = n.indexOf('=');
+        delete state.kvValueCache[eq > 0 ? n.slice(0, eq) : n];
+    }
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
     if (res && res.merged) {
         showToast(`Tags merged into "${newName}".`);

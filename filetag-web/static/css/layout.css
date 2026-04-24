@@ -209,7 +209,7 @@ mark.tag-filter-match {
 
 .tag-group-chevron {
     flex-shrink: 0;
-    padding: 6px 4px 6px 12px;
+    padding: 5px 2px 5px 4px;
     color: var(--text-tertiary);
     line-height: 1;
     display: flex;
@@ -270,7 +270,8 @@ mark.tag-filter-match {
 }
 
 .tag-standalone {
-    padding-left: 4px;
+    /* No padding-left override: inherits 22px from .tag-item, aligning
+       tag text with the label text of group/kv nodes (chevron = 4+14+2+2px). */
     color: var(--text);
     font-weight: 500;
 }
