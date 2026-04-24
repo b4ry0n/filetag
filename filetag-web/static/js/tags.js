@@ -1152,6 +1152,7 @@ async function tmAddSynonym(canonical) {
     await loadTags();
     renderTmList();
     await renderTmDetail(canonical);
+    renderTags();
 }
 
 async function tmRemoveSynonym(canonical, alias) {
@@ -1160,6 +1161,7 @@ async function tmRemoveSynonym(canonical, alias) {
     await loadTags();
     renderTmList();
     await renderTmDetail(canonical);
+    renderTags();
 }
 
 async function tmDoRename(oldName) {
@@ -1347,6 +1349,7 @@ async function tmCreateSubject() {
     _tmSelectedSubject = name;
     renderTmSubjectList();
     renderTmSubjectDetail(name);
+    _renderSubjectPane();
 }
 
 function tmSelectSubject(name) {
@@ -1468,6 +1471,8 @@ async function tmCloneSubject(name) {
     renderTmSubjectList();
     await renderTmSubjectDetail(newName);
     renderSubjects();
+    if (state.selectedFile) { await loadFileDetail(state.selectedFile.path); renderDetailTagsOnly(); }
+    _updateCardTagBadges();
 }
 
 function tmSubjectTagSearch(subject, tag) {
@@ -1532,6 +1537,8 @@ async function tmDoRenameSubject(oldName) {
     renderTmSubjectList();
     renderTmSubjectDetail(newName);
     renderSubjects();
+    if (state.selectedFile) { await loadFileDetail(state.selectedFile.path); renderDetailTagsOnly(); }
+    _updateCardTagBadges();
 }
 
 async function tmDeleteSubject(name) {
@@ -1546,4 +1553,6 @@ async function tmDeleteSubject(name) {
     const panel = document.getElementById('tm-subject-detail');
     if (panel) panel.innerHTML = `<div class="tm-detail-placeholder">Subject removed.</div>`;
     renderSubjects();
+    if (state.selectedFile) { await loadFileDetail(state.selectedFile.path); renderDetailTagsOnly(); }
+    _updateCardTagBadges();
 }
