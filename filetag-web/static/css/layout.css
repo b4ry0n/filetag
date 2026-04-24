@@ -357,7 +357,8 @@ mark.tag-filter-match {
 }
 
 /* "Tag files" toggle button active state */
-.sidebar-tag-picker-btn {
+.sidebar-tag-picker-btn,
+.detail-tag-picker-btn {
     font-size: 11px;
     color: var(--text-secondary);
     background: none;
@@ -368,8 +369,10 @@ mark.tag-filter-match {
     flex-shrink: 0;
     white-space: nowrap;
 }
-.sidebar-tag-picker-btn:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar-tag-picker-btn.active {
+.sidebar-tag-picker-btn:hover,
+.detail-tag-picker-btn:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-tag-picker-btn.active,
+.detail-tag-picker-btn.active {
     color: var(--primary);
     border-color: var(--primary);
     background: var(--primary-light);

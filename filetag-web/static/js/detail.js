@@ -796,6 +796,7 @@ function renderDetail() {
             <div class="detail-header">
                 <h3>${t('bulk.n-selected', {n: count})}</h3>
                 <div class="detail-header-actions">
+                    <button class="detail-tag-picker-btn${state.tagPickerMode ? ' active' : ''}" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Apply multiple tags to selection">&#x2714; Tag files</button>
                     <button class="detail-chat-btn" onclick="openChat()" title="Chat about selected files">
                         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
                         Chat
@@ -993,6 +994,7 @@ function renderDetail() {
         <div class="detail-header">
             <h3>${esc(name)}</h3>
             <div class="detail-header-actions">
+                <button class="detail-tag-picker-btn${state.tagPickerMode ? ' active' : ''}" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Apply multiple tags to this file">&#x2714; Tag file</button>
                 <button class="detail-chat-btn" onclick="openChat()" title="Chat about this file">
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
                     Chat

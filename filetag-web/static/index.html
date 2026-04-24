@@ -45,7 +45,6 @@
             <div class="sidebar-tag-search">
                 <input type="text" id="tag-search-input" placeholder="Filter tags…" autocomplete="off" oninput="handleTagSearch(this.value)" onkeydown="if(event.key==='Escape'){handleTagSearch('');this.value='';}">
                 <button id="tag-search-clear" hidden onclick="handleTagSearch('');document.getElementById('tag-search-input').value='';">&#x2715;</button>
-                <button class="sidebar-tag-picker-btn" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Apply multiple tags to selected files">Tag files</button>
             </div>
             <div class="sidebar-content" id="tag-list"></div>
             <div class="sidebar-subject-section" id="subject-list"></div>
