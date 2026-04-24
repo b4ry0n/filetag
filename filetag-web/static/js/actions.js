@@ -1614,6 +1614,7 @@ function enterTagPickerMode() {
     }
 
     renderTags();
+    renderDetail();
 }
 
 /// Toggle a single tag in picker mode, then re-render the bar.
@@ -1699,4 +1700,5 @@ function cancelTagPickerMode() {
     state.tagPickerPicks = new Set();
     state.tagPickerOriginal = new Set();
     renderTags();
+    renderDetail();
 }

@@ -217,10 +217,6 @@ function renderTags() {
     const tagSearchClear = document.getElementById('tag-search-clear');
     if (tagSearchClear) tagSearchClear.hidden = !state.tagFilter;
 
-    // Toggle button active state
-    const pickerBtn = document.getElementById('tag-picker-toggle');
-    if (pickerBtn) pickerBtn.classList.toggle('active', state.tagPickerMode);
-
     const tree = buildTagTree(state.tags);
     const listHtml = renderTagTreeNodes(tree, 0);
 
