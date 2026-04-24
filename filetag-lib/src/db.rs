@@ -670,6 +670,64 @@ pub fn delete_subject(conn: &Connection, name: &str) -> Result<usize> {
     Ok(n)
 }
 
+/// Return the distinct tag names used under a subject, with per-tag file counts.
+pub fn tags_for_subject(conn: &Connection, subject: &str) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.name, COUNT(DISTINCT ft.file_id) \
+         FROM file_tags ft \
+         JOIN tags t ON t.id = ft.tag_id \
+         WHERE ft.subject = ?1 \
+         GROUP BY t.id \
+         ORDER BY t.name",
+    )?;
+    let rows = stmt.query_map(params![subject], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// Clone a subject: insert copies of all file_tags rows where subject = `old_name`
+/// with `subject = new_name`.  Rows that already exist are silently skipped.
+/// Returns the number of rows inserted.
+pub fn clone_subject(conn: &Connection, old_name: &str, new_name: &str) -> Result<usize> {
+    let n = conn.execute(
+        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
+         SELECT file_id, tag_id, value, ?1, created_at FROM file_tags WHERE subject = ?2",
+        params![new_name, old_name],
+    )?;
+    Ok(n)
+}
+
+/// Add a tag (with empty value) under `subject` to every file that already has
+/// at least one tag under that subject.  Uses INSERT OR IGNORE so existing
+/// (file_id, tag_id, value, subject) rows are left untouched.
+/// Returns the number of rows inserted.
+pub fn add_tag_to_subject(conn: &Connection, subject: &str, tag_name: &str) -> Result<usize> {
+    let tag_id = get_or_create_tag(conn, tag_name)?;
+    let n = conn.execute(
+        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
+         SELECT DISTINCT file_id, ?1, '', ?2, datetime('now') \
+         FROM file_tags WHERE subject = ?2",
+        params![tag_id, subject],
+    )?;
+    Ok(n)
+}
+
+/// Remove all file_tags rows for the given subject + tag combination.
+/// Returns the number of rows deleted.
+pub fn remove_tag_from_subject(conn: &Connection, subject: &str, tag_name: &str) -> Result<usize> {
+    let n = conn.execute(
+        "DELETE FROM file_tags WHERE subject = ?1 \
+         AND tag_id = (SELECT id FROM tags WHERE name = ?2)",
+        params![subject, tag_name],
+    )?;
+    Ok(n)
+}
+
 /// Set or clear the color for a tag.
 pub fn set_tag_color(conn: &Connection, name: &str, color: Option<&str>) -> Result<bool> {
     let changed = conn.execute(

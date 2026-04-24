@@ -271,6 +271,33 @@ pub struct DeleteSubjectRequest {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/clone-subject`.
+#[derive(Deserialize)]
+pub struct CloneSubjectRequest {
+    pub name: String,
+    pub new_name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Query parameters for `GET /api/subject/tags`.
+#[derive(Deserialize)]
+pub struct SubjectTagsParams {
+    /// Subject label to query.
+    pub name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/subject/add-tag` and `POST /api/subject/remove-tag`.
+#[derive(Deserialize)]
+pub struct SubjectTagRequest {
+    pub subject: String,
+    pub tag: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Minimal request body carrying only a directory.
 #[derive(Deserialize, Default)]
 pub struct DirBody {
