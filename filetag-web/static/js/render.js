@@ -186,7 +186,7 @@ function renderGrid(items) {
                 </div>`;
             } else {
                 const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -257,7 +257,7 @@ function renderList(items) {
                 </div>`;
             } else {
                 const dblFnL = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${uncoveredBadge}</span>
                     <span class="size">${size}</span>
@@ -268,6 +268,22 @@ function renderList(items) {
         }
     }
     return html;
+}
+
+// ---------------------------------------------------------------------------
+// File card / list-row drag: drag one or more files to a sidebar tag/subject.
+// ---------------------------------------------------------------------------
+
+function cardDragStart(event, path) {
+    // When the dragged file is part of a multi-selection, carry all selected
+    // paths; otherwise just this one file.
+    const paths = state.selectedPaths.has(path)
+        ? [...state.selectedPaths]
+        : [path];
+    event.dataTransfer.setData('text/filetag-paths', JSON.stringify(paths));
+    event.dataTransfer.effectAllowed = 'copy';
+    // Prevent the root-reorder drag from interfering.
+    event.stopPropagation();
 }
 
 // ---------------------------------------------------------------------------

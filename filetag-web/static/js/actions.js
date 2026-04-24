@@ -294,21 +294,27 @@ async function doRemoveSubject(path, subject) {
 // Subject autocomplete
 // ---------------------------------------------------------------------------
 
-/// Collect unique non-empty subjects from the single selected file.
+/// Collect subjects for the single-file subject autocomplete:
+/// own subjects (already on this file) first, then all state.subjects.
 function collectSingleFileSubjects() {
-    const tags = state.selectedFile?.tags || [];
-    return [...new Set(tags.map(t => t.subject).filter(Boolean))].sort();
+    const own = new Set(
+        (state.selectedFile?.tags || []).map(t => t.subject).filter(Boolean)
+    );
+    const all = (state.subjects || []).map(s => s.name);
+    return [...own, ...all.filter(s => !own.has(s))];
 }
 
-/// Collect unique non-empty subjects from all currently selected files.
+/// Collect subjects for the bulk subject autocomplete:
+/// subjects from selected files first, then all state.subjects.
 function collectBulkSubjects() {
-    const subjects = new Set();
+    const own = new Set();
     for (const [, data] of state.selectedFilesData) {
         for (const tag of (data.tags || [])) {
-            if (tag.subject) subjects.add(tag.subject);
+            if (tag.subject) own.add(tag.subject);
         }
     }
-    return [...subjects].sort();
+    const all = (state.subjects || []).map(s => s.name);
+    return [...own, ...all.filter(s => !own.has(s))];
 }
 
 /// Attach a simple autocomplete dropdown to a subject text input.
