@@ -298,6 +298,26 @@ pub struct SubjectTagRequest {
     pub dir: Option<String>,
 }
 
+/// Query parameters for `GET /api/subject/props`.
+#[derive(Deserialize)]
+pub struct SubjectPropsParams {
+    /// Subject name to query properties for.
+    pub name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/subject/set-prop` and `POST /api/subject/remove-prop`.
+#[derive(Deserialize)]
+pub struct SubjectPropRequest {
+    pub subject: String,
+    pub tag: String,
+    #[serde(default)]
+    pub value: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Minimal request body carrying only a directory.
 #[derive(Deserialize, Default)]
 pub struct DirBody {
