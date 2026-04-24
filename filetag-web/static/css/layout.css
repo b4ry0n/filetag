@@ -834,7 +834,7 @@ mark.tag-filter-match {
 .tm-tag-row {
     display: flex;
     align-items: center;
-    padding: 4px 12px 4px 28px;
+    padding: 4px 12px 4px 12px;
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;

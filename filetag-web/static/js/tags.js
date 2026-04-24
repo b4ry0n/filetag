@@ -884,7 +884,7 @@ function renderTmList() {
     const el = document.getElementById('tm-list');
     if (!el) return;
 
-    const q = _tmSearchQuery;
+    const q = _tmSearchQuery.toLowerCase();
     const filtered = q
         ? state.tags.filter(t => t.name.toLowerCase().includes(q))
         : state.tags;
@@ -894,72 +894,69 @@ function renderTmList() {
         return;
     }
 
-    // Group by hierarchy prefix
-    const groups = {};
-    const standalone = [];
-    for (const tag of filtered) {
-        const slash = tag.name.indexOf('/');
-        if (slash > 0) {
-            const prefix = tag.name.slice(0, slash);
-            if (!groups[prefix]) groups[prefix] = { root: null, children: [] };
-            groups[prefix].children.push(tag);
-        } else {
-            standalone.push(tag);
-        }
-    }
-    for (const tag of standalone) {
-        if (groups[tag.name] && !groups[tag.name].root) {
-            groups[tag.name].root = tag;
-        }
-    }
-    const standaloneOnly = standalone.filter(t => !groups[t.name]);
+    const tree = buildTagTree(filtered);
+    el.innerHTML = _renderTmTreeNodes(tree, 0);
+}
 
-    let html = '';
-
-    for (const prefix of Object.keys(groups).sort()) {
-        const { root, children } = groups[prefix];
-        const totalCount = children.reduce((s, c) => s + c.count, 0) + (root?.count || 0);
-        const rootSel = _tmSelectedTag === prefix ? ' selected' : '';
-        // When searching or a child is selected, always expand.
-        const hasSelectedChild = children.some(c => c.name === _tmSelectedTag);
-        const collapsed = _tmCollapsedGroups.has(prefix) && !q && !hasSelectedChild;
-        const chevronClass = collapsed ? 'tm-chevron' : 'tm-chevron tm-chevron-open';
-        html += `<div class="tm-group">
-            <div class="tm-group-header${rootSel}">
-                <button class="${chevronClass}" onclick="tmToggleGroup('${jesc(prefix)}')" title="Expand/collapse">
-                    <svg viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
-                <span class="tm-group-label" onclick="tmSelectTag('${jesc(prefix)}')">
-                    ${colorDot(root?.color || null)}<span class="tm-group-name">${esc(prefix)}</span>
-                    <span class="tm-count">${totalCount}</span>
-                </span>
-            </div>`;
-        if (!collapsed) {
-            for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
-                const suffix = child.name.slice(prefix.length + 1);
-                const sel = _tmSelectedTag === child.name ? ' selected' : '';
-                const synBadge = (child.synonyms || []).length ? ` <span class="tm-syn-badge">\u2261</span>` : '';
-                const kvBadge = child.has_values ? ` <span class="tm-kv-badge">k=v</span>` : '';
-                html += `<div class="tm-tag-row tm-tag-child${sel}" onclick="tmSelectTag('${jesc(child.name)}')">
-                    ${colorDot(child.color)}${esc(suffix)}${kvBadge}${synBadge}
-                    <span class="tm-count">${child.count}</span>
-                </div>`;
-            }
-        }
-        html += `</div>`;
+function _tmNodeMatchesFilter(node) {
+    const q = _tmSearchQuery.toLowerCase();
+    if (!q) return true;
+    if (node.fullPath.toLowerCase().includes(q)) return true;
+    for (const child of node.children.values()) {
+        if (_tmNodeMatchesFilter(child)) return true;
     }
+    return false;
+}
 
-    for (const tag of standaloneOnly.sort((a, b) => a.name.localeCompare(b.name))) {
-        const sel = _tmSelectedTag === tag.name ? ' selected' : '';
+function _renderTmTreeNodes(nodeMap, depth) {
+    const q = _tmSearchQuery.toLowerCase();
+    let nodes = [...nodeMap.values()];
+    if (q) nodes = nodes.filter(n => _tmNodeMatchesFilter(n));
+    nodes.sort((a, b) => a.segment.localeCompare(b.segment));
+    return nodes.map(n => _renderTmTreeNode(n, depth)).join('');
+}
+
+function _renderTmTreeNode(node, depth) {
+    const { segment, fullPath, tag, children } = node;
+    const hasChildren = children.size > 0;
+    const q = _tmSearchQuery.toLowerCase();
+    const indent = depth > 0 ? ` style="padding-left:${12 + depth * 16}px"` : '';
+    const childIndent = `${12 + (depth + 1) * 16}px`;
+
+    if (!hasChildren) {
+        if (!tag) return '';
+        const sel = _tmSelectedTag === fullPath ? ' selected' : '';
         const synBadge = (tag.synonyms || []).length ? ` <span class="tm-syn-badge">\u2261</span>` : '';
         const kvBadge = tag.has_values ? ` <span class="tm-kv-badge">k=v</span>` : '';
-        html += `<div class="tm-tag-row tm-tag-standalone${sel}" onclick="tmSelectTag('${jesc(tag.name)}')">
-            ${colorDot(tag.color)}${esc(tag.name)}${kvBadge}${synBadge}
+        const cls = depth === 0 ? 'tm-tag-row tm-tag-standalone' : 'tm-tag-row';
+        return `<div class="${cls}${sel}"${indent} onclick="tmSelectTag('${jesc(fullPath)}')">
+            ${colorDot(tag.color)}${esc(segment)}${kvBadge}${synBadge}
             <span class="tm-count">${tag.count}</span>
         </div>`;
     }
 
-    el.innerHTML = html;
+    // Group node
+    const totalCount = _nodeCount(node);
+    const hasSelectedChild = _tmSelectedTag !== null && _tmSelectedTag.startsWith(fullPath + '/');
+    const collapsed = _tmCollapsedGroups.has(fullPath) && !q && !hasSelectedChild;
+    const chevronClass = collapsed ? 'tm-chevron' : 'tm-chevron tm-chevron-open';
+    const rootSel = _tmSelectedTag === fullPath ? ' selected' : '';
+
+    let html = `<div class="tm-group">
+        <div class="tm-group-header${rootSel}">
+            <button class="${chevronClass}" onclick="tmToggleGroup('${jesc(fullPath)}')" title="Expand/collapse" style="padding-left:${depth > 0 ? 4 + depth * 16 : 4}px">
+                <svg viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <span class="tm-group-label" onclick="tmSelectTag('${jesc(fullPath)}')">
+                ${colorDot(tag?.color || null)}<span class="tm-group-name">${esc(segment)}</span>
+                <span class="tm-count">${totalCount}</span>
+            </span>
+        </div>`;
+    if (!collapsed) {
+        html += _renderTmTreeNodes(children, depth + 1);
+    }
+    html += `</div>`;
+    return html;
 }
 
 async function tmSelectTag(name) {
