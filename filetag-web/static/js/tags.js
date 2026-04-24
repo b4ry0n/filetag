@@ -118,6 +118,16 @@ function renderTagTreeNode(node, depth) {
         const synBadge = (tag.synonyms || []).length
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
+
+        if (state.tagPickerMode) {
+            const checked = state.tagPickerPicks.has(fullPath);
+            const checkedCls = checked ? ' picker-checked' : '';
+            const checkIcon = checked
+                ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+                : '<span class="tag-check-placeholder"></span>';
+            return `<button class="${cls}${checkedCls}" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
+        }
+
         const check = active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>';
         return `<button class="${cls}${active}" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
     }
@@ -139,12 +149,16 @@ function renderTagTreeNode(node, depth) {
     const synBadge = tag && (tag.synonyms || []).length
         ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
     const showOpen = expanded || filterExpand;
+    const groupNameClick = state.tagPickerMode
+        ? `toggleTagGroupPick('${jesc(fullPath)}')`
+        : `doTagGroupSearch('${jesc(fullPath)}')`;
+    const groupPickedCls = state.tagPickerMode && _anyDescendantPicked(children) ? ' picker-checked' : '';
     return `<div class="tag-group"${marginStyle}>
         <div class="tag-group-label${groupActiveClass}${expandedClass}">
             <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(fullPath)}')"${rootContextMenu} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name${groupPickedCls}" onclick="${groupNameClick}"${rootContextMenu} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${totalCount}</span></button>
         </div>
         <div class="tag-group-items${showOpen ? ' open' : ''}">
             ${showOpen ? renderTagTreeNodes(children, depth + 1) : ''}
@@ -203,17 +217,41 @@ function renderTags() {
     const tagSearchClear = document.getElementById('tag-search-clear');
     if (tagSearchClear) tagSearchClear.hidden = !state.tagFilter;
 
+    // Toggle button active state
+    const pickerBtn = document.getElementById('tag-picker-toggle');
+    if (pickerBtn) pickerBtn.classList.toggle('active', state.tagPickerMode);
+
     const tree = buildTagTree(state.tags);
     const listHtml = renderTagTreeNodes(tree, 0);
 
-    // Compact "Clear filters" bar — only shown when tags are active, takes minimal space
-    const clearBar = state.activeTags.size > 0
-        ? `<div class="active-filters-bar"><span class="active-filters-count">${state.activeTags.size} active</span><button class="active-filters-clear" onclick="clearTagFilters()">Clear</button></div>`
-        : '';
-
-    el.innerHTML = clearBar + (listHtml || (state.tagFilter
-        ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
-        : ''));
+    if (state.tagPickerMode) {
+        // In picker mode: show sticky apply/cancel bar at the bottom, no filter bar.
+        const picks = state.tagPickerPicks.size;
+        const orig  = state.tagPickerOriginal.size;
+        // Count how many are newly added vs removed
+        const added   = [...state.tagPickerPicks].filter(t => !state.tagPickerOriginal.has(t)).length;
+        const removed = [...state.tagPickerOriginal].filter(t => !state.tagPickerPicks.has(t)).length;
+        const delta = added + removed;
+        const targets = state.selectedPaths.size > 0 ? state.selectedPaths.size : (state.selectedFile ? 1 : 0);
+        const targetLabel = targets > 1 ? `${targets} files` : (state.selectedFile ? '1 file' : 'no file');
+        const applyLabel = delta > 0
+            ? `Apply (${added > 0 ? `+${added}` : ''}${added > 0 && removed > 0 ? ' ' : ''}${removed > 0 ? `-${removed}` : ''}) to ${targetLabel}`
+            : `No changes — ${targetLabel} selected`;
+        const applyDisabled = delta === 0 || targets === 0 ? ' disabled' : '';
+        const pickerBar = `<div class="tag-picker-bar">
+            <button class="tag-picker-apply"${applyDisabled} onclick="applyTagPicker()">${applyLabel}</button>
+            <button class="tag-picker-cancel" onclick="cancelTagPickerMode()">Cancel</button>
+        </div>`;
+        el.innerHTML = (listHtml || `<div class="empty-state"><span class="empty-state-text">No tags match</span></div>`) + pickerBar;
+    } else {
+        // Normal mode: compact "Clear filters" bar
+        const clearBar = state.activeTags.size > 0
+            ? `<div class="active-filters-bar"><span class="active-filters-count">${state.activeTags.size} active</span><button class="active-filters-clear" onclick="clearTagFilters()">Clear</button></div>`
+            : '';
+        el.innerHTML = clearBar + (listHtml || (state.tagFilter
+            ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
+            : ''));
+    }
     renderSubjects();
 }
 

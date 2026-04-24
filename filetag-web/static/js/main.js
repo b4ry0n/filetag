@@ -206,7 +206,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('keydown', e => {
         // Escape is handled regardless of focus state
         if (e.key === 'Escape') {
-            if (state.selectedPaths.size > 1) { clearSelection(); return; }
+            if (state.tagPickerMode)           { cancelTagPickerMode(); return; }
+            if (state.selectedPaths.size > 1)  { clearSelection(); return; }
             if (state.selectedFile)            { closeDetail();   return; }
             if (state.mode === 'search')       { doClearSearch(); return; }
             if (_kbCursor >= 0)                { _kbClearCursor(); return; }

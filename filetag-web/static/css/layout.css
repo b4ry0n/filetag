@@ -306,6 +306,63 @@ mark.tag-filter-match {
 
 .active-filters-clear:hover { background: var(--bg-hover); color: var(--text); }
 
+/* Tag picker bar — sticky footer inside #tag-list while picker mode is active */
+.tag-picker-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
+    z-index: 10;
+}
+
+.tag-picker-apply {
+    font-size: 12px;
+    font-weight: 500;
+    color: #fff;
+    background: var(--primary);
+    border: none;
+    border-radius: 5px;
+    padding: 6px 10px;
+    cursor: pointer;
+    text-align: left;
+}
+.tag-picker-apply:hover:not(:disabled) { filter: brightness(1.1); }
+.tag-picker-apply:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.tag-picker-cancel {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+.tag-picker-cancel:hover { background: var(--bg-hover); color: var(--text); }
+
+/* Checked state for tag items in picker mode */
+.tag-item.picker-checked,
+.tag-group-name.picker-checked {
+    color: var(--primary);
+    font-weight: 500;
+    background: var(--primary-light);
+}
+
+/* "Tag files" toggle button active state */
+.sidebar-tag-picker-btn.active {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
 /* Checkmark shown on active tags; placeholder keeps alignment when inactive */
 .tag-check {
     flex-shrink: 0;

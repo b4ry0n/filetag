@@ -41,6 +41,7 @@
                     <span class="sort-label">Groups first</span>
                 </button>
                 <button class="sidebar-manage-btn" onclick="showTagManager()" title="Open Tag Manager" data-i18n="sidebar.manage">Manage</button>
+                <button class="sidebar-manage-btn sidebar-tag-picker-btn" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Apply multiple tags to selected files">Tag files</button>
             </div>
             <div class="sidebar-tag-search">
                 <input type="text" id="tag-search-input" placeholder="Filter tags…" autocomplete="off" oninput="handleTagSearch(this.value)" onkeydown="if(event.key==='Escape'){handleTagSearch('');this.value='';}">

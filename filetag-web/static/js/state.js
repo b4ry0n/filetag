@@ -26,6 +26,9 @@ const state = {
     tagFilter: '',             // sidebar tag search filter string
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
     kvValueCache: {},          // tagName → [{value, count}] loaded lazily for k/v tags
+    tagPickerMode: false,      // true while the multi-tag picker is active
+    tagPickerPicks: new Set(), // tags checked in picker mode (to be applied)
+    tagPickerOriginal: new Set(), // tags the file(s) already had when picker opened
     aiAnalysing: new Set(),    // paths currently being analysed by AI
     aiVideoFrames: 12,         // preferred frame count for single-video AI analysis
     aiVideoFramesAuto: false,  // true => let backend choose frame count by duration
