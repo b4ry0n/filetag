@@ -1086,6 +1086,11 @@ async function aiTestConnection() {
 async function aiPromoteTag(path, tagName, value, subject = null) {
     // tagName is e.g. "ai/necklace", promoted becomes "necklace".
     // value may be "" or e.g. "gold" for key=value tags.
+    // If no subject was passed (tag not yet in a subject), fall back to the
+    // subject currently typed in the detail panel's subject input field.
+    const resolvedSubject = subject
+        || document.getElementById('tag-subject')?.value.trim()
+        || null;
     const promoted = tagName.slice('ai/'.length);
     if (!promoted) return;
     const newTagStr = value ? `${promoted}=${value}` : promoted;
@@ -1093,11 +1098,11 @@ async function aiPromoteTag(path, tagName, value, subject = null) {
     try {
         // Add the promoted tag (with subject if present), then remove the ai/ original.
         const tagBody = { path, tags: [newTagStr], dir: currentAbsDir() };
-        if (subject) tagBody.subject = subject;
+        if (resolvedSubject) tagBody.subject = resolvedSubject;
         await apiPost('/api/tag', tagBody);
         const origStr = value ? `${tagName}=${value}` : tagName;
         const untagBody = { path, tags: [origStr], dir: currentAbsDir() };
-        if (subject) untagBody.subject = subject;
+        if (resolvedSubject) untagBody.subject = resolvedSubject;
         await apiPost('/api/untag', untagBody);
         await loadFileDetail(path);
         await loadTags();
