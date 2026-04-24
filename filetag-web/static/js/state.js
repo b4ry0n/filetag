@@ -29,6 +29,8 @@ const state = {
     tagPickerMode: false,      // true while the multi-tag picker is active
     tagPickerPicks: new Set(), // tags checked in picker mode (to be applied)
     tagPickerOriginal: new Set(), // tags the file(s) already had when picker opened
+    tagPickerSubject: null,          // subject selected in picker mode (null = none, string = selected)
+    tagPickerOriginalSubject: null,  // subject on the file(s) when picker was opened (for delta detection)
     aiAnalysing: new Set(),    // paths currently being analysed by AI
     aiVideoFrames: 12,         // preferred frame count for single-video AI analysis
     aiVideoFramesAuto: false,  // true => let backend choose frame count by duration

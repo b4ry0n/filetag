@@ -208,7 +208,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
 
 function renderTags() {
     const el = document.getElementById('tag-list');
-    if (!state.tags.length) {
+    if (!state.tags.length && (!state.subjects || !state.subjects.length)) {
         el.innerHTML = '<div class="empty-state"><span class="empty-state-text">No tags</span></div>';
         return;
     }
@@ -218,27 +218,30 @@ function renderTags() {
     if (tagSearchClear) tagSearchClear.hidden = !state.tagFilter;
 
     const tree = buildTagTree(state.tags);
-    const listHtml = renderTagTreeNodes(tree, 0);
+    const listHtml = state.tags.length ? renderTagTreeNodes(tree, 0) : '';
 
     if (state.tagPickerMode) {
-        // In picker mode: show sticky apply/cancel bar at the bottom, no filter bar.
-        const picks = state.tagPickerPicks.size;
-        const orig  = state.tagPickerOriginal.size;
-        // Count how many are newly added vs removed
+        // In picker mode: show sticky apply/cancel bar at the bottom.
         const added   = [...state.tagPickerPicks].filter(t => !state.tagPickerOriginal.has(t)).length;
         const removed = [...state.tagPickerOriginal].filter(t => !state.tagPickerPicks.has(t)).length;
-        const delta = added + removed;
+        const subjectChanged = state.tagPickerSubject !== state.tagPickerOriginalSubject;
+        const delta = added + removed + (subjectChanged ? 1 : 0);
         const targets = state.selectedPaths.size > 0 ? state.selectedPaths.size : (state.selectedFile ? 1 : 0);
         const targetLabel = targets > 1 ? `${targets} files` : (state.selectedFile ? '1 file' : 'no file');
+        const parts = [];
+        if (added > 0) parts.push(`+${added}`);
+        if (removed > 0) parts.push(`-${removed}`);
+        if (subjectChanged) parts.push(state.tagPickerSubject ? `subject: ${state.tagPickerSubject}` : 'remove subject');
         const applyLabel = delta > 0
-            ? `Apply (${added > 0 ? `+${added}` : ''}${added > 0 && removed > 0 ? ' ' : ''}${removed > 0 ? `-${removed}` : ''}) to ${targetLabel}`
+            ? `Apply (${parts.join(', ')}) to ${targetLabel}`
             : `No changes — ${targetLabel} selected`;
         const applyDisabled = delta === 0 || targets === 0 ? ' disabled' : '';
         const pickerBar = `<div class="tag-picker-bar">
             <button class="tag-picker-apply"${applyDisabled} onclick="applyTagPicker()">${applyLabel}</button>
             <button class="tag-picker-cancel" onclick="cancelTagPickerMode()">Cancel</button>
         </div>`;
-        el.innerHTML = (listHtml || `<div class="empty-state"><span class="empty-state-text">No tags match</span></div>`) + pickerBar;
+        el.innerHTML = (listHtml || `<div class="empty-state"><span class="empty-state-text">No tags match</span></div>`)
+            + pickerBar;
     } else {
         // Normal mode: compact "Clear filters" bar
         const clearBar = state.activeTags.size > 0
@@ -248,37 +251,37 @@ function renderTags() {
             ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
             : ''));
     }
-    renderSubjects();
+
+    // Render subjects in their own pane.
+    _renderSubjectPane();
 }
 
 /**
- * Render the subjects section below the tag list.
- * Each subject is a clickable button that triggers a `subject:name` search.
- * Subjects with a `/` separator are shown in a collapsible hierarchy.
+ * Render the subjects section as inline HTML to be appended to #tag-list.
+ * Uses the same visual language as tags.
  */
-function renderSubjects() {
-    const el = document.getElementById('subject-list');
-    if (!el) return;
+function _renderSubjectPane() {
+    const subjEl = document.getElementById('subject-list');
+    const divider = document.getElementById('sidebar-subject-divider');
+    if (!subjEl) return;
     if (!state.subjects || !state.subjects.length) {
-        el.innerHTML = '';
+        subjEl.innerHTML = '';
+        if (divider) divider.hidden = true;
         return;
     }
-
-    // Build a prefix tree from subjects (reuse the same logic as tags).
-    // state.subjects is [{ name, count }], same shape expected by buildTagTree
-    // except without color/synonyms/has_values.  We adapt by remapping.
+    if (divider) divider.hidden = false;
     const subjectTags = state.subjects.map(s => ({
-        name: s.name,
-        count: s.count,
-        color: null,
-        synonyms: [],
-        has_values: false,
+        name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
     }));
     const tree = buildTagTree(subjectTags);
+    subjEl.innerHTML = `<div class="subjects-section-label">Subjects</div>` + renderSubjectTreeNodes(tree, 0);
+}
 
-    let html = `<div class="subject-section-header">Subjects</div>`;
-    html += renderSubjectTreeNodes(tree, 0);
-    el.innerHTML = html;
+/**
+ * @deprecated — kept so old callers don't break; renderTags now handles subjects inline.
+ */
+function renderSubjects() {
+    _renderSubjectPane();
 }
 
 function renderSubjectTreeNodes(nodeMap, depth) {
@@ -296,12 +299,21 @@ function renderSubjectTreeNode(node, depth) {
         const activeClass = isActive ? ' active' : '';
         const count = tag ? ` <span class="count">${tag.count}</span>` : '';
         const clickFn = state.tagPickerMode
-            ? `applySubjectToSelection('${jesc(fullPath)}')`
+            ? `toggleSubjectPick('${jesc(fullPath)}')`
             : `doSubjectSearch('${jesc(fullPath)}')`;
-        return `<button class="subject-item${activeClass}"${marginStyle}
+        // In picker mode: radio-style indicator (filled circle = selected).
+        // In normal mode: no indicator (subjects have no checkmark column).
+        const indicator = state.tagPickerMode
+            ? (state.tagPickerSubject === fullPath
+                ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>'
+                : '<span class="tag-check-placeholder"></span>')
+            : '';
+        const pickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
+        const subjectPadding = 22 + depth * 12;
+        return `<button class="tag-item tag-subject-item${activeClass}${pickedCls}" style="padding-left:${subjectPadding}px"
             onclick="${clickFn}"
             ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')"
-            title="subject:${esc(fullPath)}">${esc(segment)}${count}</button>`;
+            title="subject:${esc(fullPath)}">${indicator}${esc(segment)}${count}</button>`;
     }
 
     // Group node
@@ -313,14 +325,15 @@ function renderSubjectTreeNode(node, depth) {
         ? tag.count
         : [...children.values()].reduce((acc, c) => acc + (c.tag ? c.tag.count : 0), 0);
     const groupClickFn = state.tagPickerMode
-        ? `applySubjectToSelection('${jesc(fullPath)}')`
+        ? `toggleSubjectPick('${jesc(fullPath)}')`
         : `doSubjectSearch('${jesc(fullPath)}')`;
-    return `<div class="tag-group subject-group"${marginStyle}>
+    const groupPickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
+    return `<div class="tag-group subject-tree-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${activeClass}">
             <button class="tag-group-chevron" onclick="toggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="${groupClickFn}" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name${groupPickedCls}" onclick="${groupClickFn}" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
         </div>
         <div class="tag-group-items${expanded ? ' open' : ''}">
             ${expanded ? renderSubjectTreeNodes(children, depth + 1) : ''}
@@ -335,7 +348,13 @@ function toggleSubjectGroup(fullPath) {
     } else {
         state.expandedGroups.add(key);
     }
-    renderSubjects();
+    renderTags();
+}
+
+// In picker mode: radio-select a subject (click again to deselect).
+function toggleSubjectPick(subjectName) {
+    state.tagPickerSubject = state.tagPickerSubject === subjectName ? null : subjectName;
+    renderTags();
 }
 
 async function doSubjectSearch(subject) {
@@ -349,31 +368,6 @@ async function doSubjectSearch(subject) {
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
     render();
-}
-
-async function applySubjectToSelection(subjectName) {
-    const paths = state.selectedPaths.size > 0
-        ? [...state.selectedPaths]
-        : state.selectedFile ? [state.selectedFile.path] : [];
-    if (!paths.length) return;
-    const dir = currentAbsDir();
-    // Re-apply every existing tag on each file with the new subject.
-    for (const p of paths) {
-        const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
-        const tags = data?.tags || [];
-        if (!tags.length) continue;
-        await Promise.all(tags.map(t =>
-            apiPost('/api/tag', {
-                path: p,
-                tags: [t.value ? `${t.name}=${t.value}` : t.name],
-                subject: subjectName,
-                dir,
-            })
-        ));
-    }
-    showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
-    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    renderDetailTagsOnly();
 }
 
 async function toggleKvExpand(tagName) {
@@ -567,6 +561,62 @@ async function tagDrop(event, tagName) {
     _updateCardTagBadges();
 }
 
+/**
+ * Show a modal dialog asking the user how to handle a subject-assignment conflict.
+ * Returns a Promise that resolves to 'reassign', 'add', or 'cancel'.
+ *
+ * @param {string} tagName     - The tag / subject name that conflicts.
+ * @param {string} filePath    - The file path (for display).
+ */
+function showSubjectConflictDialog(tagName, filePath) {
+    return new Promise(resolve => {
+        const fileName = filePath.split('/').pop();
+        const subst = s => s
+            .replace('{tag}',     tagName)
+            .replace('{file}',    fileName)
+            .replace(/{subject}/g, tagName);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'subject-conflict-overlay';
+        overlay.innerHTML = `
+            <div class="subject-conflict-dialog">
+                <h4 class="subject-conflict-title">${esc(t('subject.conflict-title'))}</h4>
+                <p class="subject-conflict-body">${esc(subst(t('subject.conflict-body')))}</p>
+                <div class="subject-conflict-actions">
+                    <button class="subject-conflict-btn btn-primary" data-choice="reassign">
+                        ${esc(t('subject.conflict-reassign'))}
+                        <span class="subject-conflict-hint">${esc(subst(t('subject.conflict-reassign-hint')))}</span>
+                    </button>
+                    <button class="subject-conflict-btn" data-choice="add">
+                        ${esc(t('subject.conflict-add'))}
+                        <span class="subject-conflict-hint">${esc(subst(t('subject.conflict-add-hint')))}</span>
+                    </button>
+                    <button class="subject-conflict-btn btn-cancel" data-choice="cancel">
+                        ${esc(t('subject.conflict-cancel'))}
+                    </button>
+                </div>
+            </div>`;
+
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', e => {
+            const btn = e.target.closest('[data-choice]');
+            if (!btn) return;
+            overlay.remove();
+            resolve(btn.dataset.choice);
+        });
+    });
+}
+
+/**
+ * Called when one or more file cards are dropped onto a subject in the sidebar.
+ *
+ * Per §6.4 of the architecture:
+ *   1. Find or create a tag with the same name as the subject.
+ *   2. Apply that tag to the file with subject = subjectName.
+ *   3. If that tag already exists on the file as a bare assignment (subject=''),
+ *      ask the user whether to Reassign, Add, or Cancel.
+ */
 async function subjectDrop(event, subjectName) {
     event.preventDefault();
     event.currentTarget.classList.remove('tag-drag-over');
@@ -574,22 +624,45 @@ async function subjectDrop(event, subjectName) {
     if (!raw) return;
     const paths = JSON.parse(raw);
     const dir = currentAbsDir();
+
     for (const p of paths) {
+        // Get the current tag list for this file (from state if available).
         const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
-        const tags = data?.tags || [];
-        if (!tags.length) continue;
-        await Promise.all(tags.map(t =>
-            apiPost('/api/tag', {
-                path: p,
-                tags: [t.value ? `${t.name}=${t.value}` : t.name],
-                subject: subjectName,
-                dir,
-            })
-        ));
+        const fileTags = data?.tags || [];
+
+        // Check whether a tag named subjectName already exists on this file.
+        const asSubject = fileTags.find(t => t.name === subjectName && t.subject === subjectName);
+        const asBare    = fileTags.find(t => t.name === subjectName && (!t.subject || t.subject === ''));
+
+        if (asSubject) {
+            // Tag already applied with this subject — nothing to do.
+            continue;
+        }
+
+        if (asBare) {
+            // Conflict: tag exists as a bare assignment. Ask the user.
+            const choice = await showSubjectConflictDialog(subjectName, p);
+            if (choice === 'cancel') continue;
+
+            if (choice === 'reassign') {
+                // Remove the bare row, then re-add with subject.
+                const tagStr = asBare.value ? `${asBare.name}=${asBare.value}` : asBare.name;
+                await apiPost('/api/untag', { path: p, tags: [tagStr], subject: '', dir });
+            }
+            // For both 'reassign' and 'add', add the tag with the subject.
+            await apiPost('/api/tag', { path: p, tags: [subjectName], subject: subjectName, dir });
+        } else {
+            // Tag not present at all — create and apply.
+            await apiPost('/api/tag', { path: p, tags: [subjectName], subject: subjectName, dir });
+        }
     }
+
     showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     renderDetailTagsOnly();
+    renderTags();
+    _updateCardTagBadges();
 }
 
 function startTagRename(tagName) {
@@ -781,6 +854,7 @@ function closeTagManager() {
     _tmSelectedTag = null;
     _tmSelectedSubject = null;
     _tmTab = 'tags';
+    renderTags();
 }
 
 async function pruneUnusedTags() {
@@ -794,6 +868,7 @@ async function pruneUnusedTags() {
             showToast(`Removed ${n} unused tag${n === 1 ? '' : 's'}.`);
             await loadTags();
             renderTmList();
+            renderTags();
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
@@ -1302,22 +1377,12 @@ async function renderTmSubjectDetail(name) {
         <div class="tm-detail-placeholder" style="padding:12px 16px">Loading\u2026</div>
     `;
 
-    // Load file-level tags and entity properties in parallel
-    const [subjTags, subjProps] = await Promise.all([
-        api('/api/subject/tags?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
+    // Load subject tags (entity properties) in parallel
+    const [subjProps] = await Promise.all([
         api('/api/subject/props?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
     ]);
 
     if (document.getElementById('tm-subject-detail') !== panel) return; // closed meanwhile
-
-    const tagRows = subjTags.map(t => `
-        <div class="tm-val-row">
-            <span class="tm-val-name" onclick="tmSubjectTagSearch('${jesc(name)}','${jesc(t.value)}')"
-                title="Search ${esc(name)} and ${esc(t.value)}">${esc(t.value)}</span>
-            <span class="tm-val-count">${t.count}</span>
-            <button class="tm-val-rename" onclick="tmSubjectRemoveTag('${jesc(name)}','${jesc(t.value)}')"
-                title="Remove this tag from all files in subject">\u2715</button>
-        </div>`).join('');
 
     const propRows = subjProps.map(p => {
         const label = p.value ? `${esc(p.tag)} = ${esc(p.value)}` : esc(p.tag);
@@ -1336,45 +1401,17 @@ async function renderTmSubjectDetail(name) {
         </div>
 
         <section class="tm-section">
-            <div class="tm-section-title">Properties
-                <span class="tm-section-hint">(describe what this subject <em>is</em>)</span>
+            <div class="tm-section-title">Subject tags
+                <span class="tm-section-hint">(tags that describe this subject itself)</span>
             </div>
             ${subjProps.length
                 ? `<div class="tm-val-list">${propRows}</div>`
-                : `<div class="tm-empty-hint">No properties yet.</div>`}
+                : `<div class="tm-empty-hint">No tags yet.</div>`}
             <div class="tm-syn-add" style="margin-top:6px">
-                <input id="tm-subj-prop-tag" class="tm-input" type="text"
-                    placeholder="Property (e.g. geslacht, geboren\u2026)"
-                    list="tm-subj-prop-datalist"
-                    style="flex:1.5"
-                    onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
-                <datalist id="tm-subj-prop-datalist">
-                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
-                </datalist>
-                <input id="tm-subj-prop-val" class="tm-input" type="text"
-                    placeholder="Value (optional)"
-                    style="flex:1"
+                <input id="tm-subj-prop-input" class="tm-input" type="text"
+                    placeholder="tag or tag=value\u2026"
                     onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
                 <button class="tm-btn" onclick="tmSubjectSetProp('${jesc(name)}')">Add</button>
-            </div>
-        </section>
-
-        <section class="tm-section">
-            <div class="tm-section-title">File tags
-                <span class="tm-section-hint">(tags on files under this subject; click to search, \u2715 to remove)</span>
-            </div>
-            ${subjTags.length
-                ? `<div class="tm-val-list">${tagRows}</div>`
-                : `<div class="tm-empty-hint">No tags assigned yet.</div>`}
-            <div class="tm-syn-add" style="margin-top:6px">
-                <input id="tm-subj-tag-input" class="tm-input" type="text"
-                    placeholder="Add tag to all files in subject\u2026"
-                    list="tm-subj-tag-datalist"
-                    onkeydown="if(event.key==='Enter') tmSubjectAddTag('${jesc(name)}')">
-                <datalist id="tm-subj-tag-datalist">
-                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
-                </datalist>
-                <button class="tm-btn" onclick="tmSubjectAddTag('${jesc(name)}')">Add</button>
             </div>
         </section>
 
@@ -1410,39 +1447,9 @@ async function renderTmSubjectDetail(name) {
             </button>
         </div>
     `;
-}
 
-async function tmSubjectAddTag(subject) {
-    const input = document.getElementById('tm-subj-tag-input');
-    const tag = input ? input.value.trim() : '';
-    if (!tag) return;
-    try {
-        const res = await apiPost('/api/subject/add-tag', { subject, tag, dir: currentAbsDir() });
-        showToast(`Added "${tag}" to ${res.inserted ?? 0} file(s) in subject "${subject}".`);
-        if (input) input.value = '';
-    } catch (e) {
-        showToast('Error: ' + e.message);
-        return;
-    }
-    await loadTags();
-    renderTmSubjectList();
-    await renderTmSubjectDetail(subject);
-    renderSubjects();
-}
-
-async function tmSubjectRemoveTag(subject, tag) {
-    if (!confirm(`Remove tag "${tag}" from all files in subject "${subject}"?\nThis deletes ${tag} on files where it was assigned under this subject.`)) return;
-    try {
-        const res = await apiPost('/api/subject/remove-tag', { subject, tag, dir: currentAbsDir() });
-        showToast(`Removed "${tag}" from ${res.removed ?? 0} file(s) in subject "${subject}".`);
-    } catch (e) {
-        showToast('Error: ' + e.message);
-        return;
-    }
-    await loadTags();
-    renderTmSubjectList();
-    await renderTmSubjectDetail(subject);
-    renderSubjects();
+    const propInput = document.getElementById('tm-subj-prop-input');
+    if (propInput) attachTagAutocomplete(propInput, () => tmSubjectSetProp(name));
 }
 
 async function tmCloneSubject(name) {
@@ -1477,16 +1484,17 @@ function tmSubjectTagSearch(subject, tag) {
 }
 
 async function tmSubjectSetProp(subject) {
-    const tagInput = document.getElementById('tm-subj-prop-tag');
-    const valInput = document.getElementById('tm-subj-prop-val');
-    const tag = tagInput ? tagInput.value.trim() : '';
-    const value = valInput ? valInput.value.trim() : '';
+    const input = document.getElementById('tm-subj-prop-input');
+    const raw = input ? input.value.trim() : '';
+    if (!raw) return;
+    const eqIdx = raw.indexOf('=');
+    const tag = eqIdx !== -1 ? raw.slice(0, eqIdx).trim() : raw;
+    const value = eqIdx !== -1 ? raw.slice(eqIdx + 1).trim() : '';
     if (!tag) return;
     try {
         await apiPost('/api/subject/set-prop', { subject, tag, value, dir: currentAbsDir() });
         showToast(`Added property "${tag}${value ? '=' + value : ''}" to "${subject}".`);
-        if (tagInput) tagInput.value = '';
-        if (valInput) valInput.value = '';
+        if (input) input.value = '';
     } catch (e) {
         showToast('Error: ' + e.message);
         return;

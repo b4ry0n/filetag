@@ -161,3 +161,85 @@ input[type="text"]:focus {
 }
 
 h3, h4 { font-weight: 600; }
+
+/* ------------------------------------------------------------------ */
+/* Subject conflict dialog                                            */
+/* ------------------------------------------------------------------ */
+
+.subject-conflict-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9000;
+}
+
+.subject-conflict-dialog {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    padding: 20px 24px;
+    max-width: 400px;
+    width: calc(100vw - 48px);
+}
+
+.subject-conflict-title {
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.subject-conflict-body {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.subject-conflict-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.subject-conflict-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s;
+}
+
+.subject-conflict-btn:hover { background: var(--bg-active); }
+
+.subject-conflict-btn.btn-primary {
+    background: var(--primary-light);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+}
+.subject-conflict-btn.btn-primary:hover { background: var(--primary); color: #fff; }
+
+.subject-conflict-btn.btn-cancel {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    padding: 6px 12px;
+}
+
+.subject-conflict-hint {
+    display: block;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+    font-weight: 400;
+}
+.subject-conflict-btn.btn-primary .subject-conflict-hint { color: var(--primary); }
+.subject-conflict-btn.btn-primary:hover .subject-conflict-hint { color: rgba(255,255,255,0.8); }

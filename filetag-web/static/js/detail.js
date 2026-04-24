@@ -981,11 +981,13 @@ function renderDetail() {
             ${isAnalysable ? `
             <div class="ai-analyse-controls">
                 <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? esc(t('ai.analysing')) : esc(t('ai.analyse-btn'))}</button>
-                ${type_ === 'video' ? `<label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label><label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" onchange="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>` : ''}
+                ${type_ === 'video' ? `<div class="ai-frames-row">
+                    <label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label>
+                    <label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" onchange="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>
+                </div>` : ''}
             </div>
             <small class="ai-analyse-note">${type_ === 'video' ? esc(t('ai.video-note')) : ''}</small>` : ''}
-                ${aiAcceptBtn}
-                ${aiClearBtn}
+            ${(aiAcceptBtn || aiClearBtn) ? `<div class="ai-action-row">${aiAcceptBtn}${aiClearBtn}</div>` : ''}
            </div>`
         : '';
 
@@ -1068,12 +1070,20 @@ function renderDetailTagsOnly() {
 
 // Render tag chips for a file, grouped by subject.
 function renderFileTagChips(f, covered) {
-    if (f.tags.length === 0)
+    const visibleTags = f.tags.filter(tag => !(tag.subject && tag.name === tag.subject));
+    if (visibleTags.length === 0 && !f.tags.some(t => t.implicit))
         return `<span class="no-tags">${esc(t('detail.no-tags'))}</span>`;
 
+    // Track which subjects are explicitly linked (via the hidden linkage tag).
+    const linkedSubjects = new Set(
+        f.tags.filter(t => t.subject && t.name === t.subject).map(t => t.subject)
+    );
+
     // Separate tags into subject groups (empty string = no subject).
+    // Skip the helper linkage tag (same name as the subject).
     const groups = new Map(); // subject -> tag[]
     for (const tag of f.tags) {
+        if (tag.subject && tag.name === tag.subject) continue; // hidden linkage tag
         const subj = tag.subject || '';
         if (!groups.has(subj)) groups.set(subj, []);
         groups.get(subj).push(tag);
@@ -1083,13 +1093,17 @@ function renderFileTagChips(f, covered) {
         const tagStr = formatTag(tag);
         const stateTag = state.tags.find(st => st.name === tag.name);
         const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+        if (tag.implicit) {
+            // Implicit (subject-entity) tags: read-only, visually distinct.
+            return `<span class="tag-chip tag-chip--implicit"${chipColor} title="Subject tag (edit in Subjects manager)">${esc(tagStr)}</span>`;
+        }
         if (!covered) {
             return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
         }
-        const promoteBtn = tag.name.startsWith('ai/')
-            ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}')">&uarr;</button>`
-            : '';
         const subjArg = tag.subject ? `'${jesc(tag.subject)}'` : 'null';
+        const promoteBtn = tag.name.startsWith('ai/')
+            ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}',${subjArg})">&uarr;</button>`
+            : '';
         return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}',${subjArg})">&times;</button></span>`;
     }
 
@@ -1101,10 +1115,19 @@ function renderFileTagChips(f, covered) {
     // Render subject groups.
     for (const [subj, tags] of groups) {
         if (subj === '') continue;
+        const explicitTags = tags.filter(t => !t.implicit);
+        const implicitTags = tags.filter(t => t.implicit);
+        const hasExplicit = explicitTags.length > 0;
+        const hasImplicit = implicitTags.length > 0;
+        if (!hasExplicit && !hasImplicit) continue;
         html += `<div class="subject-group">`;
         html += `<span class="subject-label">${esc(subj)}</span>`;
-        html += tags.map(chipHtml).join('');
-        if (covered) {
+        html += explicitTags.map(chipHtml).join('');
+        if (hasImplicit) {
+            html += `<span class="subject-implicit-sep" title="Subject tags (read-only)"></span>`;
+            html += implicitTags.map(chipHtml).join('');
+        }
+        if (covered && (hasExplicit || linkedSubjects.has(subj))) {
             html += `<button class="subject-remove" title="${esc(t('detail.subject-remove-title'))}" onclick="doRemoveSubject('${jesc(f.path)}','${jesc(subj)}')">&times;</button>`;
         }
         html += `</div>`;

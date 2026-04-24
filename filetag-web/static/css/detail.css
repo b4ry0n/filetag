@@ -18,6 +18,7 @@
     flex: none;
     height: var(--detail-top-height);
     overflow-y: auto;
+    overflow-x: hidden;
     min-height: 60px;
 }
 
@@ -229,33 +230,43 @@
 
 /* Draggable divider between meta and tags */
 .detail-v-handle {
-    height: 6px;
+    height: 5px;
     cursor: row-resize;
     position: relative;
     flex-shrink: 0;
     background: transparent;
-    transition: background 0.15s;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    transition: background 0.1s;
 }
 .detail-v-handle::after {
     content: '';
-    position: absolute;
-    left: 0; right: 0;
-    top: 50%; height: 2px;
-    transform: translateY(-50%);
-    background: transparent;
+    display: block;
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    margin-top: 1px;
     transition: background 0.15s;
+}
+.detail-v-handle:hover,
+.detail-v-handle.dragging {
+    background: var(--bg-hover);
 }
 .detail-v-handle:hover::after,
 .detail-v-handle.dragging::after {
-    background: var(--primary);
+    background: var(--text-tertiary);
 }
 
 .detail-tags-section {
     flex: 1 1 0;
     min-height: 60px;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 12px 16px;
-    border-top: 1px solid var(--border);
 }
 
 .detail-tags-section h4 {
@@ -298,6 +309,26 @@
 .tag-chip--readonly {
     opacity: 0.7;
     cursor: default;
+}
+
+/* Implicit subject tags: read-only, visually muted */
+.tag-chip--implicit {
+    opacity: 0.65;
+    font-style: italic;
+    cursor: default;
+    background: var(--bg-hover);
+    border-style: dashed;
+}
+
+/* Thin separator before implicit chips inside a subject group */
+.subject-implicit-sep {
+    display: inline-block;
+    width: 1px;
+    height: 14px;
+    background: var(--border);
+    margin: 0 2px;
+    vertical-align: middle;
+    flex-shrink: 0;
 }
 
 /* Promote (↑) button inside tag chips */
@@ -353,8 +384,7 @@
 .subject-remove:hover { opacity: 1; color: var(--danger, #e74c3c); }
 
 .tag-subject-input {
-    width: 110px;
-    flex-shrink: 0;
+    min-width: 0;
 }
 
 .uncovered-notice {
@@ -367,18 +397,21 @@
 }
 
 .tag-add-form {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;
     gap: 6px;
     position: relative;
     z-index: 2;
 }
 
+/* Main tag input spans both columns */
+.tag-add-form #tag-input {
+    grid-column: 1 / -1;
+}
+
 .tag-autocomplete {
-    position: absolute;
-    top: calc(100% + 2px);
-    left: 0;
-    right: 0;
-    z-index: 200;
+    position: fixed;
+    z-index: 9999;
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -413,7 +446,7 @@
     color: var(--text-tertiary);
 }
 
-.tag-add-form input { flex: 1; font-size: 12px; padding: 5px 8px; }
+.tag-add-form input { font-size: 12px; padding: 5px 8px; }
 
 .tag-add-form button {
     padding: 5px 12px;
@@ -548,9 +581,23 @@
 
 .ai-analyse-controls {
     display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.ai-frames-row {
+    display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+}
+
+.ai-action-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
 }
 
 .ai-analyse-btn {
@@ -601,13 +648,13 @@
     padding: 4px 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: transparent;
-    color: var(--fg-muted, #888);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
     font-size: 11px;
     cursor: pointer;
     transition: background .15s, color .15s;
 }
-.ai-clear-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.ai-clear-btn:hover { background: var(--bg-active); color: var(--text); }
 
 /* Bulk multi-select AI section */
 .bulk-ai-section { margin-top: 12px; }

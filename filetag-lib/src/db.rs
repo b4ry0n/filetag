@@ -730,24 +730,22 @@ pub fn delete_subject(conn: &Connection, name: &str) -> Result<usize> {
     Ok(n)
 }
 
-/// Return the distinct tag names used under a subject, with per-tag file counts.
-pub fn tags_for_subject(conn: &Connection, subject: &str) -> Result<Vec<(String, i64)>> {
-    let mut stmt = conn.prepare(
-        "SELECT t.name, COUNT(DISTINCT ft.file_id) \
-         FROM file_tags ft \
-         JOIN tags t ON t.id = ft.tag_id \
-         WHERE ft.subject = ?1 \
-         GROUP BY t.id \
-         ORDER BY t.name",
+/// Assign a file to a subject by moving all its unassigned file_tag rows
+/// (subject = '') to `subject_name`.  Returns the number of rows updated.
+pub fn assign_file_to_subject(
+    conn: &Connection,
+    file_id: i64,
+    subject_name: &str,
+) -> Result<usize> {
+    conn.execute(
+        "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
+        params![subject_name],
     )?;
-    let rows = stmt.query_map(params![subject], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
-    Ok(result)
+    let n = conn.execute(
+        "UPDATE file_tags SET subject = ?1 WHERE file_id = ?2 AND subject = ''",
+        params![subject_name, file_id],
+    )?;
+    Ok(n)
 }
 
 /// Clone a subject: insert copies of all file_tags and subject_tags rows for
@@ -771,35 +769,38 @@ pub fn clone_subject(conn: &Connection, old_name: &str, new_name: &str) -> Resul
     Ok(n)
 }
 
-/// Add a tag (with empty value) under `subject` to every file that already has
-/// at least one tag under that subject.  Uses INSERT OR IGNORE so existing
-/// (file_id, tag_id, value, subject) rows are left untouched.
-/// Returns the number of rows inserted.
-pub fn add_tag_to_subject(conn: &Connection, subject: &str, tag_name: &str) -> Result<usize> {
-    let tag_id = get_or_create_tag(conn, tag_name)?;
-    let n = conn.execute(
-        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject, created_at) \
-         SELECT DISTINCT file_id, ?1, '', ?2, datetime('now') \
-         FROM file_tags WHERE subject = ?2",
-        params![tag_id, subject],
-    )?;
-    Ok(n)
-}
-
-/// Remove all file_tags rows for the given subject + tag combination.
-/// Returns the number of rows deleted.
-pub fn remove_tag_from_subject(conn: &Connection, subject: &str, tag_name: &str) -> Result<usize> {
-    let n = conn.execute(
-        "DELETE FROM file_tags WHERE subject = ?1 \
-         AND tag_id = (SELECT id FROM tags WHERE name = ?2)",
-        params![subject, tag_name],
-    )?;
-    Ok(n)
-}
-
 // ---------------------------------------------------------------------------
 // Subject entity properties (subject_tags)
 // ---------------------------------------------------------------------------
+
+/// For every subject this file belongs to, return the subject's own tags
+/// as `(subject, tag_name, value)` tuples.  These are "implicit" tags —
+/// they describe the subject entity, not the file directly.
+pub fn subject_props_for_file(
+    conn: &Connection,
+    file_id: i64,
+) -> Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT ft.subject, t.name, st.value \
+         FROM file_tags ft \
+         JOIN subject_tags st ON st.subject = ft.subject \
+         JOIN tags t ON t.id = st.tag_id \
+         WHERE ft.file_id = ?1 AND ft.subject != '' \
+         ORDER BY ft.subject, t.name, st.value",
+    )?;
+    let rows = stmt.query_map(params![file_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
 
 /// Return all properties of a subject entity as (tag_name, value) pairs,
 /// ordered by tag name then value.
