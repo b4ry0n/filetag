@@ -952,6 +952,7 @@ async function aiPromoteTag(path, tagName, value) {
         await apiPost('/api/untag', { path, tags: [origStr], dir: currentAbsDir() });
         await loadFileDetail(path);
         await loadTags();
+        renderTags();
         renderDetailTagsOnly();
         _updateCardTagBadges();
     } catch (e) {
@@ -968,6 +969,7 @@ async function aiClearTags(paths) {
     try {
         await apiPost('/api/ai/clear-tags', { paths, dir: currentAbsDir() });
         await loadTags();
+        renderTags();
         await refreshSelectedFilesData();
         renderDetail();
         _updateCardTagBadges();
@@ -1016,6 +1018,7 @@ async function aiAcceptAllTags(paths) {
         }
 
         await loadTags();
+        renderTags();
         renderDetail();
         _updateCardTagBadges();
         dismissToast(toast);
@@ -1059,6 +1062,7 @@ async function aiAnalyseSingle(path) {
         if (state.selectedFile?.path === path) {
             await loadFileDetail(path);
             await loadTags();
+            renderTags();
         }
     } catch (e) {
         dismissToast(toast);
@@ -1106,6 +1110,7 @@ async function aiAnalyseSelected() {
         : t('toast.ai-analysed-n', {n: done, plural: done !== 1 ? t('toast.ai-analysed-plural') : ''});
     showToast(msg);
     await loadTags();
+    renderTags();
     await refreshSelectedFilesData();
     renderDetail();
     _updateCardTagBadges();
@@ -1134,6 +1139,7 @@ async function aiAnalyseCommonTraits() {
         dismissToast(toast);
         showToast(t('toast.ai-common-done', {n, plural: n !== 1 ? t('toast.ai-common-plural') : '', m, plural2: m !== 1 ? t('toast.ai-common-plural2') : ''}));
         await loadTags();
+        renderTags();
         await refreshSelectedFilesData();
         renderDetail();
         _updateCardTagBadges();
@@ -1228,6 +1234,10 @@ async function aiAnalyseBatch() {
                     showToast(msg, fb > 0 ? 8000 : 3000);
                     if (btn) btn.disabled = false;
                     await loadTags();
+                    renderTags();
+                    await refreshSelectedFilesData();
+                    renderDetail();
+                    _updateCardTagBadges();
                 }
             } catch (_) {
                 clearInterval(poll);
@@ -1252,6 +1262,7 @@ async function refreshSelectedFile() {
         }
     } catch (_) {}
     await loadTags();
+    renderTags();
 }
 
 /// Re-fetch file detail for every path currently in selectedFilesData so the
