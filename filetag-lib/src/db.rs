@@ -650,6 +650,26 @@ pub fn all_subjects(conn: &Connection) -> Result<Vec<(String, i64)>> {
     Ok(result)
 }
 
+/// Rename a subject label across all file-tag assignments.
+/// Returns the number of rows updated.
+pub fn rename_subject(conn: &Connection, old_name: &str, new_name: &str) -> Result<usize> {
+    let n = conn.execute(
+        "UPDATE file_tags SET subject = ?1 WHERE subject = ?2",
+        params![new_name, old_name],
+    )?;
+    Ok(n)
+}
+
+/// Delete a subject label by clearing it on all file-tag assignments.
+/// Returns the number of rows updated.
+pub fn delete_subject(conn: &Connection, name: &str) -> Result<usize> {
+    let n = conn.execute(
+        "UPDATE file_tags SET subject = '' WHERE subject = ?1",
+        params![name],
+    )?;
+    Ok(n)
+}
+
 /// Set or clear the color for a tag.
 pub fn set_tag_color(conn: &Connection, name: &str, color: Option<&str>) -> Result<bool> {
     let changed = conn.execute(
