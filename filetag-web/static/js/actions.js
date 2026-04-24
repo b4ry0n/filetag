@@ -1556,3 +1556,147 @@ async function doLogout() {
     } catch (_) { /* ignore */ }
     window.location.href = '/login';
 }
+
+// ---------------------------------------------------------------------------
+// Tag Picker mode: apply multiple tags at once from the sidebar
+// ---------------------------------------------------------------------------
+
+/// Collect all leaf tag names under a tree node map (recursively).
+function _collectLeafTags(nodeMap, out = []) {
+    for (const node of nodeMap.values()) {
+        if (node.tag && !node.tag.has_values) out.push(node.fullPath);
+        if (node.children.size) _collectLeafTags(node.children, out);
+    }
+    return out;
+}
+
+/// True if any descendant tag in this node map is currently picked.
+function _anyDescendantPicked(nodeMap) {
+    for (const node of nodeMap.values()) {
+        if (node.tag && state.tagPickerPicks.has(node.fullPath)) return true;
+        if (_anyDescendantPicked(node.children)) return true;
+    }
+    return false;
+}
+
+/// Enter the tag picker mode.
+/// Pre-checks tags already present on the selected file (or intersection of selected files).
+function enterTagPickerMode() {
+    if (state.tagPickerMode) {
+        cancelTagPickerMode();
+        return;
+    }
+    state.tagPickerMode = true;
+    state.tagPickerPicks = new Set();
+    state.tagPickerOriginal = new Set();
+
+    // Pre-check tags already on the current selection.
+    if (state.selectedPaths.size > 1) {
+        // Multi-select: intersect tags that ALL selected files have.
+        const tagSets = [...state.selectedFilesData.values()].map(d =>
+            new Set((d.tags || []).map(t => t.name))
+        );
+        if (tagSets.length > 0) {
+            for (const tagName of tagSets[0]) {
+                if (tagSets.every(s => s.has(tagName))) {
+                    state.tagPickerPicks.add(tagName);
+                    state.tagPickerOriginal.add(tagName);
+                }
+            }
+        }
+    } else if (state.selectedFile) {
+        for (const t of (state.selectedFile.tags || [])) {
+            if (t.name) {
+                state.tagPickerPicks.add(t.name);
+                state.tagPickerOriginal.add(t.name);
+            }
+        }
+    }
+
+    renderTags();
+}
+
+/// Toggle a single tag in picker mode, then re-render the bar.
+function toggleTagPick(tagName) {
+    if (state.tagPickerPicks.has(tagName)) {
+        state.tagPickerPicks.delete(tagName);
+    } else {
+        state.tagPickerPicks.add(tagName);
+    }
+    renderTags();
+}
+
+/// In picker mode, clicking a group-name toggles all leaf tags under that prefix.
+function toggleTagGroupPick(prefix) {
+    const tree = buildTagTree(state.tags);
+    // Walk to the node for this prefix.
+    let nodeMap = tree;
+    for (const seg of prefix.split('/')) {
+        if (!nodeMap.has(seg)) return;
+        const n = nodeMap.get(seg);
+        nodeMap = n.children;
+    }
+    const leaves = _collectLeafTags(nodeMap);
+    // Also include the prefix itself if it has a tag.
+    const node = (() => {
+        let m = tree;
+        let nd = null;
+        for (const seg of prefix.split('/')) {
+            nd = m.get(seg);
+            if (!nd) return null;
+            m = nd.children;
+        }
+        return nd;
+    })();
+    if (node?.tag && !node.tag.has_values) leaves.push(prefix);
+
+    // If ALL are picked, un-pick; otherwise pick all.
+    const allPicked = leaves.length > 0 && leaves.every(t => state.tagPickerPicks.has(t));
+    for (const t of leaves) {
+        if (allPicked) state.tagPickerPicks.delete(t);
+        else state.tagPickerPicks.add(t);
+    }
+    renderTags();
+}
+
+/// Apply the delta: add newly-checked tags, remove unchecked tags from all target files.
+async function applyTagPicker() {
+    const paths = state.selectedPaths.size > 0
+        ? [...state.selectedPaths]
+        : state.selectedFile ? [state.selectedFile.path] : [];
+    if (!paths.length) return;
+
+    const toAdd    = [...state.tagPickerPicks].filter(t => !state.tagPickerOriginal.has(t));
+    const toRemove = [...state.tagPickerOriginal].filter(t => !state.tagPickerPicks.has(t));
+
+    if (toAdd.length === 0 && toRemove.length === 0) {
+        cancelTagPickerMode();
+        return;
+    }
+
+    const dir = currentAbsDir();
+    await Promise.all([
+        ...paths.flatMap(p => toAdd.map(t => apiPost('/api/tag',   { path: p, tags: [t], dir }))),
+        ...paths.flatMap(p => toRemove.map(t => apiPost('/api/untag', { path: p, tags: [t], dir }))),
+    ]);
+
+    const parts = [];
+    if (toAdd.length)    parts.push(`+${toAdd.length} tag${toAdd.length === 1 ? '' : 's'}`);
+    if (toRemove.length) parts.push(`-${toRemove.length} tag${toRemove.length === 1 ? '' : 's'}`);
+    showToast(`${parts.join(', ')} on ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+
+    cancelTagPickerMode();
+    await loadTags();
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    renderDetailTagsOnly();
+    renderTags();
+    _updateCardTagBadges();
+}
+
+/// Exit picker mode without applying changes.
+function cancelTagPickerMode() {
+    state.tagPickerMode = false;
+    state.tagPickerPicks = new Set();
+    state.tagPickerOriginal = new Set();
+    renderTags();
+}
