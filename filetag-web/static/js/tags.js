@@ -289,7 +289,7 @@ function renderSubjectTreeNodes(nodeMap, depth) {
 function renderSubjectTreeNode(node, depth) {
     const { segment, fullPath, tag, children } = node;
     const marginStyle = depth > 0 ? ` style="margin-left:${depth * 12}px"` : '';
-    const isActive = state.mode === 'search' && state.searchQuery === ('subject:' + fullPath);
+    const isActive = state.mode === 'search' && state.searchQuery === ('subject:' + quoteTag(fullPath));
 
     if (!children.size) {
         // Leaf node
@@ -340,6 +340,11 @@ function toggleSubjectGroup(fullPath) {
 
 async function doSubjectSearch(subject) {
     const q = 'subject:' + quoteTag(subject);
+    // Toggle: clicking an already-active subject clears the search.
+    if (state.mode === 'search' && state.searchQuery === q) {
+        doClearSearch();
+        return;
+    }
     document.getElementById('search-input').value = q;
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
