@@ -119,7 +119,7 @@ function renderTagTreeNode(node, depth) {
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
         const check = active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>';
-        return `<button class="${cls}${active}" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${active}" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node (has children; may also have a tag at this exact path) ---
@@ -144,7 +144,7 @@ function renderTagTreeNode(node, depth) {
             <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(fullPath)}')"${rootContextMenu}>${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name" onclick="doTagGroupSearch('${jesc(fullPath)}')"${rootContextMenu} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${totalCount}</span></button>
         </div>
         <div class="tag-group-items${showOpen ? ' open' : ''}">
             ${showOpen ? renderTagTreeNodes(children, depth + 1) : ''}
@@ -166,7 +166,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
             <button class="tag-group-chevron" onclick="toggleKvExpand('${jesc(tag.name)}')" title="Show values">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')">
+            <button class="tag-group-name" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(tag.name)}')">
                 ${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
             </button>
         </div>`;
@@ -263,6 +263,7 @@ function renderSubjectTreeNode(node, depth) {
         const count = tag ? ` <span class="count">${tag.count}</span>` : '';
         return `<button class="subject-item${activeClass}"${marginStyle}
             onclick="doSubjectSearch('${jesc(fullPath)}')"
+            ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')"
             title="subject:${esc(fullPath)}">${esc(segment)}${count}</button>`;
     }
 
@@ -279,7 +280,7 @@ function renderSubjectTreeNode(node, depth) {
             <button class="tag-group-chevron" onclick="toggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" onclick="doSubjectSearch('${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name" onclick="doSubjectSearch('${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
         </div>
         <div class="tag-group-items${expanded ? ' open' : ''}">
             ${expanded ? renderSubjectTreeNodes(children, depth + 1) : ''}
@@ -370,6 +371,11 @@ function showTagMenu(e, tagName) {
         <div class="tag-menu-divider"></div>
         <button class="tag-menu-action" onclick="startTagRename('${jesc(tagName)}')">Rename\u2026</button>
         <button class="tag-menu-action" onclick="closeTagMenu(); showTagManager('${jesc(tagName)}')">Manage tag\u2026</button>
+        ${(state.selectedFile || state.selectedPaths.size > 0)
+            ? `<div class="tag-menu-divider"></div>
+        <button class="tag-menu-action tag-menu-apply" onclick="applyTagToSelection('${jesc(tagName)}')">Apply to selection</button>`
+            : ''}
+        <div class="tag-menu-divider"></div>
         <button class="tag-menu-action tag-menu-delete" onclick="deleteTag('${jesc(tagName)}')">Delete tag</button>
     `;
     document.body.appendChild(menu);
@@ -438,6 +444,80 @@ async function deleteTag(tagName) {
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();
+}
+
+async function applyTagToSelection(tagName) {
+    closeTagMenu();
+    const paths = state.selectedPaths.size > 0
+        ? [...state.selectedPaths]
+        : state.selectedFile ? [state.selectedFile.path] : [];
+    if (!paths.length) return;
+    await Promise.all(paths.map(p =>
+        apiPost('/api/tag', { path: p, tags: [tagName], dir: currentAbsDir() })
+    ));
+    showToast(`Applied "${tagName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    await loadTags();
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    renderDetailTagsOnly();
+    renderTags();
+    _updateCardTagBadges();
+}
+
+// ---------------------------------------------------------------------------
+// Drag-and-drop: file cards → sidebar tag/subject items
+// ---------------------------------------------------------------------------
+
+function tagDragOver(event) {
+    if (!event.dataTransfer.types.includes('text/filetag-paths')) return;
+    event.preventDefault();
+    event.currentTarget.classList.add('tag-drag-over');
+}
+
+function tagDragLeave(event) {
+    event.currentTarget.classList.remove('tag-drag-over');
+}
+
+async function tagDrop(event, tagName) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('tag-drag-over');
+    const raw = event.dataTransfer.getData('text/filetag-paths');
+    if (!raw) return;
+    const paths = JSON.parse(raw);
+    await Promise.all(paths.map(p =>
+        apiPost('/api/tag', { path: p, tags: [tagName], dir: currentAbsDir() })
+    ));
+    showToast(`Applied "${tagName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    await loadTags();
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    renderDetailTagsOnly();
+    renderTags();
+    _updateCardTagBadges();
+}
+
+async function subjectDrop(event, subjectName) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('tag-drag-over');
+    const raw = event.dataTransfer.getData('text/filetag-paths');
+    if (!raw) return;
+    const paths = JSON.parse(raw);
+    // Apply the subject to every tag already on each file.
+    // We re-apply each existing tag with the new subject name.
+    for (const p of paths) {
+        const detail = state.selectedFile?.path === p ? state.selectedFile : null;
+        const tags = detail?.tags || [];
+        if (!tags.length) continue;
+        await Promise.all(tags.map(t =>
+            apiPost('/api/tag', {
+                path: p,
+                tags: [t.value ? `${t.name}=${t.value}` : t.name],
+                subject: subjectName,
+                dir: currentAbsDir()
+            })
+        ));
+    }
+    showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    renderDetailTagsOnly();
 }
 
 function startTagRename(tagName) {

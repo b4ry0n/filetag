@@ -415,6 +415,16 @@ mark.tag-filter-match {
 .tag-menu-action:hover { background: var(--bg-hover); }
 .tag-menu-delete { color: #ef4444; }
 .tag-menu-delete:hover { background: rgba(239,68,68,0.1); }
+.tag-menu-apply { color: var(--primary); }
+.tag-menu-apply:hover { background: var(--primary-light); }
+
+/* Sidebar drop-target highlight when dragging a file card onto a tag/subject item */
+.tag-drag-over {
+    outline: 2px solid var(--primary) !important;
+    outline-offset: -2px;
+    background: var(--primary-light) !important;
+    border-radius: 4px;
+}
 
 .tag-menu-synonyms {
     display: flex;
