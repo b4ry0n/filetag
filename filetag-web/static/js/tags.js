@@ -569,7 +569,14 @@ function showTagManager(selectTag) {
                 </div>
             </div>
             <div class="tm-body" id="tm-body-subjects" style="display:none">
-                <div class="tm-list" id="tm-subject-list"></div>
+                <div class="tm-list" id="tm-subject-list">
+                    <div class="tm-new-row">
+                        <input id="tm-new-subject-input" class="tm-input" type="text"
+                            placeholder="New subject name\u2026"
+                            onkeydown="if(event.key==='Enter') tmCreateSubject()">
+                        <button class="tm-btn" onclick="tmCreateSubject()">+</button>
+                    </div>
+                </div>
                 <div class="tm-detail" id="tm-subject-detail">
                     <div class="tm-detail-placeholder">Select a subject to edit it.</div>
                 </div>
@@ -1064,20 +1071,53 @@ function renderTmSubjectList() {
         ? state.subjects.filter(s => s.name.toLowerCase().includes(q))
         : state.subjects;
 
-    if (!filtered.length) {
-        el.innerHTML = '<div class="tm-empty">No subjects found.</div>';
-        return;
-    }
+    // Preserve the new-subject input row (first child) if it exists
+    const newRow = el.querySelector('.tm-new-row');
+    const savedValue = newRow ? newRow.querySelector('input')?.value ?? '' : '';
 
-    let html = '';
-    for (const s of [...filtered].sort((a, b) => a.name.localeCompare(b.name))) {
-        const sel = _tmSelectedSubject === s.name ? ' selected' : '';
-        html += `<div class="tm-tag-row tm-tag-standalone${sel}" onclick="tmSelectSubject('${jesc(s.name)}')">
-            ${esc(s.name)}
-            <span class="tm-count">${s.count}</span>
+    let html = `
+        <div class="tm-new-row">
+            <input id="tm-new-subject-input" class="tm-input" type="text"
+                placeholder="New subject name\u2026"
+                onkeydown="if(event.key==='Enter') tmCreateSubject()">
+            <button class="tm-btn" onclick="tmCreateSubject()">+</button>
         </div>`;
+
+    if (!filtered.length) {
+        html += '<div class="tm-empty">No subjects found.</div>';
+    } else {
+        for (const s of [...filtered].sort((a, b) => a.name.localeCompare(b.name))) {
+            const sel = _tmSelectedSubject === s.name ? ' selected' : '';
+            html += `<div class="tm-tag-row tm-tag-standalone${sel}" onclick="tmSelectSubject('${jesc(s.name)}')">
+                ${esc(s.name)}
+                <span class="tm-count">${s.count}</span>
+            </div>`;
+        }
     }
     el.innerHTML = html;
+
+    // Restore typed value if user was mid-input
+    if (savedValue) {
+        const inp = el.querySelector('#tm-new-subject-input');
+        if (inp) inp.value = savedValue;
+    }
+}
+
+async function tmCreateSubject() {
+    const input = document.getElementById('tm-new-subject-input');
+    const name = input ? input.value.trim() : '';
+    if (!name) return;
+    try {
+        await apiPost('/api/create-subject', { name, dir: currentAbsDir() });
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    if (input) input.value = '';
+    await loadTags();
+    _tmSelectedSubject = name;
+    renderTmSubjectList();
+    renderTmSubjectDetail(name);
 }
 
 function tmSelectSubject(name) {
