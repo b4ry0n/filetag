@@ -359,7 +359,7 @@ function cvExitScrollView() {
     container.style.flexDirection = '';
     container.innerHTML = '';
     document.getElementById('cv-spread-btn').disabled = false;
-    _cv.scrollWidth = 100; _cv.scrollHeight = 90;
+    _cv.scrollWidth = 100; _cv.scrollHeight = 100;
     cvShowPage(_cv.current);
 }
 
