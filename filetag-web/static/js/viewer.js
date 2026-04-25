@@ -221,7 +221,7 @@ function cvScrollThumbIntoView(idx) {
 
 let _cvScrollObserver = null;
 let _cvNavTarget = null;  // page index we are navigating to; blocks IntersectionObserver
-const _cvAnim = { raf: null, axis: null, pos: 0, target: 0 };
+let _cvNavTimer  = null;
 
 function _cvSetScrollButtons() {
     document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll && _cv.scrollDir === 'v');
@@ -354,8 +354,7 @@ function cvBuildScrollView() {
 
 function cvExitScrollView() {
     if (_cvScrollObserver) { _cvScrollObserver.disconnect(); _cvScrollObserver = null; }
-    if (_cvAnim.raf) { cancelAnimationFrame(_cvAnim.raf); _cvAnim.raf = null; }
-    _cvNavTarget = null;
+    clearTimeout(_cvNavTimer); _cvNavTimer = null; _cvNavTarget = null;
     const stage = document.getElementById('cv-stage');
     stage.classList.remove('cv-scroll-mode');
     stage.classList.remove('cv-hscroll-mode');
@@ -759,47 +758,15 @@ function cvClickNav(e) {
 // Scroll-mode keyboard navigation
 // ---------------------------------------------------------------------------
 
-// Set _cv.current to pageIdx immediately and block the IntersectionObserver
-// until the animation settles (observer clears _cvNavTarget when done).
-function _cvNavLock(pageIdx) {
+// Record the destination page and block the IntersectionObserver.
+function _cvSetNav(pageIdx) {
     _cvNavTarget = pageIdx;
     _cv.current  = pageIdx;
     cvUpdateThumbActive(pageIdx);
-    const statusEl = document.getElementById('cv-status');
-    if (statusEl) statusEl.textContent = `${pageIdx + 1} / ${_cv.pages.length}`;
-}
-
-// Scroll stage smoothly to targetPos along axis ('x' or 'y').
-// Uses exponential decay: pos += (target - pos) * factor each frame.
-// Updating target mid-animation only changes the destination; the animation
-// never decelerates or restarts, so rapid keypresses chain without stutter.
-function _cvAnimateTo(axis, targetPos) {
-    const stage = document.getElementById('cv-stage');
-    if (!stage) return;
-    const prop = axis === 'x' ? 'scrollLeft' : 'scrollTop';
-    if (_cvAnim.axis !== axis || _cvAnim.raf === null) {
-        _cvAnim.pos  = stage[prop]; // sync from real scroll
-        _cvAnim.axis = axis;
-    }
-    _cvAnim.target = targetPos;
-    if (_cvAnim.raf) return; // loop already running; target update above is enough
-    let lastT = 0;
-    function step(now) {
-        const dt     = lastT ? Math.min(now - lastT, 50) : 0;
-        lastT        = now;
-        const dist   = _cvAnim.target - _cvAnim.pos;
-        const factor = dt ? 1 - Math.exp(-dt * 0.012) : 0; // ~350 ms settle, frame-rate independent
-        _cvAnim.pos += dist * factor;
-        if (Math.abs(dist) < 0.5) {
-            stage[prop]  = _cvAnim.target;
-            _cvAnim.raf  = null;
-            _cvNavTarget = null; // unlock IntersectionObserver
-        } else {
-            stage[prop]  = _cvAnim.pos;
-            _cvAnim.raf  = requestAnimationFrame(step);
-        }
-    }
-    _cvAnim.raf = requestAnimationFrame(step);
+    const s = document.getElementById('cv-status');
+    if (s) s.textContent = `${pageIdx + 1} / ${_cv.pages.length}`;
+    clearTimeout(_cvNavTimer);
+    _cvNavTimer = setTimeout(() => { _cvNavTarget = null; }, 600);
 }
 
 // Navigate forward (+1) or backward (-1) one page in scroll mode.
@@ -809,63 +776,65 @@ function _cvScrollNav(dir) {
 
     const isH   = _cv.scrollDir === 'h';
     const vSize = isH ? stage.clientWidth  : stage.clientHeight;
-    const axis  = isH ? 'x' : 'y';
-    const sProp = isH ? 'scrollLeft'  : 'scrollTop';
-    const sSize = isH ? 'scrollWidth' : 'scrollHeight';
+    const sProp = isH ? 'scrollLeft'       : 'scrollTop';
+    const sSize = isH ? 'scrollWidth'      : 'scrollHeight';
 
-    // Absolute offset of an element's leading edge within the scroll content.
-    // getBoundingClientRect minus stage rect + scrollTop/Left = stable value
-    // that does not change as the stage scrolls (animation-independent).
+    // Absolute content offset of el's leading edge.
+    // (visual offset relative to stage) + current scroll = stable regardless of scroll position.
     const absPos = el => {
         const er = el.getBoundingClientRect(), sr = stage.getBoundingClientRect();
         return (isH ? er.left - sr.left : er.top - sr.top) + stage[sProp];
     };
 
-    // Logical base page: animation target when mid-flight.
-    const baseIdx = _cvNavTarget !== null ? _cvNavTarget : _cv.current;
-    // Effective scroll position: animation target when mid-flight, so intra-page
-    // checks reflect where we will be, not where the stage currently is.
-    const scrollEff = (_cvAnim.raf && _cvAnim.axis === axis) ? _cvAnim.target : stage[sProp];
+    // Navigate relative to the queued target, not the mid-animation scroll position.
+    const baseIdx = _cvNavTarget ?? _cv.current;
 
-    const curImg = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
+    // First keypress: smooth animation.  Rapid keypresses: instant jump (no stutter).
+    // Calling scrollTo({behavior:'instant'}) also aborts any ongoing smooth scroll.
+    const behavior = _cvNavTarget === null ? 'smooth' : 'instant';
+
+    const doScroll = pos => stage.scrollTo({
+        [isH ? 'left' : 'top']: Math.max(0, Math.min(pos, stage[sSize] - vSize)),
+        behavior,
+    });
 
     if (dir > 0) {
-        // Scroll forward within an oversized page before jumping to next.
-        if (_cvNavTarget === null && curImg) {
-            const off  = absPos(curImg);
-            const size = isH ? curImg.clientWidth : curImg.clientHeight;
-            if (size > vSize + 2 && scrollEff < off + size - vSize - 2) {
-                _cvAnimateTo(axis, Math.min(scrollEff + vSize * 0.85, off + size - vSize));
-                return;
+        // Intra-page forward scroll (only when no page-jump is queued).
+        if (_cvNavTarget === null) {
+            const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
+            if (cur) {
+                const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
+                if (sz > vSize + 2 && stage[sProp] < off + sz - vSize - 2) {
+                    doScroll(stage[sProp] + vSize * 0.85);
+                    return;
+                }
             }
         }
         const nextIdx = baseIdx + 1;
         if (nextIdx >= _cv.pages.length) return;
-        const img  = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
+        const img = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
         if (!img) return;
-        const off  = absPos(img);
-        const size = isH ? img.clientWidth : img.clientHeight;
-        const dest = size <= vSize + 2 ? off - (vSize - size) / 2 : off; // centre small pages
-        _cvNavLock(nextIdx);
-        _cvAnimateTo(axis, Math.max(0, Math.min(dest, stage[sSize] - vSize)));
+        const off = absPos(img), sz = isH ? img.clientWidth : img.clientHeight;
+        _cvSetNav(nextIdx);
+        doScroll(sz <= vSize + 2 ? off - (vSize - sz) / 2 : off);
     } else {
-        // Scroll back within an oversized page before jumping to previous.
-        if (_cvNavTarget === null && curImg) {
-            const off  = absPos(curImg);
-            const size = isH ? curImg.clientWidth : curImg.clientHeight;
-            if (size > vSize + 2 && scrollEff > off + 2) {
-                _cvAnimateTo(axis, Math.max(scrollEff - vSize * 0.85, off));
-                return;
+        // Intra-page backward scroll (only when no page-jump is queued).
+        if (_cvNavTarget === null) {
+            const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
+            if (cur) {
+                const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
+                if (sz > vSize + 2 && stage[sProp] > off + 2) {
+                    doScroll(stage[sProp] - vSize * 0.85);
+                    return;
+                }
             }
         }
         const prevIdx = baseIdx - 1;
         if (prevIdx < 0) return;
-        const img  = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
+        const img = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
         if (!img) return;
-        const off  = absPos(img);
-        const size = isH ? img.clientWidth : img.clientHeight;
-        const dest = size <= vSize + 2 ? off - (vSize - size) / 2 : off + size - vSize;
-        _cvNavLock(prevIdx);
-        _cvAnimateTo(axis, Math.max(0, Math.min(dest, stage[sSize] - vSize)));
+        const off = absPos(img), sz = isH ? img.clientWidth : img.clientHeight;
+        _cvSetNav(prevIdx);
+        doScroll(sz <= vSize + 2 ? off - (vSize - sz) / 2 : off + sz - vSize);
     }
 }
