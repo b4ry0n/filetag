@@ -220,6 +220,8 @@ function cvScrollThumbIntoView(idx) {
 // ---------------------------------------------------------------------------
 
 let _cvScrollObserver = null;
+let _cvNavTarget = null;   // page index we are currently animating towards
+let _cvNavTimer  = null;   // timeout that clears _cvNavTarget after animation
 
 function _cvSetScrollButtons() {
     document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll && _cv.scrollDir === 'v');
@@ -310,8 +312,11 @@ function cvBuildScrollView() {
         container.appendChild(img);
     });
 
-    // Track which page is most visible and update status + thumbnail strip
+    // Track which page is most visible and update status + thumbnail strip.
+    // While a keyboard-initiated jump is in progress (_cvNavTarget != null) we
+    // ignore observer callbacks so intermediate pages don't corrupt _cv.current.
     _cvScrollObserver = new IntersectionObserver(entries => {
+        if (_cvNavTarget !== null) return;   // navigation animation in progress
         let best = -1, bestRatio = 0;
         entries.forEach(entry => {
             if (entry.intersectionRatio > bestRatio) {
@@ -752,28 +757,30 @@ function cvClickNav(e) {
 // Scroll-mode keyboard navigation
 // ---------------------------------------------------------------------------
 
-// Scrolls by one viewport-unit in the given direction (+1 forward, -1 back).
-// Jumps to the next/previous page when the current page boundary is already visible.
+// Lock navigation target: update _cv.current immediately and suppress the
+// IntersectionObserver for ~600 ms so intermediate pages don't corrupt it.
+function _cvNavLock(pageIdx) {
+    _cvNavTarget = pageIdx;
+    _cv.current  = pageIdx;
+    cvUpdateThumbActive(pageIdx);
+    const statusEl = document.getElementById('cv-status');
+    if (statusEl) statusEl.textContent = `${pageIdx + 1} / ${_cv.pages.length}`;
+    clearTimeout(_cvNavTimer);
+    _cvNavTimer = setTimeout(() => { _cvNavTarget = null; }, 700);
+}
+
+// Navigate forward (+1) or backward (-1) one page in scroll mode.
 function _cvScrollNav(dir) {
     const stage = document.getElementById('cv-stage');
     if (!stage) return;
 
-    if (_cv.scrollDir === 'h') {
-        const vw = stage.clientWidth;
-        const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
-        // Scroll-origin-relative left edge of an image (works regardless of RTL flex layout).
-        const imgScrollX = img => img.getBoundingClientRect().left - stage.getBoundingClientRect().left + stage.scrollLeft;
+    // Helper: scroll-origin-relative position of an image's left/top edge.
+    const imgScrollX = img => img.getBoundingClientRect().left - stage.getBoundingClientRect().left + stage.scrollLeft;
+    const imgScrollY = img => img.getBoundingClientRect().top  - stage.getBoundingClientRect().top  + stage.scrollTop;
 
-        // Scroll the stage so that `img` is centred (if it fits) or start/end-aligned.
-        // Uses stage.scrollTo instead of scrollIntoView to avoid scrolling parent containers.
-        function jumpToImg(img, snapDir) {
-            const x = imgScrollX(img);
-            const w = img.clientWidth;
-            const target = w <= vw + 2
-                ? x - (vw - w) / 2                  // centre when it fits
-                : snapDir > 0 ? x : x + w - vw;     // else start (fwd) or end (back)
-            stage.scrollTo({ left: Math.max(0, Math.min(target, stage.scrollWidth - vw)), behavior: 'smooth' });
-        }
+    if (_cv.scrollDir === 'h') {
+        const vw     = stage.clientWidth;
+        const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
 
         if (dir > 0) {
             const pageTooWide = curImg && curImg.clientWidth > vw + 2;
@@ -783,8 +790,13 @@ function _cvScrollNav(dir) {
             } else {
                 const nextIdx = _cv.current + 1;
                 if (nextIdx < _cv.pages.length) {
-                    const nextImg = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
-                    if (nextImg) jumpToImg(nextImg, 1);
+                    const img = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
+                    if (img) {
+                        const x = imgScrollX(img), w = img.clientWidth;
+                        const target = w <= vw + 2 ? x - (vw - w) / 2 : x;
+                        _cvNavLock(nextIdx);
+                        stage.scrollTo({ left: Math.max(0, Math.min(target, stage.scrollWidth - vw)), behavior: 'smooth' });
+                    }
                 }
             }
         } else {
@@ -795,8 +807,13 @@ function _cvScrollNav(dir) {
             } else {
                 const prevIdx = _cv.current - 1;
                 if (prevIdx >= 0) {
-                    const prevImg = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
-                    if (prevImg) jumpToImg(prevImg, -1);
+                    const img = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
+                    if (img) {
+                        const x = imgScrollX(img), w = img.clientWidth;
+                        const target = w <= vw + 2 ? x - (vw - w) / 2 : x + w - vw;
+                        _cvNavLock(prevIdx);
+                        stage.scrollTo({ left: Math.max(0, Math.min(target, stage.scrollWidth - vw)), behavior: 'smooth' });
+                    }
                 }
             }
         }
@@ -804,42 +821,40 @@ function _cvScrollNav(dir) {
     }
 
     // Vertical scroll mode.
-    // Primary action: jump to the next/previous page, centred if it fits.
-    // Exception: if the current page is taller than the viewport, scroll through
-    // it in chunks (≤ 80 % of vh for comfortable reading) before jumping away.
-    const stageRect = stage.getBoundingClientRect();
-    const vh = stage.clientHeight;
+    const vh     = stage.clientHeight;
     const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
 
     if (dir > 0) {
-        const pageTooTall   = curImg && curImg.clientHeight > vh;
-        const atPageBottom  = !curImg || curImg.getBoundingClientRect().bottom <= stageRect.bottom + 20;
+        const pageTooTall  = curImg && curImg.clientHeight > vh + 2;
+        const atPageBottom = !curImg || imgScrollY(curImg) + curImg.clientHeight <= stage.scrollTop + vh + 2;
         if (pageTooTall && !atPageBottom) {
-            // Tall page still has content below — scroll to the next chunk.
             stage.scrollTo({ top: Math.min(stage.scrollTop + vh * 0.8, stage.scrollHeight - vh), behavior: 'smooth' });
         } else {
-            // Page fits (or we reached the bottom of a tall page) — jump to next page.
             const nextIdx = _cv.current + 1;
             if (nextIdx < _cv.pages.length) {
-                const nextImg = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
-                if (nextImg) {
-                    nextImg.scrollIntoView({ behavior: 'smooth', block: nextImg.clientHeight <= vh ? 'center' : 'start' });
+                const img = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
+                if (img) {
+                    const y = imgScrollY(img), h = img.clientHeight;
+                    const target = h <= vh + 2 ? y - (vh - h) / 2 : y;
+                    _cvNavLock(nextIdx);
+                    stage.scrollTo({ top: Math.max(0, Math.min(target, stage.scrollHeight - vh)), behavior: 'smooth' });
                 }
             }
         }
     } else {
-        const pageTooTall  = curImg && curImg.clientHeight > vh;
-        const atPageTop    = !curImg || curImg.getBoundingClientRect().top >= stageRect.top - 20;
+        const pageTooTall  = curImg && curImg.clientHeight > vh + 2;
+        const atPageTop    = !curImg || imgScrollY(curImg) >= stage.scrollTop - 2;
         if (pageTooTall && !atPageTop) {
-            // Tall page still has content above — scroll to the previous chunk.
             stage.scrollTo({ top: Math.max(0, stage.scrollTop - vh * 0.8), behavior: 'smooth' });
         } else {
-            // Page fits (or we reached the top of a tall page) — jump to previous page.
             const prevIdx = _cv.current - 1;
             if (prevIdx >= 0) {
-                const prevImg = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
-                if (prevImg) {
-                    prevImg.scrollIntoView({ behavior: 'smooth', block: prevImg.clientHeight <= vh ? 'center' : 'end' });
+                const img = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
+                if (img) {
+                    const y = imgScrollY(img), h = img.clientHeight;
+                    const target = h <= vh + 2 ? y - (vh - h) / 2 : y + h - vh;
+                    _cvNavLock(prevIdx);
+                    stage.scrollTo({ top: Math.max(0, Math.min(target, stage.scrollHeight - vh)), behavior: 'smooth' });
                 }
             }
         }
