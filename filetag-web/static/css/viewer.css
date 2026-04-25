@@ -94,7 +94,6 @@
     max-width: var(--cv-scroll-width, 100%);
     margin: 0 auto 8px;
     display: block;
-    aspect-ratio: 3 / 4;
     background: #111;
     object-fit: contain;
 }
