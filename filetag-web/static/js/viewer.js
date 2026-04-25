@@ -335,6 +335,14 @@ function cvBuildScrollView() {
         _cvScrollObserver.observe(img);
     });
 
+    // Clear the nav lock as soon as the smooth-scroll animation ends.
+    // This is more reliable than a fixed timeout, especially in fullscreen
+    // where pages are larger and animations take longer.
+    stage.addEventListener('scrollend', () => {
+        clearTimeout(_cvNavTimer);
+        _cvNavTarget = null;
+    });
+
     cvApplyScrollZoom();
 
     // Scroll to the page that was open before entering scroll mode
@@ -759,6 +767,11 @@ function cvClickNav(e) {
 // ---------------------------------------------------------------------------
 
 // Record the destination page and block the IntersectionObserver.
+// _cvNavTarget is cleared by the scrollend event (or 1500 ms fallback).
+// Using scrollend (Chrome 114+, Firefox 109+, Safari 17.4+) means the
+// observer is only unblocked when the animation truly stops, not after an
+// arbitrary timeout — which is important on large fullscreen pages where
+// smooth scroll can take >600 ms.
 function _cvSetNav(pageIdx) {
     _cvNavTarget = pageIdx;
     _cv.current  = pageIdx;
@@ -766,7 +779,7 @@ function _cvSetNav(pageIdx) {
     const s = document.getElementById('cv-status');
     if (s) s.textContent = `${pageIdx + 1} / ${_cv.pages.length}`;
     clearTimeout(_cvNavTimer);
-    _cvNavTimer = setTimeout(() => { _cvNavTarget = null; }, 600);
+    _cvNavTimer = setTimeout(() => { _cvNavTarget = null; }, 1500); // fallback only
 }
 
 // Navigate forward (+1) or backward (-1) one page in scroll mode.
