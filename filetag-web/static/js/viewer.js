@@ -759,10 +759,39 @@ function _cvScrollNav(dir) {
     if (!stage) return;
 
     if (_cv.scrollDir === 'h') {
-        const step = (_cv.rtl ? -dir : dir) * stage.clientWidth * 0.9;
-        const newLeft = stage.scrollLeft + step;
-        const maxLeft = stage.scrollWidth - stage.clientWidth;
-        stage.scrollTo({ left: Math.max(0, Math.min(maxLeft, newLeft)), behavior: 'smooth' });
+        const vw = stage.clientWidth;
+        const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
+        const effectiveDir = _cv.rtl ? -dir : dir;
+
+        if (dir > 0) {
+            const pageTooWide  = curImg && curImg.clientWidth > vw;
+            const atPageEnd    = !curImg || (_cv.rtl
+                ? curImg.getBoundingClientRect().left >= stage.getBoundingClientRect().left - 20
+                : curImg.getBoundingClientRect().right <= stage.getBoundingClientRect().right + 20);
+            if (pageTooWide && !atPageEnd) {
+                stage.scrollTo({ left: Math.min(stage.scrollLeft + effectiveDir * vw * 0.8, stage.scrollWidth - vw), behavior: 'smooth' });
+            } else {
+                const nextIdx = _cv.current + 1;
+                if (nextIdx < _cv.pages.length) {
+                    const nextImg = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
+                    if (nextImg) nextImg.scrollIntoView({ behavior: 'smooth', inline: nextImg.clientWidth <= vw ? 'center' : (_cv.rtl ? 'end' : 'start'), block: 'nearest' });
+                }
+            }
+        } else {
+            const pageTooWide  = curImg && curImg.clientWidth > vw;
+            const atPageStart  = !curImg || (_cv.rtl
+                ? curImg.getBoundingClientRect().right <= stage.getBoundingClientRect().right + 20
+                : curImg.getBoundingClientRect().left >= stage.getBoundingClientRect().left - 20);
+            if (pageTooWide && !atPageStart) {
+                stage.scrollTo({ left: Math.max(0, stage.scrollLeft + effectiveDir * vw * 0.8), behavior: 'smooth' });
+            } else {
+                const prevIdx = _cv.current - 1;
+                if (prevIdx >= 0) {
+                    const prevImg = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
+                    if (prevImg) prevImg.scrollIntoView({ behavior: 'smooth', inline: prevImg.clientWidth <= vw ? 'center' : (_cv.rtl ? 'start' : 'end'), block: 'nearest' });
+                }
+            }
+        }
         return;
     }
 
