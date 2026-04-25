@@ -778,17 +778,23 @@ function _cvScrollNav(dir) {
     const imgScrollX = img => img.getBoundingClientRect().left - stage.getBoundingClientRect().left + stage.scrollLeft;
     const imgScrollY = img => img.getBoundingClientRect().top  - stage.getBoundingClientRect().top  + stage.scrollTop;
 
+    // If a page-change animation is already in progress, navigate from the target
+    // page (not from wherever the scroll currently is mid-animation).
+    // Skip the intra-page check entirely: the next keypress always jumps to the
+    // page after (or before) the current target.
+    const baseIdx = _cvNavTarget !== null ? _cvNavTarget : _cv.current;
+
     if (_cv.scrollDir === 'h') {
         const vw     = stage.clientWidth;
-        const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
+        const curImg = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
 
         if (dir > 0) {
-            const pageTooWide = curImg && curImg.clientWidth > vw + 2;
+            const pageTooWide = _cvNavTarget === null && curImg && curImg.clientWidth > vw + 2;
             const atPageEnd   = !curImg || imgScrollX(curImg) + curImg.clientWidth <= stage.scrollLeft + vw + 2;
             if (pageTooWide && !atPageEnd) {
                 stage.scrollTo({ left: Math.min(stage.scrollLeft + vw * 0.8, stage.scrollWidth - vw), behavior: 'smooth' });
             } else {
-                const nextIdx = _cv.current + 1;
+                const nextIdx = baseIdx + 1;
                 if (nextIdx < _cv.pages.length) {
                     const img = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
                     if (img) {
@@ -800,12 +806,12 @@ function _cvScrollNav(dir) {
                 }
             }
         } else {
-            const pageTooWide = curImg && curImg.clientWidth > vw + 2;
+            const pageTooWide = _cvNavTarget === null && curImg && curImg.clientWidth > vw + 2;
             const atPageStart = !curImg || imgScrollX(curImg) >= stage.scrollLeft - 2;
             if (pageTooWide && !atPageStart) {
                 stage.scrollTo({ left: Math.max(0, stage.scrollLeft - vw * 0.8), behavior: 'smooth' });
             } else {
-                const prevIdx = _cv.current - 1;
+                const prevIdx = baseIdx - 1;
                 if (prevIdx >= 0) {
                     const img = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
                     if (img) {
@@ -822,15 +828,15 @@ function _cvScrollNav(dir) {
 
     // Vertical scroll mode.
     const vh     = stage.clientHeight;
-    const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
+    const curImg = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
 
     if (dir > 0) {
-        const pageTooTall  = curImg && curImg.clientHeight > vh + 2;
+        const pageTooTall  = _cvNavTarget === null && curImg && curImg.clientHeight > vh + 2;
         const atPageBottom = !curImg || imgScrollY(curImg) + curImg.clientHeight <= stage.scrollTop + vh + 2;
         if (pageTooTall && !atPageBottom) {
             stage.scrollTo({ top: Math.min(stage.scrollTop + vh * 0.8, stage.scrollHeight - vh), behavior: 'smooth' });
         } else {
-            const nextIdx = _cv.current + 1;
+            const nextIdx = baseIdx + 1;
             if (nextIdx < _cv.pages.length) {
                 const img = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
                 if (img) {
@@ -842,12 +848,12 @@ function _cvScrollNav(dir) {
             }
         }
     } else {
-        const pageTooTall  = curImg && curImg.clientHeight > vh + 2;
+        const pageTooTall  = _cvNavTarget === null && curImg && curImg.clientHeight > vh + 2;
         const atPageTop    = !curImg || imgScrollY(curImg) >= stage.scrollTop - 2;
         if (pageTooTall && !atPageTop) {
             stage.scrollTo({ top: Math.max(0, stage.scrollTop - vh * 0.8), behavior: 'smooth' });
         } else {
-            const prevIdx = _cv.current - 1;
+            const prevIdx = baseIdx - 1;
             if (prevIdx >= 0) {
                 const img = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
                 if (img) {
