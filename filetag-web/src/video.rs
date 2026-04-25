@@ -528,8 +528,10 @@ pub async fn extract_video_frames(
     duration_secs: f64,
     use_scene_select: bool,
 ) -> anyhow::Result<Vec<Vec<u8>>> {
+    // Hard upper bound on the number of frames.  The truncate() below makes
+    // the bound visible to static analysis tools that do not follow clamp().
     let n = n.clamp(1, 256);
-    let positions = if use_scene_select {
+    let mut positions = if use_scene_select {
         match scene_positions(abs, n, duration_secs).await {
             Ok(v) if !v.is_empty() => v,
             _ => interval_positions(n, duration_secs),
@@ -537,8 +539,9 @@ pub async fn extract_video_frames(
     } else {
         interval_positions(n, duration_secs)
     };
+    positions.truncate(256); // explicit bound so the allocation below is provably bounded
 
-    let mut frames = Vec::with_capacity(n);
+    let mut frames = Vec::with_capacity(positions.len());
 
     for t in positions {
         let output = tokio::process::Command::new("nice")
