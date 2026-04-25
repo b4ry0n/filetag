@@ -163,8 +163,9 @@ function renderGrid(items) {
             } else {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
+                const dirSymlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
                 html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
-                    <div class="card-preview">${preview}</div>
+                    ${dirSymlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             }
@@ -179,15 +180,16 @@ function renderGrid(items) {
                 : '';
             const uncoveredBadge = entry.covered === false ? '<span class="card-uncovered" title="No filetag database on this filesystem">&#128274;</span>' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
+            const symlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
             if (type_ === 'zip') {
                 html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
-                    ${checkmark}${gotoDirBtn}${uncoveredBadge}<div class="card-preview">${preview}</div>
+                    ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
                 const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
                 html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
-                    ${checkmark}${gotoDirBtn}${uncoveredBadge}<div class="card-preview">${preview}</div>
+                    ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             }
@@ -229,9 +231,10 @@ function renderList(items) {
             } else {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
+                const dirSymlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
                 html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
                     <span class="icon">${icon}</span>
-                    <span class="name">${esc(name)}</span>
+                    <span class="name">${esc(name)}${dirSymlinkSuffix}</span>
                     <span class="size">${size}</span>
                     <span class="date">${date}</span>
                     <span class="tags-count">${tags}</span>
@@ -247,10 +250,11 @@ function renderList(items) {
                 : '';
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
+            const symlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
             if (fileType(name) === 'zip') {
                 html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
-                    <span class="name">${esc(name)}${uncoveredBadge}</span>
+                    <span class="name">${esc(name)}${uncoveredBadge}${symlinkSuffix}</span>
                     <span class="size">${size}</span>
                     <span class="date">${date}</span>
                     <span class="tags-count">${tags}${gotoDirBtn}</span>
@@ -259,7 +263,7 @@ function renderList(items) {
                 const dblFnL = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
                 html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
-                    <span class="name">${esc(name)}${uncoveredBadge}</span>
+                    <span class="name">${esc(name)}${uncoveredBadge}${symlinkSuffix}</span>
                     <span class="size">${size}</span>
                     <span class="date">${date}</span>
                     <span class="tags-count">${tags}${gotoDirBtn}</span>

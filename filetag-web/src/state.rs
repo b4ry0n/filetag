@@ -284,6 +284,11 @@ pub fn resolve_preview(
 
 /// Sanitise a URL path component so it cannot escape `root`.
 /// Unlike `safe_path`, this does not require the file to exist first.
+///
+/// Symlinks that resolve to a path outside `root` are intentional (the user
+/// created them) and are therefore allowed.  Path traversal via `..` is
+/// already prevented by the component filter below, so removing the
+/// `starts_with(root)` restriction is safe.
 pub fn preview_safe_path(root: &Path, rel: &str) -> Option<PathBuf> {
     use std::path::Component;
     let mut result = root.to_path_buf();
@@ -294,13 +299,9 @@ pub fn preview_safe_path(root: &Path, rel: &str) -> Option<PathBuf> {
             _ => return None,
         }
     }
-    // Re-canonicalise to catch symlinks that escape root
-    match std::fs::canonicalize(&result) {
-        Ok(canonical) if canonical.starts_with(root) => Some(canonical),
-        Ok(_) => None,
-        // File may not exist yet (e.g. wrong path) – just reject
-        Err(_) => None,
-    }
+    // Canonicalise to resolve symlinks.  Symlinks pointing outside the root
+    // are allowed; path traversal via `..` is blocked by the filter above.
+    std::fs::canonicalize(&result).ok()
 }
 
 pub use filetag_lib::parse_tag;

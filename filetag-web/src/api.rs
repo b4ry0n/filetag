@@ -657,6 +657,7 @@ pub async fn api_files(
                 tag_count: None,
                 root_path: Some(r.root.display().to_string()),
                 covered: None,
+                is_symlink: None,
             })
             .collect();
         return Ok(Json(ApiDirListing {
@@ -713,9 +714,26 @@ pub async fn api_files(
             let child_count = std::fs::read_dir(entry.path())
                 .map(|rd| rd.flatten().count() as i64)
                 .unwrap_or(0);
-            let dir_rel_path = format!("{}{}", prefix, name);
+            // Detect a symlinked directory and use the canonical path for tag
+            // count queries so that tags on the real directory are reflected.
+            let is_symlink = std::fs::symlink_metadata(entry.path())
+                .is_ok_and(|m: std::fs::Metadata| m.file_type().is_symlink());
+            let dir_db_path = if is_symlink {
+                entry
+                    .path()
+                    .canonicalize()
+                    .ok()
+                    .and_then(|c| {
+                        c.strip_prefix(&db_root.root)
+                            .ok()
+                            .map(|r| r.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_else(|| format!("{}{}", prefix, name))
+            } else {
+                format!("{}{}", prefix, name)
+            };
             let dir_tag_count: i64 = tag_stmt
-                .query_row(rusqlite::params![&dir_rel_path], |r| r.get(0))
+                .query_row(rusqlite::params![&dir_db_path], |r| r.get(0))
                 .unwrap_or(0);
             dirs.push(ApiDirEntry {
                 name,
@@ -730,6 +748,7 @@ pub async fn api_files(
                 },
                 root_path: None,
                 covered: None,
+                is_symlink: if is_symlink { Some(true) } else { None },
             });
         } else if meta.is_file() {
             let rel_path = format!("{}{}", prefix, name);
@@ -741,8 +760,27 @@ pub async fn api_files(
                 .map(|d| d.as_nanos() as i64)
                 .unwrap_or(0);
 
+            // Detect symlinks and resolve to the canonical path for DB lookups.
+            // Tags are always stored under the real file's path (because all tag
+            // write operations canonicalise before hitting the DB), so tag counts
+            // must be queried against the canonical path as well.
+            let is_symlink = std::fs::symlink_metadata(entry.path())
+                .is_ok_and(|m: std::fs::Metadata| m.file_type().is_symlink());
+            let (db_lookup_path, covered_path) = if is_symlink {
+                let canonical_opt = entry.path().canonicalize().ok();
+                let canon_rel = canonical_opt
+                    .as_deref()
+                    .and_then(|c| c.strip_prefix(&db_root.root).ok())
+                    .map(|r| r.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| rel_path.clone());
+                let canon_abs = canonical_opt.unwrap_or_else(|| entry.path());
+                (canon_rel, canon_abs)
+            } else {
+                (rel_path.clone(), entry.path())
+            };
+
             let tag_count: i64 = tag_stmt
-                .query_row(rusqlite::params![&rel_path], |r| r.get(0))
+                .query_row(rusqlite::params![&db_lookup_path], |r| r.get(0))
                 .unwrap_or(0);
 
             files.push(ApiDirEntry {
@@ -753,7 +791,8 @@ pub async fn api_files(
                 file_count: None,
                 tag_count: Some(tag_count),
                 root_path: None,
-                covered: Some(file_is_covered(&state, &entry.path())),
+                covered: Some(file_is_covered(&state, &covered_path)),
+                is_symlink: if is_symlink { Some(true) } else { None },
             });
         }
     }

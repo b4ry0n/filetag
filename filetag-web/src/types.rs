@@ -102,6 +102,10 @@ pub struct ApiDirEntry {
     /// Tagging is not allowed in that case.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub covered: Option<bool>,
+    /// True when this entry is a symbolic link.  All operations act on the
+    /// link target; the link itself never receives its own tags or thumbnails.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_symlink: Option<bool>,
 }
 
 /// Full file detail as returned by `GET /api/file`.
