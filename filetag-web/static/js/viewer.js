@@ -766,42 +766,43 @@ function _cvScrollNav(dir) {
         return;
     }
 
-    // Vertical scroll mode: jump to the next/previous page by default.
-    // Exception: when the current page is taller than the viewport and there is
-    // more of it beyond the fold, scroll within the page instead.
+    // Vertical scroll mode.
+    // Primary action: jump to the next/previous page, centred if it fits.
+    // Exception: if the current page is taller than the viewport, scroll through
+    // it in chunks (≤ 80 % of vh for comfortable reading) before jumping away.
     const stageRect = stage.getBoundingClientRect();
     const vh = stage.clientHeight;
     const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
 
     if (dir > 0) {
-        const moreBelowFold = curImg && curImg.getBoundingClientRect().bottom > stageRect.bottom + 20;
-        if (moreBelowFold) {
-            // Current page continues below the fold — show the next chunk of it.
-            stage.scrollTo({ top: Math.min(stage.scrollTop + vh * 0.9, stage.scrollHeight - vh), behavior: 'smooth' });
+        const pageTooTall   = curImg && curImg.clientHeight > vh;
+        const atPageBottom  = !curImg || curImg.getBoundingClientRect().bottom <= stageRect.bottom + 20;
+        if (pageTooTall && !atPageBottom) {
+            // Tall page still has content below — scroll to the next chunk.
+            stage.scrollTo({ top: Math.min(stage.scrollTop + vh * 0.8, stage.scrollHeight - vh), behavior: 'smooth' });
         } else {
-            // Current page is fully visible (or no page tracked) — jump to the next page.
+            // Page fits (or we reached the bottom of a tall page) — jump to next page.
             const nextIdx = _cv.current + 1;
             if (nextIdx < _cv.pages.length) {
                 const nextImg = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
                 if (nextImg) {
-                    const block = nextImg.clientHeight <= vh ? 'center' : 'start';
-                    nextImg.scrollIntoView({ behavior: 'smooth', block });
+                    nextImg.scrollIntoView({ behavior: 'smooth', block: nextImg.clientHeight <= vh ? 'center' : 'start' });
                 }
             }
         }
     } else {
-        const moreAboveFold = curImg && curImg.getBoundingClientRect().top < stageRect.top - 20;
-        if (moreAboveFold) {
-            // Current page continues above the fold — show the previous chunk of it.
-            stage.scrollTo({ top: Math.max(0, stage.scrollTop - vh * 0.9), behavior: 'smooth' });
+        const pageTooTall  = curImg && curImg.clientHeight > vh;
+        const atPageTop    = !curImg || curImg.getBoundingClientRect().top >= stageRect.top - 20;
+        if (pageTooTall && !atPageTop) {
+            // Tall page still has content above — scroll to the previous chunk.
+            stage.scrollTo({ top: Math.max(0, stage.scrollTop - vh * 0.8), behavior: 'smooth' });
         } else {
-            // Current page top is visible (or no page tracked) — jump to the previous page.
+            // Page fits (or we reached the top of a tall page) — jump to previous page.
             const prevIdx = _cv.current - 1;
             if (prevIdx >= 0) {
                 const prevImg = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
                 if (prevImg) {
-                    const block = prevImg.clientHeight <= vh ? 'center' : 'end';
-                    prevImg.scrollIntoView({ behavior: 'smooth', block });
+                    prevImg.scrollIntoView({ behavior: 'smooth', block: prevImg.clientHeight <= vh ? 'center' : 'end' });
                 }
             }
         }
