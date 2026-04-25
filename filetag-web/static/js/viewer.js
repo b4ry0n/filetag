@@ -764,38 +764,49 @@ function _cvScrollNav(dir) {
 
     // Vertical scroll mode
     const stageRect = stage.getBoundingClientRect();
+    const vh = stage.clientHeight;
     const curImg = stage.querySelector(`img.cv-page[data-page="${_cv.current}"]`);
 
     if (dir > 0) {
-        // If the bottom of the current page is already within view, jump to next page start
+        // If the bottom of the current page is already within view, jump to the next page.
         if (curImg) {
             const imgRect = curImg.getBoundingClientRect();
             if (imgRect.bottom <= stageRect.bottom + 20) {
                 const nextIdx = _cv.current + 1;
                 if (nextIdx < _cv.pages.length) {
                     const nextImg = stage.querySelector(`img.cv-page[data-page="${nextIdx}"]`);
-                    if (nextImg) nextImg.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    if (nextImg) {
+                        // If the whole next page fits in the viewport, centre it for comfortable reading.
+                        // Otherwise align its top edge with the viewport top.
+                        const block = nextImg.clientHeight <= vh ? 'center' : 'start';
+                        nextImg.scrollIntoView({ behavior: 'smooth', block });
+                    }
                 }
                 return;
             }
         }
-        // Otherwise scroll down by one viewport height
-        const newTop = stage.scrollTop + stage.clientHeight * 0.9;
-        stage.scrollTo({ top: Math.min(newTop, stage.scrollHeight - stage.clientHeight), behavior: 'smooth' });
+        // Otherwise scroll forward so that the bottom of the current view becomes the new top.
+        const newTop = stage.scrollTop + vh * 0.9;
+        stage.scrollTo({ top: Math.min(newTop, stage.scrollHeight - vh), behavior: 'smooth' });
     } else {
-        // If the top of the current page is already within view, jump to previous page start
+        // If the top of the current page is already within view, jump to the previous page.
         if (curImg) {
             const imgRect = curImg.getBoundingClientRect();
             if (imgRect.top >= stageRect.top - 20) {
                 const prevIdx = _cv.current - 1;
                 if (prevIdx >= 0) {
                     const prevImg = stage.querySelector(`img.cv-page[data-page="${prevIdx}"]`);
-                    if (prevImg) prevImg.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    if (prevImg) {
+                        // If the whole previous page fits in the viewport, centre it.
+                        // Otherwise align its bottom edge so we see where we came from.
+                        const block = prevImg.clientHeight <= vh ? 'center' : 'end';
+                        prevImg.scrollIntoView({ behavior: 'smooth', block });
+                    }
                 }
                 return;
             }
         }
-        // Otherwise scroll up by one viewport height
-        stage.scrollTo({ top: Math.max(0, stage.scrollTop - stage.clientHeight * 0.9), behavior: 'smooth' });
+        // Otherwise scroll back so that the top of the current view becomes the new bottom.
+        stage.scrollTo({ top: Math.max(0, stage.scrollTop - vh * 0.9), behavior: 'smooth' });
     }
 }
