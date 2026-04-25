@@ -1032,7 +1032,9 @@ pub fn delete_tag(conn: &Connection, name: &str) -> Result<bool> {
 /// Returns the number of tags removed.
 pub fn prune_unused_tags(conn: &Connection) -> Result<usize> {
     let n = conn.execute(
-        "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM file_tags)",
+        "DELETE FROM tags \
+         WHERE id NOT IN (SELECT DISTINCT tag_id FROM file_tags) \
+           AND id NOT IN (SELECT DISTINCT tag_id FROM subject_tags)",
         [],
     )?;
     Ok(n)
