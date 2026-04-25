@@ -714,8 +714,11 @@ pub async fn api_files(
         let is_symlink = link_meta.file_type().is_symlink();
 
         // Follow the symlink (or just stat the file) to learn about the target.
-        // May be None for broken symlinks.
-        let target_meta = entry.metadata().ok();
+        // IMPORTANT: use the free function std::fs::metadata() which calls
+        // stat() and follows symlinks.  DirEntry::metadata() calls lstat() and
+        // does NOT follow symlinks, so is_file()/is_dir() would always be false
+        // for a symlink entry.  May be None for broken symlinks.
+        let target_meta = std::fs::metadata(entry.path()).ok();
 
         // Determine effective kind from the target.  Broken symlinks are shown
         // as files (type inferred from the link name's extension).
