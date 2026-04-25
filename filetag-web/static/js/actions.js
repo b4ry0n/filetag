@@ -1,5 +1,99 @@
 
 // ---------------------------------------------------------------------------
+// Navigation history (back / forward)
+// ---------------------------------------------------------------------------
+
+/** Snapshots of visited locations, oldest first. */
+let _navHistory = [];
+/** Index of the currently displayed location in _navHistory. */
+let _navCursor  = -1;
+/** True while restoring a history entry so pushes are suppressed. */
+let _navRestoring = false;
+
+/** Capture the current browsing location as a plain object. */
+function _navSnapshot() {
+    return {
+        mode:     state.mode,
+        basePath: state.currentBasePath,
+        path:     state.currentPath,
+        zipPath:  state.zipPath,
+        zipSubdir: state.zipSubdir,
+    };
+}
+
+/** Push the current location onto the history stack after a navigation. */
+function _navPush() {
+    if (_navRestoring) return;
+    const snap = _navSnapshot();
+    // Ignore duplicate of what is already the current entry.
+    const cur = _navHistory[_navCursor];
+    if (cur && cur.mode === snap.mode && cur.basePath === snap.basePath &&
+        cur.path === snap.path && cur.zipPath === snap.zipPath &&
+        cur.zipSubdir === snap.zipSubdir) return;
+    // Truncate any forward entries and append.
+    _navHistory = _navHistory.slice(0, _navCursor + 1);
+    _navHistory.push(snap);
+    _navCursor = _navHistory.length - 1;
+    _navUpdateButtons();
+}
+
+function _navUpdateButtons() {
+    const back = document.getElementById('nav-back');
+    const fwd  = document.getElementById('nav-forward');
+    if (back) back.disabled = _navCursor <= 0;
+    if (fwd)  fwd.disabled  = _navCursor >= _navHistory.length - 1;
+}
+
+async function _navRestore(snap) {
+    _thumbClearCache();
+    _kbCursor = -1;
+    state.selectedFile = null;
+    state.selectedDir  = null;
+    state.selectedPaths.clear();
+    state.selectedFilesData.clear();
+    state.activeTags.clear();
+    _lastClickedPath = null;
+    _armedBulkTag    = null;
+
+    if (snap.mode === 'zip' && snap.zipPath) {
+        state.currentBasePath = snap.basePath;
+        state.currentPath = snap.path;
+        state.mode = 'zip';
+        state.zipPath = snap.zipPath;
+        state.zipSubdir = snap.zipSubdir || '';
+        state.zipEntries = [];
+        renderBreadcrumb();
+        const el = document.getElementById('content');
+        el.className = '';
+        el.innerHTML = '<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Loading archive…</span></div>';
+        const data = await api('/api/zip/entries?' + new URLSearchParams({ path: snap.zipPath }) + dirParam('&'));
+        state.zipEntries = data.entries || [];
+        render();
+    } else {
+        if (snap.basePath !== null) state.currentBasePath = snap.basePath;
+        await loadFiles(snap.path || '');
+        await loadSettings();
+        render();
+    }
+}
+
+async function navBack() {
+    if (_navCursor <= 0) return;
+    _navCursor--;
+    _navRestoring = true;
+    try { await _navRestore(_navHistory[_navCursor]); } finally { _navRestoring = false; }
+    _navUpdateButtons();
+}
+
+async function navForward() {
+    if (_navCursor >= _navHistory.length - 1) return;
+    _navCursor++;
+    _navRestoring = true;
+    try { await _navRestore(_navHistory[_navCursor]); } finally { _navRestoring = false; }
+    _navUpdateButtons();
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
@@ -16,6 +110,7 @@ async function navigateTo(path) {
     await loadFiles(path);
     await loadSettings();
     render();
+    _navPush();
 }
 
 // Select a root card (virtual root page) — shows info in the detail panel.
@@ -52,6 +147,7 @@ async function enterRoot(rootPath) {
     _armedBulkTag = null;
     await Promise.all([loadInfo(), loadTags(), loadFiles(''), loadSettings()]);
     render();
+    _navPush();
 }
 
 // Navigate back to the virtual root (show all roots).
@@ -71,6 +167,7 @@ async function goVirtualRoot() {
     _armedBulkTag = null;
     await loadFiles('');
     render();
+    _navPush();
 }
 
 

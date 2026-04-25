@@ -53,6 +53,18 @@
         <div class="resize-handle resize-handle--col" id="resize-sidebar" title="Drag to resize"></div>
         <main class="main">
             <div class="toolbar">
+                <div class="nav-buttons">
+                    <button id="nav-back" class="view-btn" title="Back" disabled onclick="navBack()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                    </button>
+                    <button id="nav-forward" class="view-btn" title="Forward" disabled onclick="navForward()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                </div>
                 <nav class="breadcrumb" id="breadcrumb"></nav>
                 <div class="toolbar-right">
                     <span id="entry-count" class="entry-count"></span>

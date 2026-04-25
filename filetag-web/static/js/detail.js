@@ -40,6 +40,7 @@ async function openZipDir(zipPath) {
     }
 
     render();
+    _navPush();
 }
 
 async function refreshZipEntries() {
@@ -69,6 +70,7 @@ function enterZipSubdir(subdir) {
     _thumbInit();
     _dirThumbInit();
     _kbRestoreFocus();
+    _navPush();
 }
 
 /**

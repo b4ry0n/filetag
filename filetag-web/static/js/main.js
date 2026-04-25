@@ -229,6 +229,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        // Alt+Left / Alt+Right: browser-style back/forward navigation.
+        if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            e.preventDefault();
+            if (e.key === 'ArrowLeft') navBack(); else navForward();
+            return;
+        }
+
         // Skip when the tag context menu is open
         if (document.getElementById('tag-context-menu')) return;
 
@@ -297,6 +304,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e2) { console.error('loadFiles fallback also failed:', e2); }
     }
     render();
+    _navPush();   // seed the history stack with the initial location
+    _navUpdateButtons();
 
     // Build language selector and apply i18n translations to all data-i18n elements.
     const langSel = document.getElementById('lang-select');

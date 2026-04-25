@@ -20,6 +20,19 @@
     gap: 12px;
 }
 
+.nav-buttons {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.nav-buttons .view-btn:disabled {
+    opacity: 0.28;
+    cursor: default;
+    pointer-events: none;
+}
+
 .entry-count { font-size: 12px; color: var(--text-secondary); }
 
 .breadcrumb {
