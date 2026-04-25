@@ -123,7 +123,7 @@
     padding: 0 20px;
 }
 .cv-stage.cv-hscroll-mode .cv-page {
-    height: var(--cv-scroll-height, 90vh);
+    height: var(--cv-scroll-height, 100%);
     width: auto;
     max-width: none;
     max-height: 100%;

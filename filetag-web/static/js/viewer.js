@@ -12,7 +12,7 @@ const _cv = {
     scroll: false,   // continuous scroll mode
     scrollDir: 'v',  // 'v' vertical | 'h' horizontal
     scrollWidth: 100, // image width % in vertical scroll mode
-    scrollHeight: 90, // image height in vh in horizontal scroll mode
+    scrollHeight: 100, // image height % of stage in horizontal scroll mode (100 = fill)
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -261,12 +261,16 @@ function cvApplyScrollZoom(newSize, event) {
             const anchor = stage.scrollWidth > 0
                 ? { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx }
                 : null;
-            stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
+            if (_cv.scrollHeight >= 100) {
+                stage.style.removeProperty('--cv-scroll-height'); // let CSS default (100%) fill the stage
+            } else {
+                stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
+            }
             if (anchor) requestAnimationFrame(() => {
                 stage.scrollTo({ left: anchor.ratio * stage.scrollWidth - anchor.cx, behavior: 'instant' });
             });
         }
-        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + 'vh'; btn.style.visibility = _cv.scrollHeight === 90 ? 'hidden' : ''; }
+        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight >= 100 ? 'hidden' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
