@@ -816,7 +816,7 @@ function _cvScrollNav(dir) {
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
                 if (sz > vSize + 2 && stage[sProp] < off + sz - vSize - 2) {
-                    doScroll(stage[sProp] + vSize * 0.85);
+                    doScroll(Math.min(stage[sProp] + vSize * 0.85, off + sz - vSize));
                     return;
                 }
             }
@@ -835,7 +835,7 @@ function _cvScrollNav(dir) {
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
                 if (sz > vSize + 2 && stage[sProp] > off + 2) {
-                    doScroll(stage[sProp] - vSize * 0.85);
+                    doScroll(Math.max(stage[sProp] - vSize * 0.85, off));
                     return;
                 }
             }
