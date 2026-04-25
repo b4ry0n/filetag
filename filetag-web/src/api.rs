@@ -705,19 +705,30 @@ pub async fn api_files(
             continue;
         }
 
-        let meta = match entry.metadata() {
+        // Use symlink_metadata so the entry itself is always visible, even for
+        // broken symlinks whose target no longer exists.
+        let link_meta = match std::fs::symlink_metadata(entry.path()) {
             Ok(m) => m,
             Err(_) => continue,
         };
+        let is_symlink = link_meta.file_type().is_symlink();
 
-        if meta.is_dir() {
+        // Follow the symlink (or just stat the file) to learn about the target.
+        // May be None for broken symlinks.
+        let target_meta = entry.metadata().ok();
+
+        // Determine effective kind from the target.  Broken symlinks are shown
+        // as files (type inferred from the link name's extension).
+        let effective_is_dir = target_meta.as_ref().is_some_and(|m| m.is_dir());
+        let effective_is_file = target_meta.as_ref().is_some_and(|m| m.is_file())
+            || (is_symlink && target_meta.is_none());
+
+        if effective_is_dir {
             let child_count = std::fs::read_dir(entry.path())
                 .map(|rd| rd.flatten().count() as i64)
                 .unwrap_or(0);
-            // Detect a symlinked directory and use the canonical path for tag
-            // count queries so that tags on the real directory are reflected.
-            let is_symlink = std::fs::symlink_metadata(entry.path())
-                .is_ok_and(|m: std::fs::Metadata| m.file_type().is_symlink());
+            // For a symlinked directory use the canonical path for tag-count
+            // queries so that tags on the real directory are reflected.
             let dir_db_path = if is_symlink {
                 entry
                     .path()
@@ -750,22 +761,20 @@ pub async fn api_files(
                 covered: None,
                 is_symlink: if is_symlink { Some(true) } else { None },
             });
-        } else if meta.is_file() {
+        } else if effective_is_file {
             let rel_path = format!("{}{}", prefix, name);
-            let size = meta.len() as i64;
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i64)
-                .unwrap_or(0);
 
-            // Detect symlinks and resolve to the canonical path for DB lookups.
-            // Tags are always stored under the real file's path (because all tag
-            // write operations canonicalise before hitting the DB), so tag counts
-            // must be queried against the canonical path as well.
-            let is_symlink = std::fs::symlink_metadata(entry.path())
-                .is_ok_and(|m: std::fs::Metadata| m.file_type().is_symlink());
+            // Size and mtime come from the target when available.
+            let size = target_meta.as_ref().map(|m| m.len() as i64);
+            let mtime = target_meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64);
+
+            // For symlinks, resolve to the canonical path for DB lookups.
+            // Tags are stored under the real file's path because all write
+            // operations canonicalise before hitting the DB.
             let (db_lookup_path, covered_path) = if is_symlink {
                 let canonical_opt = entry.path().canonicalize().ok();
                 let canon_rel = canonical_opt
@@ -786,8 +795,8 @@ pub async fn api_files(
             files.push(ApiDirEntry {
                 name,
                 is_dir: false,
-                size: Some(size),
-                mtime: Some(mtime),
+                size,
+                mtime,
                 file_count: None,
                 tag_count: Some(tag_count),
                 root_path: None,
