@@ -180,7 +180,7 @@ function renderGrid(items) {
             const uncoveredBadge = entry.covered === false ? '<span class="card-uncovered" title="No filetag database on this filesystem">&#128274;</span>' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -248,7 +248,7 @@ function renderList(items) {
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             if (fileType(name) === 'zip') {
-                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${uncoveredBadge}</span>
                     <span class="size">${size}</span>
