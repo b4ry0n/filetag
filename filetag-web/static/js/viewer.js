@@ -221,7 +221,9 @@ function cvScrollThumbIntoView(idx) {
 
 let _cvScrollObserver = null;
 let _cvNavTarget = null;   // page index we are currently animating towards
-let _cvNavTimer  = null;   // timeout that clears _cvNavTarget after animation
+// Spring-based scroll animation state. A single rAF loop updates this each
+// frame. Updating _cvAnim.target mid-flight redirects smoothly.
+const _cvAnim = { raf: null, axis: null, pos: 0, vel: 0, target: 0 };
 
 function _cvSetScrollButtons() {
     document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll && _cv.scrollDir === 'v');
@@ -354,6 +356,8 @@ function cvBuildScrollView() {
 
 function cvExitScrollView() {
     if (_cvScrollObserver) { _cvScrollObserver.disconnect(); _cvScrollObserver = null; }
+    if (_cvAnim.raf) { cancelAnimationFrame(_cvAnim.raf); _cvAnim.raf = null; }
+    _cvNavTarget = null;
     const stage = document.getElementById('cv-stage');
     stage.classList.remove('cv-scroll-mode');
     stage.classList.remove('cv-hscroll-mode');
@@ -765,8 +769,54 @@ function _cvNavLock(pageIdx) {
     cvUpdateThumbActive(pageIdx);
     const statusEl = document.getElementById('cv-status');
     if (statusEl) statusEl.textContent = `${pageIdx + 1} / ${_cv.pages.length}`;
-    clearTimeout(_cvNavTimer);
-    _cvNavTimer = setTimeout(() => { _cvNavTarget = null; }, 700);
+}
+
+// Spring-based scroll animation. Calling this while already animating on the
+// same axis just updates the target — the running loop redirects smoothly
+// because the spring carries over velocity. No stutter on rapid keypresses.
+function _cvAnimateTo(axis, targetPos) {
+    const stage = document.getElementById('cv-stage');
+    if (!stage) return;
+
+    const prop = axis === 'x' ? 'scrollLeft' : 'scrollTop';
+
+    if (_cvAnim.axis !== axis || _cvAnim.raf === null) {
+        // Fresh start or axis change: read current scroll position
+        _cvAnim.pos  = stage[prop];
+        _cvAnim.vel  = 0;
+        _cvAnim.axis = axis;
+    }
+    _cvAnim.target = targetPos;
+
+    if (_cvAnim.raf) return; // loop already running; target updated above
+
+    // Spring constants: k=200 (stiffness), d=30 (slightly overdamped, ζ≈1.06)
+    // Settles in ≈350 ms, no oscillation.
+    const k = 200, d = 30;
+    let lastTime = null;
+
+    function step(now) {
+        if (lastTime === null) lastTime = now;
+        const dt   = Math.min((now - lastTime) / 1000, 0.05); // cap at 50 ms
+        lastTime   = now;
+
+        const force = (_cvAnim.target - _cvAnim.pos) * k - _cvAnim.vel * d;
+        _cvAnim.vel += force * dt;
+        _cvAnim.pos += _cvAnim.vel * dt;
+
+        const dist  = Math.abs(_cvAnim.target - _cvAnim.pos);
+        const speed = Math.abs(_cvAnim.vel);
+
+        if (dist < 0.5 && speed < 2) {
+            stage[prop]  = _cvAnim.target;
+            _cvAnim.raf  = null;
+            _cvNavTarget = null; // unlock IntersectionObserver
+        } else {
+            stage[prop]  = _cvAnim.pos;
+            _cvAnim.raf  = requestAnimationFrame(step);
+        }
+    }
+    _cvAnim.raf = requestAnimationFrame(step);
 }
 
 // Navigate forward (+1) or backward (-1) one page in scroll mode.
@@ -792,7 +842,7 @@ function _cvScrollNav(dir) {
             const pageTooWide = _cvNavTarget === null && curImg && curImg.clientWidth > vw + 2;
             const atPageEnd   = !curImg || imgScrollX(curImg) + curImg.clientWidth <= stage.scrollLeft + vw + 2;
             if (pageTooWide && !atPageEnd) {
-                stage.scrollTo({ left: Math.min(stage.scrollLeft + vw * 0.8, stage.scrollWidth - vw), behavior: 'smooth' });
+                _cvAnimateTo('x', Math.min(stage.scrollLeft + vw * 0.8, stage.scrollWidth - vw));
             } else {
                 const nextIdx = baseIdx + 1;
                 if (nextIdx < _cv.pages.length) {
@@ -801,7 +851,7 @@ function _cvScrollNav(dir) {
                         const x = imgScrollX(img), w = img.clientWidth;
                         const target = w <= vw + 2 ? x - (vw - w) / 2 : x;
                         _cvNavLock(nextIdx);
-                        stage.scrollTo({ left: Math.max(0, Math.min(target, stage.scrollWidth - vw)), behavior: 'smooth' });
+                        _cvAnimateTo('x', Math.max(0, Math.min(target, stage.scrollWidth - vw)));
                     }
                 }
             }
@@ -809,7 +859,7 @@ function _cvScrollNav(dir) {
             const pageTooWide = _cvNavTarget === null && curImg && curImg.clientWidth > vw + 2;
             const atPageStart = !curImg || imgScrollX(curImg) >= stage.scrollLeft - 2;
             if (pageTooWide && !atPageStart) {
-                stage.scrollTo({ left: Math.max(0, stage.scrollLeft - vw * 0.8), behavior: 'smooth' });
+                _cvAnimateTo('x', Math.max(0, stage.scrollLeft - vw * 0.8));
             } else {
                 const prevIdx = baseIdx - 1;
                 if (prevIdx >= 0) {
@@ -818,7 +868,7 @@ function _cvScrollNav(dir) {
                         const x = imgScrollX(img), w = img.clientWidth;
                         const target = w <= vw + 2 ? x - (vw - w) / 2 : x + w - vw;
                         _cvNavLock(prevIdx);
-                        stage.scrollTo({ left: Math.max(0, Math.min(target, stage.scrollWidth - vw)), behavior: 'smooth' });
+                        _cvAnimateTo('x', Math.max(0, Math.min(target, stage.scrollWidth - vw)));
                     }
                 }
             }
@@ -834,7 +884,7 @@ function _cvScrollNav(dir) {
         const pageTooTall  = _cvNavTarget === null && curImg && curImg.clientHeight > vh + 2;
         const atPageBottom = !curImg || imgScrollY(curImg) + curImg.clientHeight <= stage.scrollTop + vh + 2;
         if (pageTooTall && !atPageBottom) {
-            stage.scrollTo({ top: Math.min(stage.scrollTop + vh * 0.8, stage.scrollHeight - vh), behavior: 'smooth' });
+            _cvAnimateTo('y', Math.min(stage.scrollTop + vh * 0.8, stage.scrollHeight - vh));
         } else {
             const nextIdx = baseIdx + 1;
             if (nextIdx < _cv.pages.length) {
@@ -843,7 +893,7 @@ function _cvScrollNav(dir) {
                     const y = imgScrollY(img), h = img.clientHeight;
                     const target = h <= vh + 2 ? y - (vh - h) / 2 : y;
                     _cvNavLock(nextIdx);
-                    stage.scrollTo({ top: Math.max(0, Math.min(target, stage.scrollHeight - vh)), behavior: 'smooth' });
+                    _cvAnimateTo('y', Math.max(0, Math.min(target, stage.scrollHeight - vh)));
                 }
             }
         }
@@ -851,7 +901,7 @@ function _cvScrollNav(dir) {
         const pageTooTall  = _cvNavTarget === null && curImg && curImg.clientHeight > vh + 2;
         const atPageTop    = !curImg || imgScrollY(curImg) >= stage.scrollTop - 2;
         if (pageTooTall && !atPageTop) {
-            stage.scrollTo({ top: Math.max(0, stage.scrollTop - vh * 0.8), behavior: 'smooth' });
+            _cvAnimateTo('y', Math.max(0, stage.scrollTop - vh * 0.8));
         } else {
             const prevIdx = baseIdx - 1;
             if (prevIdx >= 0) {
@@ -860,7 +910,7 @@ function _cvScrollNav(dir) {
                     const y = imgScrollY(img), h = img.clientHeight;
                     const target = h <= vh + 2 ? y - (vh - h) / 2 : y + h - vh;
                     _cvNavLock(prevIdx);
-                    stage.scrollTo({ top: Math.max(0, Math.min(target, stage.scrollHeight - vh)), behavior: 'smooth' });
+                    _cvAnimateTo('y', Math.max(0, Math.min(target, stage.scrollHeight - vh)));
                 }
             }
         }
