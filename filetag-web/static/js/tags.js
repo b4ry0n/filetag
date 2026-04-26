@@ -890,8 +890,12 @@ function renderTmTagTreeNode(node, depth) {
         const synBadge = (tag.synonyms || []).length
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms||[]).map(esc).join(', ')}">&#8801;</span>` : '';
         const kvBadge = tag.has_values ? ` <span class="tag-kv-badge">k=v</span>` : '';
-        const cls = 'tag-item tag-standalone';
-        return `<button class="${cls}${sel}"${marginStyle} onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder"></span>${colorDot(tag.color)}${_highlightMatch(segment, q)}${kvBadge}${synBadge} <span class="count">${tag.count}</span></button>`;
+        // depth=0: tag-standalone (padding-left:6px) → dot at 6+12+4 = 22px.
+        // depth>0: inside a .tag-group div that already carries margin-left:12px,
+        //   so tag-item (padding-left:22px) gives dot at 12+22+12+4 = 50px — same as sidebar.
+        //   No extra margin or padding needed; the parent div handles the indentation.
+        const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
+        return `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder"></span>${colorDot(tag.color)}${_highlightMatch(segment, q)}${kvBadge}${synBadge} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node ---
