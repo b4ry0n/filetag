@@ -780,9 +780,24 @@ mark.tag-filter-match {
 
 /* Tag Manager: left list panel */
 
-.tm-list {
+.tm-list-col {
+    display: flex;
+    flex-direction: column;
     border-right: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.tm-list-header {
+    padding: 4px 8px 4px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.tm-list {
     overflow-y: auto;
+    flex: 1;
     padding: 4px 0;
 }
 

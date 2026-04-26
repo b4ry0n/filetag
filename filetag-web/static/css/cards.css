@@ -256,6 +256,22 @@
 .card.folder .card-preview { background: transparent; }
 .card.folder .card-icon { color: #fab005; }
 
+/*
+ * Inline directory sprite: fills the card-preview just like an image thumbnail.
+ * Each sprite frame is 240×240 px; background-size: auto 100% scales to card
+ * height, making each scaled frame exactly card-height pixels wide (1:1 aspect).
+ * JS cycles frames by setting background-position-x = -(frameIndex * height)px.
+ * Removing .card-icon from the DOM causes .card:has(.card-icon) to stop
+ * matching, so the card switches automatically to the full-bleed image layout.
+ */
+.card-dir-sprite {
+    position: absolute;
+    inset: 0;
+    background-repeat: no-repeat;
+    background-size: auto 100%;
+    background-position: 0 0;
+}
+
 /* Root cards */
 .card.root-card { cursor: grab; }
 .card.root-card .card-icon { color: var(--primary); }

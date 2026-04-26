@@ -579,162 +579,15 @@ function _thumbHoverAttach(img, blobUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// Directory trickplay: Dolphin-style animated folder preview
+// Directory thumbnail init (delegates to _thumbInit via data-thumb-src)
 // ---------------------------------------------------------------------------
-// On hover over a directory card, a sprite sheet (N × 240 × 240 px) is
-// fetched from /api/dir-thumbs.  Each 240 × 240 frame is a 2×2 collage of
-// file thumbnails from that directory.  Frames cycle automatically at a fixed
-// interval, showing the folder contents like a slideshow — similar to KDE
-// Dolphin's folder hover preview.
-
-const _dirTrickplayCache = new Map(); // dirPath → {src, n, natW, natH} | 'loading' | 'failed'
-
-const DIR_FRAME_W = 240; // width of each collage frame in the sprite sheet
-const DIR_FRAME_INTERVAL = 700; // ms between frames
 
 /**
- * Attach directory trickplay behaviour to a `.dir-thumb-anchor` element.
- * @param {HTMLElement} anchor  The .card-icon element with data-dir-path.
- * @param {string}      dirPath The relative directory path.
- */
-function _dirTrickplayAttach(anchor, dirPath) {
-    const card = anchor.closest('.card') || anchor;
-
-    let spriteEl = null;
-    let cacheEntry = null;
-    let timer = null;
-    let frameIdx = 0;
-
-    function ensureSprite() {
-        const cached = _dirTrickplayCache.get(dirPath);
-        if (cached === 'loading' || cached === 'failed') return;
-        if (cached) { cacheEntry = cached; return; }
-
-        _dirTrickplayCache.set(dirPath, 'loading');
-        const src = '/api/dir-thumbs?' + new URLSearchParams({ path: dirPath }) + dirParam('&');
-        const preload = new Image();
-        preload.onload = () => {
-            const n = Math.max(1, Math.round(preload.naturalWidth / DIR_FRAME_W));
-            const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
-            _dirTrickplayCache.set(dirPath, entry);
-            cacheEntry = entry;
-            if (card.matches(':hover')) {
-                buildOverlay();
-                startCycling();
-            }
-        };
-        preload.onerror = () => {
-            _dirTrickplayCache.set(dirPath, 'failed');
-        };
-        preload.src = src;
-    }
-
-    function buildOverlay() {
-        if (spriteEl || !cacheEntry) return;
-        const cardRect = card.getBoundingClientRect();
-        if (!cardRect.width) return;
-
-        // Show the popup at the natural frame aspect ratio, clamped to the card size.
-        const frameH = cacheEntry.natH;
-        const frameW = DIR_FRAME_W;
-        const ar = frameW / frameH;
-        // Square-ish cards: use card width, derive height from AR.
-        const popupW = Math.min(cardRect.width, 200);
-        const popupH = Math.round(popupW / ar);
-
-        let left = cardRect.left + (cardRect.width - popupW) / 2;
-        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-
-        spriteEl = document.createElement('div');
-        spriteEl.className = 'card-trickplay-sprite';
-        Object.assign(spriteEl.style, {
-            position:        'fixed',
-            zIndex:          '1000',
-            pointerEvents:   'none',
-            width:           popupW + 'px',
-            height:          popupH + 'px',
-            left:            left.toFixed(1) + 'px',
-            top:             top.toFixed(1)  + 'px',
-            backgroundImage: `url(${JSON.stringify(cacheEntry.src)})`,
-            backgroundRepeat: 'no-repeat',
-            backgroundSize:  'auto 100%',
-        });
-        document.body.appendChild(spriteEl);
-        window.addEventListener('scroll', reposition, { passive: true, capture: true });
-        showFrame(0);
-    }
-
-    function reposition() {
-        if (!spriteEl) return;
-        const cardRect = card.getBoundingClientRect();
-        const popupW = parseFloat(spriteEl.style.width);
-        const popupH = parseFloat(spriteEl.style.height);
-        let left = cardRect.left + (cardRect.width  - popupW) / 2;
-        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-        spriteEl.style.left = left.toFixed(1) + 'px';
-        spriteEl.style.top  = top.toFixed(1)  + 'px';
-    }
-
-    function showFrame(idx) {
-        if (!spriteEl || !cacheEntry) return;
-        const popupH = parseFloat(spriteEl.style.height);
-        const popupW = parseFloat(spriteEl.style.width);
-        const scale  = popupH / cacheEntry.natH;
-        const tileW  = DIR_FRAME_W * scale;
-        const x      = popupW / 2 - tileW * (idx + 0.5);
-        spriteEl.style.backgroundPosition = `${x.toFixed(1)}px 0`;
-    }
-
-    function startCycling() {
-        if (timer || !cacheEntry || cacheEntry.n <= 1) return;
-        timer = setInterval(() => {
-            frameIdx = (frameIdx + 1) % cacheEntry.n;
-            showFrame(frameIdx);
-        }, DIR_FRAME_INTERVAL);
-    }
-
-    function teardown() {
-        clearInterval(timer);
-        timer = null;
-        frameIdx = 0;
-        if (spriteEl) {
-            spriteEl.remove();
-            spriteEl = null;
-            window.removeEventListener('scroll', reposition, { capture: true });
-        }
-    }
-
-    card.addEventListener('mouseenter', () => {
-        ensureSprite();
-        if (cacheEntry) {
-            buildOverlay();
-            startCycling();
-        }
-    }, { passive: true });
-
-    card.addEventListener('mouseleave', teardown);
-}
-
-/**
- * Find all `.dir-thumb-anchor[data-dir-path]` elements in the document and
- * attach directory trickplay behaviour.  Called after every grid render.
- *
- * NOTE: disabled for now — collage style needs more work.
- * Re-enable by removing the early return.
+ * Called after every grid render.  Dir thumbnails now use data-thumb-src and
+ * are processed by the regular _thumbInit queue, so this is a no-op.
  */
 function _dirThumbInit() {
-    return; // disabled
-    /* eslint-disable no-unreachable */
-    document.querySelectorAll('.dir-thumb-anchor[data-dir-path]').forEach(el => {
-        if (el.dataset.dirTrickplayAttached) return;
-        el.dataset.dirTrickplayAttached = '1';
-        _dirTrickplayAttach(el, el.dataset.dirPath);
-    });
-    /* eslint-enable no-unreachable */
+    // No-op: dir cards use data-thumb-src → handled by _thumbInit.
 }
 
 // ---------------------------------------------------------------------------
@@ -801,6 +654,11 @@ function _thumbInit() {
 }
 
 function _thumbReplace(el, blobUrl) {
+    // Directory preview: inline sprite cycling (no floating popup).
+    if (el.dataset.dirPath) {
+        _dirPreviewReplace(el, blobUrl);
+        return;
+    }
     const img = document.createElement('img');
     img.src = blobUrl;
     if (el.dataset.cls) img.className = el.dataset.cls;
@@ -821,6 +679,50 @@ function _thumbReplace(el, blobUrl) {
  * is never re-queued. The element already shows the right icon. */
 function _thumbShowFailed(el) {
     el.removeAttribute('data-thumb-src');
+}
+
+/**
+ * Replace a directory `.card-icon` with an inline sprite div.
+ * The sprite sheet contains N square frames (240 × 240 px each) side-by-side.
+ * Frame 0 is shown by default; hovering the card cycles through frames.
+ * Because `.card-icon` is removed the card switches automatically from the
+ * stacked icon layout to the full-bleed image layout via the CSS
+ * `.card:has(.card-icon)` selector ceasing to match.
+ */
+function _dirPreviewReplace(el, blobUrl) {
+    const probe = new Image();
+    probe.onload = () => {
+        if (!el.isConnected) return;
+        const n = Math.max(1, Math.round(probe.naturalWidth / 240));
+        const sprite = document.createElement('div');
+        sprite.className = 'card-dir-sprite';
+        sprite.style.backgroundImage = `url(${JSON.stringify(blobUrl)})`;
+        const card = el.closest('.card');
+        el.replaceWith(sprite);
+        if (n > 1 && card) {
+            let timer = null;
+            let frame = 0;
+            const showFrame = f => {
+                // Each sprite frame is square, so scaled-frame-width === container height.
+                const h = sprite.offsetHeight || card.offsetHeight || 140;
+                sprite.style.backgroundPosition = `-${f * h}px 0`;
+            };
+            card.addEventListener('mouseenter', () => {
+                frame = 0;
+                showFrame(0);
+                timer = setInterval(() => {
+                    frame = (frame + 1) % n;
+                    showFrame(frame);
+                }, 700);
+            }, { passive: true });
+            card.addEventListener('mouseleave', () => {
+                clearInterval(timer);
+                timer = null;
+                showFrame(0);
+            });
+        }
+    };
+    probe.src = blobUrl;
 }
 
 async function _thumbRun() {

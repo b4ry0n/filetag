@@ -1513,17 +1513,18 @@ function toggleTagGroup(prefix) {
 function toggleTagSortMode() {
     const modes = ['groups-first', 'alpha', 'count'];
     state.tagSortMode = modes[(modes.indexOf(state.tagSortMode) + 1) % modes.length];
-    const btn = document.getElementById('sidebar-sort-btn');
-    if (btn) {
-        const labels = { 'groups-first': 'Groups first', 'alpha': 'A–Z', 'count': 'By count' };
-        const titles = { 'groups-first': 'Sort: groups first', 'alpha': 'Sort: A–Z', 'count': 'Sort: by count' };
+    const labels = { 'groups-first': 'Groups first', 'alpha': 'A–Z', 'count': 'By count' };
+    const titles = { 'groups-first': 'Sort: groups first', 'alpha': 'Sort: A–Z', 'count': 'Sort: by count' };
+    for (const id of ['sidebar-sort-btn', 'tm-sort-btn']) {
+        const btn = document.getElementById(id);
+        if (!btn) continue;
         btn.title = titles[state.tagSortMode];
         btn.classList.toggle('active', state.tagSortMode !== 'alpha');
-        // Update the label text node
         const label = btn.querySelector('.sort-label');
         if (label) label.textContent = labels[state.tagSortMode];
     }
     renderTags();
+    renderTmList();
 }
 
 async function doTagGroupSearch(prefix) {

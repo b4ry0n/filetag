@@ -1081,6 +1081,7 @@ const DIR_VIDEO_EXTS: &[&str] = &[
     "mp4", "mov", "avi", "mkv", "wmv", "m4v", "webm", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
     "3gp",
 ];
+const DIR_PDF_EXTS: &[&str] = &["pdf"];
 
 /// List previewable files (flat, no recursion) in `dir`, sorted by name.
 fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
@@ -1097,7 +1098,9 @@ fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            DIR_IMAGE_EXTS.contains(&ext.as_str()) || DIR_VIDEO_EXTS.contains(&ext.as_str())
+            DIR_IMAGE_EXTS.contains(&ext.as_str())
+                || DIR_VIDEO_EXTS.contains(&ext.as_str())
+                || DIR_PDF_EXTS.contains(&ext.as_str())
         })
         .collect();
     files.sort();
@@ -1120,14 +1123,18 @@ fn pick_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
         .collect()
 }
 
-/// Generate a small JPEG for a single directory item (image or video first frame).
+/// Generate a small JPEG for a single directory item (image, video, or PDF).
 /// Target dimensions: 120 × 120 px, square-cropped.
-async fn dir_item_jpeg(path: &Path, features: Features) -> Option<Vec<u8>> {
+async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<Vec<u8>> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
+
+    if ext == "pdf" {
+        return pdf_thumb_jpeg(path, root, features).await;
+    }
 
     if DIR_VIDEO_EXTS.contains(&ext.as_str()) {
         if !features.video {
@@ -1168,41 +1175,52 @@ async fn dir_item_jpeg(path: &Path, features: Features) -> Option<Vec<u8>> {
     image_thumb_jpeg(path, features).await
 }
 
-/// Assemble a 2 × 2 JPEG collage (240 × 240 px) from four input images.
+/// Assemble a JPEG collage (240 × 240 px) from 1–4 input images.
 ///
-/// Assembles a 2 × 2 corkboard-style collage (240 × 240 px, white background,
-/// tiles slightly rotated and irregularly offset) from four input images.
+/// The tile layout adapts to the number of inputs:
+/// - 1 image: single large tile, slightly rotated, centred.
+/// - 2 images: two tiles side by side.
+/// - 3 images: two tiles on top, one centred below.
+/// - 4 images: 2 × 2 grid (original layout).
 ///
-/// Tries ImageMagick `magick` (v7) or `convert` (v6) first, then falls back
-/// to an ffmpeg filter graph.
-async fn build_2x2_montage(inputs: &[PathBuf; 4], output: &Path) -> bool {
-    // Each slot: (rotation_degrees, x_offset, y_offset).
-    // Tiles are scaled/cropped to 100×100 before rotation; the rotation
-    // enlarges the bounding box by ~4–9 px per side depending on angle.
-    // Offsets position the NW corner of each rotated bounding box on the
-    // 240×240 canvas, leaving ~10–15 px of breathing room between tiles.
-    const SLOTS: [(i32, i64, i64); 4] = [
-        (-4, 8, 10),    // top-left,     −4°
-        (5, 125, 3),    // top-right,    +5°
-        (3, 11, 128),   // bottom-left,  +3°
-        (-5, 122, 122), // bottom-right, −5°
-    ];
+/// Tries ImageMagick (`magick` / `convert`) first, then an ffmpeg filter graph.
+async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
+    let n = inputs.len().min(4);
+    if n == 0 {
+        return false;
+    }
 
-    // ImageMagick compositing: v7 uses `magick`, v6 uses `convert`.
+    // All layouts use 100×100 tiles so no layout implies more or less importance.
+    // Slots: (rotation_degrees, x_offset, y_offset) — NW corner of each tile on
+    // the 240×240 canvas.  Positions are chosen so tiles are nicely centred.
+    let tile_size: u32 = 100;
+    let slots: &[(i32, i64, i64)] = match n {
+        // 1 tile: centred on the canvas
+        1 => &[(-3, 70, 70)],
+        // 2 tiles: side-by-side, vertically centred
+        2 => &[(-4, 10, 68), (4, 128, 68)],
+        // 3 tiles: two on top, one centred below
+        3 => &[(-4, 8, 10), (5, 125, 3), (3, 67, 128)],
+        // 4 tiles: 2×2 grid
+        _ => &[(-4, 8, 10), (5, 125, 3), (3, 11, 128), (-5, 122, 122)],
+    };
+    let tile_geom = format!("{}x{}", tile_size, tile_size);
+    let tile_geom2 = tile_geom.clone();
+
+    // --- ImageMagick path ---
     for cmd_name in &["magick", "convert"] {
         let mut cmd = tokio::process::Command::new(cmd_name);
-        // Start with a white canvas.
         cmd.args(["-size", "240x240", "xc:#fefefe"]);
-        for (i, (angle, x, y)) in SLOTS.iter().enumerate() {
+        for (i, (angle, x, y)) in slots.iter().take(n).enumerate() {
             cmd.arg("(");
             cmd.arg(&inputs[i]);
             cmd.args([
                 "-resize",
-                "100x100^",
+                &format!("{}^", tile_geom),
                 "-gravity",
                 "Center",
                 "-extent",
-                "100x100",
+                &tile_geom2,
                 "-background",
                 "white",
                 "-rotate",
@@ -1232,21 +1250,31 @@ async fn build_2x2_montage(inputs: &[PathBuf; 4], output: &Path) -> bool {
         }
     }
 
-    // ffmpeg fallback: white canvas, rotated tiles, same positions.
-    // Angles in radians; ffmpeg rotate filter uses radians.
-    let angle_rads = ["-0.0698", "0.0873", "0.0524", "-0.0873"];
-    let offsets = [(8i32, 10i32), (125, 3), (11, 128), (122, 122)];
-    let tile_parts: String = (0..4usize)
+    // --- ffmpeg fallback ---
+    let angle_rads: &[&str] = match n {
+        1 => &["-0.0524"],
+        2 => &["-0.0698", "0.0698"],
+        3 => &["-0.0698", "0.0873", "0.0524"],
+        _ => &["-0.0698", "0.0873", "0.0524", "-0.0873"],
+    };
+    let offsets: &[(i32, i32)] = match n {
+        1 => &[(70, 70)],
+        2 => &[(10, 68), (128, 68)],
+        3 => &[(8, 10), (125, 3), (67, 128)],
+        _ => &[(8, 10), (125, 3), (11, 128), (122, 122)],
+    };
+    let ts = tile_size;
+    let tile_parts: String = (0..n)
         .map(|i| {
             let a = angle_rads[i];
             format!(
-                "[{i}]scale=100:100:force_original_aspect_ratio=increase,\
-                 crop=100:100,rotate={a}:ow=rotw({a}):oh=roth({a}):c=white[f{i}]"
+                "[{i}]scale={ts}:{ts}:force_original_aspect_ratio=increase,\
+                 crop={ts}:{ts},rotate={a}:ow=rotw({a}):oh=roth({a}):c=white[f{i}]"
             )
         })
         .collect::<Vec<_>>()
         .join(";");
-    let overlay_parts: String = (0..4usize)
+    let overlay_parts: String = (0..n)
         .map(|i| {
             let (x, y) = offsets[i];
             let src = if i == 0 {
@@ -1254,7 +1282,7 @@ async fn build_2x2_montage(inputs: &[PathBuf; 4], output: &Path) -> bool {
             } else {
                 format!("l{}", i - 1)
             };
-            let dst = if i == 3 {
+            let dst = if i == n - 1 {
                 "out".to_string()
             } else {
                 format!("l{i}")
@@ -1264,11 +1292,11 @@ async fn build_2x2_montage(inputs: &[PathBuf; 4], output: &Path) -> bool {
         .collect::<Vec<_>>()
         .join(";");
     let filter = format!("color=white:size=240x240[bg];{tile_parts};{overlay_parts}");
-    let ok = tokio::process::Command::new("ffmpeg")
-        .args(["-i", inputs[0].to_str().unwrap_or("")])
-        .args(["-i", inputs[1].to_str().unwrap_or("")])
-        .args(["-i", inputs[2].to_str().unwrap_or("")])
-        .args(["-i", inputs[3].to_str().unwrap_or("")])
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    for p in inputs.iter().take(n) {
+        cmd.args(["-i", p.to_str().unwrap_or("")]);
+    }
+    let ok = cmd
         .args(["-filter_complex", &filter])
         .args(["-map", "[out]", "-frames:v", "1", "-q:v", "5", "-y"])
         .arg(output)
@@ -1408,7 +1436,7 @@ pub async fn api_dir_thumbs(
 
         // --- Build the sprite sheet ---
         let files = list_previewable_files(&abs_dir);
-        if files.len() < 4 {
+        if files.is_empty() {
             return StatusCode::NO_CONTENT.into_response();
         }
 
@@ -1439,30 +1467,21 @@ pub async fn api_dir_thumbs(
 
         let mut frame_paths: Vec<PathBuf> = Vec::new();
         for (frame_idx, group) in selected.chunks(IMAGES_PER_FRAME).enumerate() {
-            if group.len() < IMAGES_PER_FRAME {
-                break; // skip the last incomplete group
-            }
-            // Generate per-item thumbnails in parallel (bounded by outer permit).
+            // Generate per-item thumbnails (bounded by outer permit).
             let mut thumb_paths: Vec<PathBuf> = Vec::new();
             for (item_idx, item_path) in group.iter().enumerate() {
-                if let Some(jpeg) = dir_item_jpeg(item_path, features).await {
+                if let Some(jpeg) = dir_item_jpeg(item_path, &cache_root, features).await {
                     let tp = tmp_dir.join(format!("t{frame_idx}_{item_idx}.jpg"));
                     if tokio::fs::write(&tp, &jpeg).await.is_ok() {
                         thumb_paths.push(tp);
                     }
                 }
             }
-            if thumb_paths.len() < IMAGES_PER_FRAME {
-                continue; // not enough thumbs for a full frame
+            if thumb_paths.is_empty() {
+                continue;
             }
             let frame_path = tmp_dir.join(format!("frame{frame_idx}.jpg"));
-            let inputs: [PathBuf; 4] = [
-                thumb_paths[0].clone(),
-                thumb_paths[1].clone(),
-                thumb_paths[2].clone(),
-                thumb_paths[3].clone(),
-            ];
-            if build_2x2_montage(&inputs, &frame_path).await {
+            if build_collage(&thumb_paths, &frame_path).await {
                 frame_paths.push(frame_path);
             }
         }

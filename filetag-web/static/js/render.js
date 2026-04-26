@@ -121,12 +121,15 @@ function renderGrid(items) {
 
         let preview = '';
         if (isDir) {
-            // Add data-dir-path so the trickplay logic can request the sprite.
             // Root cards (entry.root_path != null) keep the plain icon.
+            // All other dirs request a sprite thumbnail via the regular thumb queue.
             const dirPath = entry.root_path == null ? fullPath(entry) : null;
-            preview = dirPath
-                ? `<div class="card-icon dir-thumb-anchor" data-dir-path="${esc(dirPath)}">${ICONS.folder}</div>`
-                : `<div class="card-icon">${ICONS.folder}</div>`;
+            if (dirPath) {
+                const dts = `/api/dir-thumbs?${new URLSearchParams({path: dirPath}).toString()}${dirParam('&')}`;
+                preview = `<div class="card-icon" data-thumb-src="${esc(dts)}" data-dir-path="${esc(dirPath)}" data-name="${esc(name)}">${ICONS.folder}</div>`;
+            } else {
+                preview = `<div class="card-icon">${ICONS.folder}</div>`;
+            }
         } else if (type_ === 'image' || type_ === 'raw') {
             preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}" data-thumb-hover="1">${fileIcon(name)}</div>`;
         } else if (type_ === 'video') {
