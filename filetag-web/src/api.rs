@@ -512,7 +512,15 @@ pub async fn api_cache_clear_subdir(
     Query(rp): Query<DirParam>,
     Json(body): Json<CacheClearSubdirBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    const ALLOWED_SUBDIRS: &[&str] = &["thumbs", "raw", "vthumbs", "ai_sprites", "hls2", "video"];
+    const ALLOWED_SUBDIRS: &[&str] = &[
+        "thumbs",
+        "raw",
+        "vthumbs",
+        "ai_sprites",
+        "hls2",
+        "video",
+        "dir-thumbs",
+    ];
     if !ALLOWED_SUBDIRS.contains(&body.subdir.as_str()) {
         return Err(AppError(anyhow::anyhow!(
             "unknown cache subdirectory '{}'",
