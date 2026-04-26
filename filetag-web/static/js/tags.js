@@ -890,7 +890,7 @@ function renderTmTagTreeNode(node, depth) {
         const synBadge = (tag.synonyms || []).length
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms||[]).map(esc).join(', ')}">&#8801;</span>` : '';
         const kvBadge = tag.has_values ? ` <span class="tag-kv-badge">k=v</span>` : '';
-        const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
+        const cls = 'tag-item tag-standalone';
         return `<button class="${cls}${sel}"${marginStyle} onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder"></span>${colorDot(tag.color)}${_highlightMatch(segment, q)}${kvBadge}${synBadge} <span class="count">${tag.count}</span></button>`;
     }
 
