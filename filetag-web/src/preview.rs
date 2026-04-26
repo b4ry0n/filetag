@@ -1082,6 +1082,7 @@ const DIR_VIDEO_EXTS: &[&str] = &[
     "3gp",
 ];
 const DIR_PDF_EXTS: &[&str] = &["pdf"];
+const DIR_ARCHIVE_EXTS: &[&str] = &["zip", "cbz", "rar", "cbr", "7z", "cb7"];
 
 /// List previewable files (flat, no recursion) in `dir`, sorted by name.
 fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
@@ -1101,6 +1102,7 @@ fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
             DIR_IMAGE_EXTS.contains(&ext.as_str())
                 || DIR_VIDEO_EXTS.contains(&ext.as_str())
                 || DIR_PDF_EXTS.contains(&ext.as_str())
+                || DIR_ARCHIVE_EXTS.contains(&ext.as_str())
         })
         .collect();
     files.sort();
@@ -1134,6 +1136,22 @@ async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<V
 
     if ext == "pdf" {
         return pdf_thumb_jpeg(path, root, features).await;
+    }
+
+    if DIR_ARCHIVE_EXTS.contains(&ext.as_str()) {
+        let path = path.to_path_buf();
+        let bytes =
+            tokio::task::spawn_blocking(move || crate::archive::archive_cover_image(&path).ok())
+                .await
+                .ok()
+                .flatten()?;
+        // Resize the cover to 120×120, square-cropped, using the same image
+        // pipeline as regular images.
+        let img = image::load_from_memory(&bytes).ok()?;
+        let thumb = img.resize_to_fill(120, 120, image::imageops::FilterType::Lanczos3);
+        let mut out = std::io::Cursor::new(Vec::new());
+        thumb.write_to(&mut out, image::ImageFormat::Jpeg).ok()?;
+        return Some(out.into_inner());
     }
 
     if DIR_VIDEO_EXTS.contains(&ext.as_str()) {
