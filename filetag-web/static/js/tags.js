@@ -266,7 +266,10 @@ function renderTags() {
  */
 function _renderSubjectsInline() {
     if (!state.subjects || !state.subjects.length) return '';
-    const subjectTags = state.subjects.map(s => ({
+    // Exclude auto-generated face cluster placeholders (e.g. person/unknown-5).
+    const visible = state.subjects.filter(s => !/\/unknown-\d+$/.test(s.name));
+    if (!visible.length) return '';
+    const subjectTags = visible.map(s => ({
         name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
     }));
     const tree = buildTagTree(subjectTags);
@@ -355,7 +358,8 @@ function toggleSubjectPick(subjectName) {
 }
 
 async function doSubjectSearch(subject) {
-    const q = 'subject:' + quoteTag(subject);
+    // Subjectnamen zijn altijd veilig, nooit quoten.
+    const q = 'subject:' + subject;
     // Toggle: clicking an already-active subject clears the search.
     if (state.mode === 'search' && state.searchQuery === q) {
         doClearSearch();

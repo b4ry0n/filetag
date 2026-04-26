@@ -683,13 +683,21 @@ pub fn tag_values(conn: &Connection, name: &str) -> Result<Vec<(String, i64)>> {
 
 /// List all distinct non-empty subjects with the number of files they appear on.
 /// Includes subjects that exist only in `subject_tags` (zero file count).
+/// Files are counted from both `file_tags.subject` and `face_detections.subject_name`
+/// so that named face persons reflect the correct file count.
 /// Results are ordered alphabetically by subject name.
 pub fn all_subjects(conn: &Connection) -> Result<Vec<(String, i64)>> {
     let mut stmt = conn.prepare(
-        "SELECT s.name, COUNT(DISTINCT ft.file_id) AS cnt
+        "SELECT s.name,
+                (
+                    SELECT COUNT(DISTINCT src.file_id)
+                    FROM (
+                        SELECT file_id FROM file_tags WHERE subject = s.name
+                        UNION
+                        SELECT file_id FROM face_detections WHERE subject_name = s.name
+                    ) AS src
+                ) AS cnt
          FROM subjects s
-         LEFT JOIN file_tags ft ON ft.subject = s.name
-         GROUP BY s.name
          ORDER BY s.name",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -712,8 +720,8 @@ pub fn create_subject(conn: &Connection, name: &str) -> Result<bool> {
     Ok(n > 0)
 }
 
-/// Rename a subject label across all file-tag assignments and entity properties.
-/// Returns the number of rows updated.
+/// Rename a subject label across all file-tag assignments, entity properties,
+/// and face detection records.  Returns the number of rows updated.
 pub fn rename_subject(conn: &Connection, old_name: &str, new_name: &str) -> Result<usize> {
     conn.execute(
         "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
@@ -727,16 +735,27 @@ pub fn rename_subject(conn: &Connection, old_name: &str, new_name: &str) -> Resu
         "UPDATE file_tags SET subject = ?1 WHERE subject = ?2",
         params![new_name, old_name],
     )?;
+    // Keep face detections in sync.
+    conn.execute(
+        "UPDATE face_detections SET subject_name = ?1 WHERE subject_name = ?2",
+        params![new_name, old_name],
+    )?;
     conn.execute("DELETE FROM subjects WHERE name = ?1", params![old_name])?;
     Ok(n)
 }
 
 /// Delete a subject: remove from the subjects registry, clear all file-tag
-/// assignments (sets subject to ''), and drop all entity properties.
+/// assignments (sets subject to ''), drop all entity properties, and clear
+/// face detection assignments for that subject.
 /// Returns the number of file_tags rows cleared.
 pub fn delete_subject(conn: &Connection, name: &str) -> Result<usize> {
     conn.execute("DELETE FROM subject_tags WHERE subject = ?1", params![name])?;
     conn.execute("DELETE FROM subjects WHERE name = ?1", params![name])?;
+    // Clear face detection assignments.
+    conn.execute(
+        "UPDATE face_detections SET subject_name = NULL WHERE subject_name = ?1",
+        params![name],
+    )?;
     let n = conn.execute(
         "UPDATE file_tags SET subject = '' WHERE subject = ?1",
         params![name],

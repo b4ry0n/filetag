@@ -1391,7 +1391,8 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
                 "-composite",
             ]);
         }
-        // WebP output: no extra flags needed; ImageMagick infers format from extension.
+        // Output format inferred from extension (PNG for intermediate frames, WebP for single-frame
+        // sprites written directly to the cache path).
         cmd.arg(output);
         let ok = cmd
             .stdout(std::process::Stdio::null())
@@ -1456,17 +1457,7 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
     }
     let ok = cmd
         .args(["-filter_complex", &filter])
-        .args([
-            "-map",
-            "[out]",
-            "-frames:v",
-            "1",
-            "-vcodec",
-            "libwebp",
-            "-lossless",
-            "1",
-            "-y",
-        ])
+        .args(["-map", "[out]", "-frames:v", "1", "-pix_fmt", "rgba", "-y"])
         .arg(output)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1478,19 +1469,17 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
     ok && output.exists()
 }
 
-/// Stitch `frames` side by side into a single WebP sprite sheet.
+/// Stitch `frames` (PNG with alpha) side by side into a single WebP sprite sheet.
 ///
-/// Tries ImageMagick (`+append`) first, then an ffmpeg fallback.
-/// Returns lossless WebP bytes with alpha, or `None` if all tools fail.
+/// Frames are always PNG (intermediate, transparent).  Output is always lossless
+/// WebP with alpha.  Tries ImageMagick (`+append`) first, then an ffmpeg fallback.
 async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
     if frames.is_empty() {
         return None;
     }
-    if frames.len() == 1 {
-        return tokio::fs::read(&frames[0]).await.ok();
-    }
 
     // --- ImageMagick path: horizontal append → WebP stdout ---
+    // Works for both 1 frame (converts PNG→WebP) and N frames (stitches).
     for cmd_name in &["magick", "convert"] {
         let mut cmd = tokio::process::Command::new(cmd_name);
         for f in frames {
@@ -1511,22 +1500,25 @@ async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
         }
     }
 
-    // --- ffmpeg fallback: hstack → libwebp lossless pipe ---
+    // --- ffmpeg fallback ---
+    // For a single frame, just convert PNG → WebP via pipe.
+    // For multiple frames, use hstack then encode as WebP.
     let n = frames.len();
-    let inputs: String = (0..n).map(|i| format!("[{i}]")).collect();
-    let filter = format!("{inputs}hstack={n}[out]");
     let mut cmd = tokio::process::Command::new("ffmpeg");
     for f in frames {
         cmd.arg("-i").arg(f);
     }
+    if n > 1 {
+        let inputs: String = (0..n).map(|i| format!("[{i}]")).collect();
+        let filter_str = format!("{inputs}hstack={n}[out]");
+        cmd.args(["-filter_complex", &filter_str, "-map", "[out]"]);
+    }
     let out = cmd
         .args([
-            "-filter_complex",
-            &filter,
-            "-map",
-            "[out]",
             "-frames:v",
             "1",
+            "-pix_fmt",
+            "rgba",
             "-vcodec",
             "libwebp",
             "-lossless",
@@ -1672,7 +1664,7 @@ pub async fn api_dir_thumbs(
             if thumb_paths.is_empty() {
                 continue;
             }
-            let frame_path = tmp_dir.join(format!("frame{frame_idx}.webp"));
+            let frame_path = tmp_dir.join(format!("frame{frame_idx}.png"));
             if build_collage(&thumb_paths, &frame_path).await {
                 frame_paths.push(frame_path);
             }
