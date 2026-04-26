@@ -11,10 +11,16 @@ async function navigateTo(path) {
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.activeTags.clear();
+    if ('faceActivePerson' in state) state.faceActivePerson = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
     await loadFiles(path);
     await loadSettings();
+    if (typeof loadFaceConfig === 'function') {
+        Promise.all([loadFaceConfig(), loadPeople()]).then(() => renderTags()).catch(() => {});
+    } else if (typeof loadPeople === 'function') {
+        loadPeople().then(() => renderTags()).catch(() => {});
+    }
     render();
 }
 
@@ -853,6 +859,22 @@ async function openSettings(tab = 'video') {
         document.getElementById('ai-settings-fields').hidden = !enabled;
     } catch (_) { /* defaults are fine */ }
     document.getElementById('ai-test-result').hidden = true;
+    // Face settings — always fetch fresh so the form reflects the saved DB value.
+    try {
+        const dirQ = currentAbsDir() ? '?dir=' + encodeURIComponent(currentAbsDir()) : '';
+        const fc = await fetch('/api/face/config' + dirQ).then(r => r.json());
+        const enabled = !!fc.enabled;
+        document.getElementById('face-enabled').checked = enabled;
+        document.getElementById('face-settings-fields').hidden = !enabled;
+        document.getElementById('face-confidence').value = fc.confidence ?? 0.7;
+        document.getElementById('face-min-size').value = fc.min_face_px ?? 20;
+        document.getElementById('face-cluster-dist').value = fc.cluster_distance ?? 0.4;
+        document.getElementById('face-tag-prefix').value = fc.tag_prefix || 'person';
+        document.getElementById('face-auto-match-threshold').value = fc.auto_match_threshold ?? 0.25;
+        const ready = !!fc.models_ready;
+        document.getElementById('face-models-status').textContent = ready ? t('face.settings-models-ready') : t('face.settings-models-missing');
+        document.getElementById('face-models-download-btn').hidden = ready;
+    } catch (_) { /* defaults are fine */ }
     // Language selector — populate on demand so it works regardless of load order.
     const langSel = document.getElementById('lang-select');
     if (langSel) {
@@ -916,6 +938,41 @@ async function saveFeaturesSettings() {
 // Backward-compat wrappers (called from cache-menu & ai-test flow)
 function openAiSettings() { openSettings('ai'); }
 function closeAiSettings() { closeSettings(); }
+
+// ---------------------------------------------------------------------------
+// Face settings
+// ---------------------------------------------------------------------------
+
+function faceToggleEnabled() {
+    const enabled = document.getElementById('face-enabled').checked;
+    document.getElementById('face-settings-fields').hidden = !enabled;
+}
+
+async function faceSaveSettings() {
+    try {
+        const body = {
+            enabled:               document.getElementById('face-enabled').checked,
+            confidence:            parseFloat(document.getElementById('face-confidence').value) || 0.7,
+            min_face_px:           parseInt(document.getElementById('face-min-size').value, 10) || 20,
+            cluster_distance:      parseFloat(document.getElementById('face-cluster-dist').value) || 0.4,
+            tag_prefix:            document.getElementById('face-tag-prefix').value.trim() || 'person',
+            auto_match_threshold:  parseFloat(document.getElementById('face-auto-match-threshold').value) || 0,
+            dir:                   currentAbsDir() || null,
+        };
+        await apiPost('/api/face/config', body);
+        // Refresh in-memory config and re-render sidebar / toolbar.
+        if (typeof loadFaceConfig === 'function') {
+            await loadFaceConfig();
+        }
+        if (typeof loadPeople === 'function') {
+            await loadPeople();
+        }
+        renderTags();
+        closeSettings();
+    } catch (e) {
+        showToast('Save failed: ' + e.message, 4000);
+    }
+}
 
 function _updateVideoMaxMbVisibility() {
     // Full video mode is disabled; max-MB row is always hidden.

@@ -209,7 +209,8 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
 
 function renderTags() {
     const el = document.getElementById('tag-list');
-    if (!state.tags.length && (!state.subjects || !state.subjects.length)) {
+    const hasPeople = typeof renderPeopleSection === 'function' && state.faceConfig != null;
+    if (!state.tags.length && (!state.subjects || !state.subjects.length) && !hasPeople) {
         el.innerHTML = '<div class="empty-state"><span class="empty-state-text">No tags</span></div>';
         return;
     }
@@ -249,9 +250,10 @@ function renderTags() {
         const clearBar = state.activeTags.size > 0
             ? `<div class="active-filters-bar"><span class="active-filters-count">${state.activeTags.size} active</span><button class="active-filters-clear" onclick="clearTagFilters()">Clear</button></div>`
             : '';
+        const peopleHtml = typeof renderPeopleSection === 'function' ? renderPeopleSection() : '';
         el.innerHTML = clearBar + (listHtml || (state.tagFilter
             ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
-            : '')) + subjectsHtml;
+            : '')) + subjectsHtml + peopleHtml;
     }
     // Clear the old separate subject container (no longer used for content).
     const subjEl = document.getElementById('subject-list');

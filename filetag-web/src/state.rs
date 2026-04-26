@@ -19,6 +19,7 @@ use filetag_lib::db::TagRoot;
 use rusqlite::Connection;
 
 use crate::ai::AiProgress;
+use crate::face::{FaceProgress, ModelDownloadProgress};
 
 // ---------------------------------------------------------------------------
 // Feature flags
@@ -101,6 +102,10 @@ pub struct AppState {
     pub roots: Vec<TagRoot>,
     /// Progress information for the current AI batch job (if any).
     pub ai_progress: std::sync::Mutex<AiProgress>,
+    /// Progress information for the current face-analysis batch (if any).
+    pub face_progress: std::sync::Mutex<FaceProgress>,
+    /// Progress for the model download (if active).
+    pub model_download: std::sync::Mutex<ModelDownloadProgress>,
     /// Session store for optional password authentication.
     pub sessions: SessionStore,
 }

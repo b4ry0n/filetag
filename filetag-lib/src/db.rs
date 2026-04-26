@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -271,6 +271,28 @@ fn migrate(conn: &Connection) -> Result<()> {
                  SELECT DISTINCT subject FROM file_tags   WHERE subject != '';
              INSERT OR IGNORE INTO subjects (name)
                  SELECT DISTINCT subject FROM subject_tags WHERE subject != '';",
+        )?
+    }
+    if version < 11 {
+        // Face detection results: bounding box, confidence, 128-dim embedding,
+        // and optional subject assignment.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS face_detections (
+                 id           INTEGER PRIMARY KEY,
+                 file_id      INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                 x            INTEGER NOT NULL,
+                 y            INTEGER NOT NULL,
+                 w            INTEGER NOT NULL,
+                 h            INTEGER NOT NULL,
+                 confidence   REAL    NOT NULL,
+                 embedding    BLOB,
+                 subject_name TEXT,
+                 detected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE INDEX IF NOT EXISTS idx_face_detections_file_id
+                 ON face_detections(file_id);
+             CREATE INDEX IF NOT EXISTS idx_face_detections_subject
+                 ON face_detections(subject_name);",
         )?
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -1482,6 +1504,127 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value],
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Face detection CRUD
+// ---------------------------------------------------------------------------
+
+/// A single face detected in a file.
+#[derive(Debug, Clone)]
+pub struct FaceDetectionRow {
+    /// Primary key.
+    pub id: i64,
+    /// Foreign key into `files`.
+    pub file_id: i64,
+    /// Bounding box, in pixels of the original image.
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    /// Detector confidence score (0.0–1.0).
+    pub confidence: f32,
+    /// 128 × f32 embedding stored as 512 little-endian bytes; `None` when the
+    /// embedding step was skipped (e.g. face too small).
+    pub embedding: Option<Vec<u8>>,
+    /// Subject name assigned to this face, or `None` if not yet identified.
+    pub subject_name: Option<String>,
+}
+
+/// Insert a new face detection record.  Returns the rowid of the new row.
+#[allow(clippy::too_many_arguments)]
+pub fn insert_face_detection(
+    conn: &Connection,
+    file_id: i64,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    confidence: f32,
+    embedding: Option<&[u8]>,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO face_detections (file_id, x, y, w, h, confidence, embedding)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![file_id, x, y, w, h, confidence, embedding],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Assign (or clear) the subject for a face detection.
+///
+/// Pass `subject_name = None` to clear the assignment.
+pub fn set_face_subject(
+    conn: &Connection,
+    detection_id: i64,
+    subject_name: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE face_detections SET subject_name = ?1 WHERE id = ?2",
+        params![subject_name, detection_id],
+    )?;
+    Ok(())
+}
+
+/// Return all face detections for the file with the given `files.id`.
+pub fn face_detections_for_file(conn: &Connection, file_id: i64) -> Result<Vec<FaceDetectionRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, file_id, x, y, w, h, confidence, embedding, subject_name
+         FROM face_detections
+         WHERE file_id = ?1
+         ORDER BY id",
+    )?;
+    let rows = stmt.query_map(params![file_id], |r| {
+        Ok(FaceDetectionRow {
+            id: r.get(0)?,
+            file_id: r.get(1)?,
+            x: r.get(2)?,
+            y: r.get(3)?,
+            w: r.get(4)?,
+            h: r.get(5)?,
+            confidence: r.get(6)?,
+            embedding: r.get(7)?,
+            subject_name: r.get(8)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Return every face detection that has an embedding stored.
+///
+/// Used by the clustering step, which needs all embeddings at once.
+pub fn all_face_detections_with_embeddings(conn: &Connection) -> Result<Vec<FaceDetectionRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, file_id, x, y, w, h, confidence, embedding, subject_name
+         FROM face_detections
+         WHERE embedding IS NOT NULL
+         ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(FaceDetectionRow {
+            id: r.get(0)?,
+            file_id: r.get(1)?,
+            x: r.get(2)?,
+            y: r.get(3)?,
+            w: r.get(4)?,
+            h: r.get(5)?,
+            confidence: r.get(6)?,
+            embedding: r.get(7)?,
+            subject_name: r.get(8)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Delete all face detections for a given `files.id`.
+pub fn delete_face_detections_for_file(conn: &Connection, file_id: i64) -> Result<()> {
+    conn.execute(
+        "DELETE FROM face_detections WHERE file_id = ?1",
+        params![file_id],
     )?;
     Ok(())
 }

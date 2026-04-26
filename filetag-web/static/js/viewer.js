@@ -152,6 +152,7 @@ function closeMediaViewer() {
     _cv._prefetchCache.clear();
     document.getElementById('cv-pages').innerHTML = '';
     document.getElementById('cv-thumbs').innerHTML = '';
+    if (typeof faceOnViewerClosed === 'function') faceOnViewerClosed();
 }
 
 function cvToggleRtl() {
@@ -689,6 +690,10 @@ function cvShowPage(idx) {
         } else {
             container.appendChild(img1);
             if (img2) container.appendChild(img2);
+        }
+        // Notify face overlay (only in dir mode; face.js checks if overlays are active)
+        if (_cv.mode === 'dir' && typeof faceOnViewerPageChanged === 'function') {
+            faceOnViewerPageChanged(_cv.filePaths[idx]);
         }
     });
 

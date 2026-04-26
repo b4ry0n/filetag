@@ -209,13 +209,11 @@ function chatClearHistory() {
 
 function _renderChatFiles() {
     const el  = document.getElementById('chat-file-thumbs');
-    const dir = currentAbsDir();
-    const dirQ = dir ? '&dir=' + encodeURIComponent(dir) : '';
     const shown = _chatFiles.slice(0, 8);
     const extra = _chatFiles.length - shown.length;
     el.innerHTML = shown.map(p => {
         const name = p.split('/').pop();
-        return `<img class="chat-thumb" src="/api/thumb?path=${encodeURIComponent(p)}${dirQ}" `
+        return `<img class="chat-thumb" src="/thumb/${encodePath(p)}${dirParam('?')}" `
              + `alt="${esc(name)}" title="${esc(name)}" onerror="this.style.display='none'">`;
     }).join('')
     + (extra > 0 ? `<span class="chat-thumb-more">+${extra}</span>` : '');

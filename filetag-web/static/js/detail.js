@@ -1035,6 +1035,7 @@ function renderDetail() {
             </div>
         </div>
         <div class="detail-preview">${preview}</div>
+        ${(type_ === 'image' || type_ === 'raw') ? '<div id="face-toolbar-row"></div>' : ''}
         <div class="detail-meta">
             ${zipEntry
                 ? `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.archive'))}</span><span class="detail-meta-value">${esc(zipEntry.zipPath.split('/').pop())}</span></div>
@@ -1058,6 +1059,11 @@ function renderDetail() {
         attachSubjectAutocomplete(document.getElementById('tag-subject'), collectSingleFileSubjects);
     }
     initDetailVHandle(document.getElementById('detail-v-handle'));
+
+    // Face detection overlay (images only)
+    if (typeof faceOnDetailRendered === 'function' && (type_ === 'image' || type_ === 'raw')) {
+        faceOnDetailRendered(f.path, type_);
+    }
 
     // Async-fetch text/markdown content after DOM is set
     if (type_ === 'text') {

@@ -51,6 +51,51 @@ pub async fn preview_handler(
         .to_lowercase();
 
     match ext.as_str() {
+        // TIFF: browsers cannot render this natively; convert to JPEG on the fly
+        // (cached under .filetag/cache/tiff-preview/).
+        "tiff" | "tif" => {
+            let cache = file_cache_path(&abs, &cache_root, "tiff-preview", "preview.jpg");
+            if let Some(Ok(data)) = cache.as_ref().map(std::fs::read) {
+                return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            }
+            let path2 = abs.clone();
+            let result = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+                let data = std::fs::read(&path2).ok()?;
+                let img = image::load_from_memory(&data).ok()?;
+                // Downscale to max 2560 px on the longest side for web display.
+                // Full-resolution TIFFs can be tens of MB; 2560 px is enough for
+                // any screen and keeps the JPEG well under 1 MB.
+                const MAX_PX: u32 = 2560;
+                let img = if img.width() > MAX_PX || img.height() > MAX_PX {
+                    img.resize(MAX_PX, MAX_PX, image::imageops::FilterType::Lanczos3)
+                } else {
+                    img
+                };
+                let rgb = img.to_rgb8();
+                let mut out = Vec::new();
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90)
+                    .encode_image(&rgb)
+                    .ok()?;
+                if out.starts_with(&[0xFF, 0xD8]) {
+                    Some(out)
+                } else {
+                    None
+                }
+            })
+            .await
+            .ok()
+            .flatten();
+
+            match result {
+                Some(data) => {
+                    if let Some(p) = cache {
+                        let _ = tokio::fs::write(p, &data).await;
+                    }
+                    ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response()
+                }
+                None => StatusCode::NO_CONTENT.into_response(),
+            }
+        }
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             preview_raw(&abs, &cache_root, features).await

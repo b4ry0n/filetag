@@ -1,0 +1,402 @@
+/* ---------------------------------------------------------------------------
+   Face detection UI styles
+   --------------------------------------------------------------------------- */
+
+/* Wrapper around the preview image that allows absolute-positioned overlays */
+.face-preview-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+}
+
+/* Viewer variant: the image inside #cv-pages is display:block in a flex container */
+.face-viewer-wrap {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.face-preview-wrap img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* Individual face bounding box */
+.face-box {
+    position: absolute;
+    border: 2px solid var(--accent, #4a9eff);
+    border-radius: 3px;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: border-color 0.15s;
+}
+
+.face-box:hover {
+    border-color: var(--primary-dark);
+}
+
+.face-box.assigned {
+    border-color: #4caf50;
+}
+
+/* Small label below the box */
+.face-box-label {
+    position: absolute;
+    bottom: -20px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 10px;
+    color: var(--accent, #4a9eff);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    line-height: 1.2;
+}
+
+.face-box.assigned .face-box-label {
+    color: #4caf50;
+}
+
+/* Toolbar strip below the preview image */
+#face-toolbar-row {
+    padding: 8px 12px 4px;
+    border-top: 1px solid var(--border);
+}
+
+.face-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+    flex-wrap: wrap;
+}
+
+.face-detect-btn {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text);
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.face-detect-btn:hover {
+    background: var(--bg-active);
+}
+
+.face-detect-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.face-download-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+}
+
+.face-download-progress span {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.face-indeterminate-bar {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--bg-active);
+    overflow: hidden;
+    width: 100%;
+}
+
+.face-indeterminate-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    width: 40%;
+    background: var(--accent, #12b886);
+    border-radius: 2px;
+    animation: face-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes face-indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+
+.face-count-badge {
+    background: var(--accent, #4a9eff);
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+/* Badge when detection completed but found 0 faces */
+.face-count-badge.face-count-none {
+    background: var(--border, #888);
+    opacity: .7;
+}
+
+/* Face assign dialog */
+.face-assign-dialog {
+    position: fixed;
+    z-index: 400;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    min-width: 220px;
+    box-shadow: var(--shadow-md);
+    font-size: 13px;
+}
+
+.face-assign-dialog h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.face-assign-dialog input[type="text"] {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+.face-assign-dialog .face-assign-btns {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+/* Delete button pushed to the left, destructive styling */
+.face-assign-dialog .face-assign-btns .face-delete-btn {
+    margin-right: auto;
+    color: var(--danger, #e03131);
+    border-color: var(--danger, #e03131);
+}
+
+.face-assign-dialog .face-assign-btns .face-delete-btn:hover {
+    background: var(--danger, #e03131);
+    color: #fff;
+}
+
+.face-assign-dialog button {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+}
+
+.face-assign-dialog button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* Suggestion chips inside the assign dialog */
+.face-assign-suggestions {
+    margin: 6px 0 2px;
+}
+
+.face-suggestions-heading {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-dim, #888);
+    margin-bottom: 4px;
+}
+
+.face-suggestion-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    padding: 2px 7px;
+    margin: 0 3px 3px 0;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.face-suggestion-chip:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.face-suggestion-chip .chip-pct {
+    font-size: 10px;
+    opacity: .7;
+}
+
+/* Auto-match candidates get a subtle accent border */
+.face-suggestion-chip.face-suggestion-auto {
+    border-color: var(--accent, #5b8dd9);
+}
+
+/* People section in the sidebar */
+.people-section-divider {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary, #888);
+    padding: 14px 10px 4px;
+    border-top: 1px solid var(--border, #333);
+    margin-top: 6px;
+}
+
+.people-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px 4px;
+}
+
+.people-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary, #888);
+}
+
+.people-detect-all-btn {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--border, #555);
+    background: transparent;
+    color: var(--text-secondary, #888);
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.people-detect-all-btn:hover {
+    color: var(--text, #ddd);
+    border-color: var(--text-secondary, #888);
+}
+
+/* "← Personen" back button in the unknown-persons view */
+.people-back-btn {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary, #888);
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.people-back-btn:hover {
+    color: var(--text, #ddd);
+}
+
+/* "N onbekend ›" toggle at the bottom of the named-persons list */
+.people-unknown-toggle {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 3px 10px 5px;
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+/* Person entry in sidebar */
+.person-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text, #ddd);
+    text-align: left;
+    width: 100%;
+    background: none;
+    border: none;
+    box-sizing: border-box;
+}
+
+.person-item:hover {
+    background: var(--bg-hover);
+}
+
+.person-item.active {
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+.person-thumb {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg-hover);
+}
+
+.person-thumb-placeholder {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.person-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.person-count {
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+    flex-shrink: 0;
+}
+
+/* Face progress bar (batch status) */
+.face-progress-bar-wrap {
+    padding: 4px 10px 6px;
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+}
+
+.face-progress-bar {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border, #333);
+    margin-top: 3px;
+    overflow: hidden;
+}
+
+.face-progress-bar-fill {
+    height: 100%;
+    background: var(--accent, #4a9eff);
+    transition: width 0.3s;
+}

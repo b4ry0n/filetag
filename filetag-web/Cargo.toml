@@ -26,6 +26,9 @@ base64 = "0.22"
 rand = { version = "0.9", features = ["std"] }
 sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff", "gif", "bmp", "ico"] }
+walkdir.workspace = true
+dirs = "6"
+tract-onnx = "0.21"
 
 [features]
 rar = ["dep:unrar"]

@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/css/detail.css">
     <link rel="stylesheet" href="/css/viewer.css">
     <link rel="stylesheet" href="/css/chat.css">
+    <link rel="stylesheet" href="/css/face.css">
 </head>
 <body>
     <header class="header">
@@ -203,6 +204,12 @@
             <span class="cv-sep"></span>
 
             <!-- Group 4: view / close -->
+            <button class="cv-btn" id="cv-face-btn" onclick="cvFaceToggle()" data-i18n-title="face.viewer-btn-title" title="Show/hide face overlays">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="8" r="4"/>
+                    <path d="M6 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
+                </svg>
+            </button>
             <button class="cv-btn" id="cv-fs-btn" onclick="cvToggleFullscreen()" title="Full screen (F)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
             </button>
@@ -262,6 +269,7 @@
                 <button class="modal-tab-btn" data-tab="features" onclick="switchSettingsTab('features')" data-i18n="settings.tab.features">Features</button>
                 <button class="modal-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')" data-i18n="settings.tab.ai">AI</button>
                 <button class="modal-tab-btn" data-tab="prompts" onclick="switchSettingsTab('prompts')" data-i18n="settings.tab.prompts">Prompts</button>
+                <button class="modal-tab-btn" data-tab="face" onclick="switchSettingsTab('face')" data-i18n="settings.tab.face">Face</button>
                 <button class="modal-tab-btn" data-tab="language" onclick="switchSettingsTab('language')" data-i18n="settings.tab.language">Language</button>
             </nav>
             <div class="modal-body">
@@ -365,6 +373,52 @@
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
                     </div><!-- #ai-settings-fields -->
                 </div>
+                <div id="settings-tab-face" class="modal-tab-panel" hidden>
+                    <label class="toggle-row">
+                        <input type="checkbox" id="face-enabled" onchange="faceToggleEnabled()">
+                        <div class="toggle-text">
+                            <span class="toggle-title" data-i18n="face.settings-enable">Enable face recognition</span>
+                            <small data-i18n="face.settings-enable-desc">Detect and label faces in images. Requires model download (~5 MB).</small>
+                        </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
+                    </label>
+                    <div id="face-settings-fields">
+                    <label>
+                        <span data-i18n="face.settings-models">Models</span>
+                        <span id="face-models-status" style="font-size:.85em;opacity:.7;margin-left:.4em"></span>
+                        <button id="face-models-download-btn" onclick="faceDownloadModels()" hidden data-i18n="face.download-models">Download models</button>
+                    </label>
+                    <label>
+                        <span data-i18n="face.settings-confidence">Detection confidence</span>
+                        <small class="settings-desc-inline" data-i18n="face.settings-confidence-desc">Minimum score (0.1–1.0). Higher values reduce false detections.</small>
+                        <input type="number" id="face-confidence" value="0.7" min="0.1" max="1.0" step="0.05">
+                    </label>
+                    <label>
+                        <span data-i18n="face.settings-min-size">Minimum face size (px)</span>
+                        <small class="settings-desc-inline" data-i18n="face.settings-min-size-desc">Faces smaller than this are ignored.</small>
+                        <input type="number" id="face-min-size" value="20" min="5" max="200" step="5">
+                    </label>
+                    <label>
+                        <span data-i18n="face.settings-cluster-dist">Cluster distance</span>
+                        <small class="settings-desc-inline" data-i18n="face.settings-cluster-dist-desc">Maximum cosine distance for grouping faces (0.1–1.0).</small>
+                        <input type="number" id="face-cluster-dist" value="0.4" min="0.1" max="1.0" step="0.05">
+                    </label>
+                    <label>
+                        <span data-i18n="face.settings-prefix">Tag prefix</span>
+                        <small class="settings-desc-inline" data-i18n="face.settings-prefix-desc">Prefix for person subject names (e.g. person).</small>
+                        <input type="text" id="face-tag-prefix" value="person" placeholder="person">
+                    </label>
+                    <label>
+                        <span data-i18n="face.settings-auto-match">Auto-match threshold</span>
+                        <small class="settings-desc-inline" data-i18n="face.settings-auto-match-desc">Automatically assign known persons when cosine distance ≤ this value during clustering. Set to 0 to disable.</small>
+                        <input type="number" id="face-auto-match-threshold" value="0.25" min="0" max="1.0" step="0.05">
+                    </label>
+                    </div><!-- #face-settings-fields -->
+                    <div class="modal-actions">
+                        <button onclick="faceSaveSettings()">Save</button>
+                        <button onclick="closeSettings()">Cancel</button>
+                    </div>
+                </div>
                 <div id="settings-tab-language" class="modal-tab-panel" hidden>
                     <label>
                         <span data-i18n="lang.label">Display language</span>
@@ -423,6 +477,7 @@
     <script src="/js/viewer.js"></script>
     <script src="/js/main.js"></script>
     <script src="/js/chat.js"></script>
+    <script src="/js/face.js"></script>
 
     <!-- Chat panel -->
     <div id="chat-panel" class="chat-panel" hidden>

@@ -400,3 +400,126 @@ pub struct RemoveSynonymRequest {
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Face detection API
+// ---------------------------------------------------------------------------
+
+/// A single face detection as returned by the API.
+#[derive(Serialize, Clone)]
+pub struct ApiFaceDetection {
+    /// Detection primary key.
+    pub id: i64,
+    /// Bounding box in pixels (origin = top-left of image).
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    /// Detector confidence (0.0–1.0).
+    pub confidence: f32,
+    /// Assigned subject name, or `null` if not yet identified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_name: Option<String>,
+}
+
+/// Response body for face-analysis and face-detections endpoints.
+#[derive(Serialize)]
+pub struct ApiFaceResult {
+    /// Relative path of the analysed file (relative to database root).
+    pub path: String,
+    /// All detections found in this file.
+    pub detections: Vec<ApiFaceDetection>,
+}
+
+/// Body for `POST /api/face/analyse`.
+#[derive(Deserialize)]
+pub struct FaceAnalyseRequest {
+    /// Absolute filesystem path of the file to analyse.
+    pub path: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/face/analyse-batch`.
+#[derive(Deserialize)]
+pub struct FaceAnalyseBatchRequest {
+    /// Absolute filesystem path of the directory to process.
+    pub dir: String,
+    /// When `true`, process files in subdirectories recursively.
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+/// Body for `POST /api/face/assign`.
+#[derive(Deserialize)]
+pub struct FaceAssignRequest {
+    /// Detection ID to assign.
+    pub detection_id: i64,
+    /// Subject name to assign (e.g. `"person/alice"`).  Pass `null` to clear.
+    pub subject_name: Option<String>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/face/cluster`.
+#[derive(Deserialize)]
+pub struct FaceClusterRequest {
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/face/delete`.
+#[derive(Deserialize)]
+pub struct FaceDeleteRequest {
+    /// One or more detection IDs to permanently remove.
+    pub detection_ids: Vec<i64>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Query params for `GET /api/face/suggest`.
+#[derive(Debug, Deserialize, Default)]
+pub struct FaceSuggestParams {
+    pub detection_id: i64,
+    pub dir: Option<String>,
+}
+
+/// Current face-analysis batch progress, returned by `GET /api/face/status`.
+#[derive(Default, Clone, Serialize)]
+pub struct FaceProgressResponse {
+    /// `true` while a batch is actively running.
+    pub running: bool,
+    /// Number of files processed so far.
+    pub done: usize,
+    /// Total number of files in the batch.
+    pub total: usize,
+    /// Relative path of the file currently being processed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+}
+
+/// Face analysis configuration returned by `GET /api/face/config`.
+#[derive(Serialize)]
+pub struct FaceConfigResponse {
+    pub enabled: bool,
+    pub confidence: f32,
+    pub cluster_distance: f32,
+    pub min_face_px: u32,
+    pub tag_prefix: String,
+    pub auto_match_threshold: f32,
+    /// `true` when both ONNX model files are present on disk.
+    pub models_ready: bool,
+}
+
+/// Body for `POST /api/face/config`.
+#[derive(Deserialize)]
+pub struct FaceConfigRequest {
+    pub enabled: Option<bool>,
+    pub confidence: Option<f32>,
+    pub cluster_distance: Option<f32>,
+    pub min_face_px: Option<u32>,
+    pub tag_prefix: Option<String>,
+    pub auto_match_threshold: Option<f32>,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}

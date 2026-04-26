@@ -291,6 +291,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (rootMeta) state.currentBasePath = baseToRestore;
     }
     try { await Promise.all([loadInfo(), loadTags(), loadSettings(), loadAuthStatus()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }
+    if (typeof loadFaceConfig === 'function') {
+        Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
+    }
     // Attempt to restore the last-visited path. If that fails (e.g. because new
     // databases changed the root index mapping, or the directory was removed),
     // fall back to the root of the selected database so the page is never blank.
@@ -304,8 +307,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e2) { console.error('loadFiles fallback also failed:', e2); }
     }
     render();
-    _navPush();   // seed the history stack with the initial location
-    _navUpdateButtons();
 
     // Build language selector and apply i18n translations to all data-i18n elements.
     const langSel = document.getElementById('lang-select');

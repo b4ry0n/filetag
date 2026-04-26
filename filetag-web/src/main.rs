@@ -3,6 +3,7 @@ mod api;
 mod archive;
 mod auth;
 mod extract;
+mod face;
 mod preview;
 mod state;
 mod types;
@@ -209,6 +210,8 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         roots,
         ai_progress: std::sync::Mutex::new(AiProgress::default()),
+        face_progress: std::sync::Mutex::new(crate::face::FaceProgress::default()),
+        model_download: std::sync::Mutex::new(crate::face::ModelDownloadProgress::default()),
         sessions,
     });
 
@@ -232,6 +235,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/js/viewer.js", get(api::js_viewer))
         .route("/js/main.js", get(api::js_main))
         .route("/js/chat.js", get(api::js_chat))
+        .route("/js/face.js", get(api::js_face))
+        .route("/css/face.css", get(api::css_face))
         .route("/favicon.svg", get(api::favicon))
         .route("/api/roots", get(api::api_roots))
         .route("/api/auth/status", get(api::api_auth_status))
@@ -285,6 +290,28 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/ai/status", get(ai::api_ai_status))
         .route("/api/ai/config", get(ai::api_ai_config_get))
         .route("/api/ai/config", post(ai::api_ai_config_set))
+        // Face detection routes
+        .route("/api/face/analyse", post(face::api_face_analyse))
+        .route(
+            "/api/face/analyse-batch",
+            post(face::api_face_analyse_batch),
+        )
+        .route("/api/face/status", get(face::api_face_status))
+        .route("/api/face/detections", get(face::api_face_detections))
+        .route("/api/face/thumbnail", get(face::api_face_thumbnail))
+        .route("/api/face/assign", post(face::api_face_assign))
+        .route("/api/face/suggest", get(face::api_face_suggest))
+        .route("/api/face/delete", post(face::api_face_delete))
+        .route("/api/face/cluster", post(face::api_face_cluster))
+        .route("/api/face/config", get(face::api_face_config_get))
+        .route("/api/face/config", post(face::api_face_config_set))
+        .route(
+            "/api/face/models/download",
+            post(face::api_face_models_download),
+        )
+        .route("/api/face/models/status", get(face::api_face_models_status))
+        .route("/api/face/subjects", get(face::api_face_subjects))
+        .route("/api/face/files", get(face::api_face_files))
         .route("/api/settings", get(api::api_settings_get))
         .route("/api/settings", post(api::api_settings_set))
         // Authentication routes (always available so login/logout work).

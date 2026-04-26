@@ -114,6 +114,8 @@ js_handler!(js_lightbox, "../static/js/lightbox.js");
 js_handler!(js_viewer, "../static/js/viewer.js");
 js_handler!(js_main, "../static/js/main.js");
 js_handler!(js_chat, "../static/js/chat.js");
+js_handler!(js_face, "../static/js/face.js");
+css_handler!(css_face, "../static/css/face.css");
 
 /// Serve the embedded `favicon.ico`.
 pub async fn favicon() -> impl IntoResponse {
