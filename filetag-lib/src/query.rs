@@ -422,18 +422,22 @@ impl QueryBuilder {
             Expr::SubjectName(pattern) => {
                 if pattern.contains('*') {
                     let like_pat = pattern.replace('*', "%");
-                    let p = self.param(&like_pat);
+                    let p1 = self.param(&like_pat);
+                    let p2 = self.param(&like_pat);
                     format!(
                         "f.id IN (SELECT DISTINCT file_id FROM file_tags \
-                         WHERE subject LIKE {})",
-                        p
+                         WHERE subject LIKE {p1} \
+                         UNION SELECT DISTINCT file_id FROM face_detections \
+                         WHERE subject_name LIKE {p2})"
                     )
                 } else {
-                    let p = self.param(pattern);
+                    let p1 = self.param(pattern);
+                    let p2 = self.param(pattern);
                     format!(
                         "f.id IN (SELECT DISTINCT file_id FROM file_tags \
-                         WHERE subject = {})",
-                        p
+                         WHERE subject = {p1} \
+                         UNION SELECT DISTINCT file_id FROM face_detections \
+                         WHERE subject_name = {p2})"
                     )
                 }
             }

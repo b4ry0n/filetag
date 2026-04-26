@@ -1103,13 +1103,13 @@ pub fn cluster_and_assign(conn: &Connection, cfg: &FaceConfig) -> anyhow::Result
         db::set_face_subject(conn, row.id, subject.as_deref())?;
     }
 
-    // Ensure all subjects exist in the `subjects` table.
-    for name in &cluster_name {
-        conn.execute(
-            "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
-            rusqlite::params![name],
-        )?;
-    }
+    // Remove stale auto-generated subjects from the subjects table.
+    // `unknown-*` subjects are tracked via face_detections.subject_name and should
+    // not appear in the subjects table (which is for user-defined subjects only).
+    conn.execute(
+        "DELETE FROM subjects WHERE name LIKE ?1",
+        rusqlite::params![format!("{}%", auto_prefix)],
+    )?;
 
     Ok(n_clusters)
 }
@@ -1597,7 +1597,7 @@ pub async fn api_face_assign(
     let mut propagated = 0usize;
 
     if let Some(name) = &req.subject_name {
-        // Ensure the subject exists in the subjects table.
+        // Ensure the subject exists in the registry.
         conn.execute(
             "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
             rusqlite::params![name],
@@ -1605,7 +1605,7 @@ pub async fn api_face_assign(
         .map_err(anyhow::Error::from)
         .map_err(AppError)?;
 
-        // Propagate the name to all cluster-mates.
+        // Propagate the name to all cluster-mates in face_detections.
         let cfg = load_face_config(&conn);
         propagated =
             propagate_subject_to_cluster(&conn, req.detection_id, name, &cfg).map_err(AppError)?;
