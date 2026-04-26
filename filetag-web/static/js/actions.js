@@ -1,99 +1,5 @@
 
 // ---------------------------------------------------------------------------
-// Navigation history (back / forward)
-// ---------------------------------------------------------------------------
-
-/** Snapshots of visited locations, oldest first. */
-let _navHistory = [];
-/** Index of the currently displayed location in _navHistory. */
-let _navCursor  = -1;
-/** True while restoring a history entry so pushes are suppressed. */
-let _navRestoring = false;
-
-/** Capture the current browsing location as a plain object. */
-function _navSnapshot() {
-    return {
-        mode:     state.mode,
-        basePath: state.currentBasePath,
-        path:     state.currentPath,
-        zipPath:  state.zipPath,
-        zipSubdir: state.zipSubdir,
-    };
-}
-
-/** Push the current location onto the history stack after a navigation. */
-function _navPush() {
-    if (_navRestoring) return;
-    const snap = _navSnapshot();
-    // Ignore duplicate of what is already the current entry.
-    const cur = _navHistory[_navCursor];
-    if (cur && cur.mode === snap.mode && cur.basePath === snap.basePath &&
-        cur.path === snap.path && cur.zipPath === snap.zipPath &&
-        cur.zipSubdir === snap.zipSubdir) return;
-    // Truncate any forward entries and append.
-    _navHistory = _navHistory.slice(0, _navCursor + 1);
-    _navHistory.push(snap);
-    _navCursor = _navHistory.length - 1;
-    _navUpdateButtons();
-}
-
-function _navUpdateButtons() {
-    const back = document.getElementById('nav-back');
-    const fwd  = document.getElementById('nav-forward');
-    if (back) back.disabled = _navCursor <= 0;
-    if (fwd)  fwd.disabled  = _navCursor >= _navHistory.length - 1;
-}
-
-async function _navRestore(snap) {
-    _thumbClearCache();
-    _kbCursor = -1;
-    state.selectedFile = null;
-    state.selectedDir  = null;
-    state.selectedPaths.clear();
-    state.selectedFilesData.clear();
-    state.activeTags.clear();
-    _lastClickedPath = null;
-    _armedBulkTag    = null;
-
-    if (snap.mode === 'zip' && snap.zipPath) {
-        state.currentBasePath = snap.basePath;
-        state.currentPath = snap.path;
-        state.mode = 'zip';
-        state.zipPath = snap.zipPath;
-        state.zipSubdir = snap.zipSubdir || '';
-        state.zipEntries = [];
-        renderBreadcrumb();
-        const el = document.getElementById('content');
-        el.className = '';
-        el.innerHTML = '<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Loading archive…</span></div>';
-        const data = await api('/api/zip/entries?' + new URLSearchParams({ path: snap.zipPath }) + dirParam('&'));
-        state.zipEntries = data.entries || [];
-        render();
-    } else {
-        if (snap.basePath !== null) state.currentBasePath = snap.basePath;
-        await loadFiles(snap.path || '');
-        await loadSettings();
-        render();
-    }
-}
-
-async function navBack() {
-    if (_navCursor <= 0) return;
-    _navCursor--;
-    _navRestoring = true;
-    try { await _navRestore(_navHistory[_navCursor]); } finally { _navRestoring = false; }
-    _navUpdateButtons();
-}
-
-async function navForward() {
-    if (_navCursor >= _navHistory.length - 1) return;
-    _navCursor++;
-    _navRestoring = true;
-    try { await _navRestore(_navHistory[_navCursor]); } finally { _navRestoring = false; }
-    _navUpdateButtons();
-}
-
-// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
@@ -110,7 +16,6 @@ async function navigateTo(path) {
     await loadFiles(path);
     await loadSettings();
     render();
-    _navPush();
 }
 
 // Select a root card (virtual root page) — shows info in the detail panel.
@@ -147,7 +52,6 @@ async function enterRoot(rootPath) {
     _armedBulkTag = null;
     await Promise.all([loadInfo(), loadTags(), loadFiles(''), loadSettings()]);
     render();
-    _navPush();
 }
 
 // Navigate back to the virtual root (show all roots).
@@ -167,7 +71,6 @@ async function goVirtualRoot() {
     _armedBulkTag = null;
     await loadFiles('');
     render();
-    _navPush();
 }
 
 
@@ -345,7 +248,6 @@ async function doAddTag() {
     const tagStr = input.value.trim();
     if (!tagStr) return;
     const subject = subjectInput?.value.trim() || undefined;
-    if (!_assertSubjectExists(subject)) return;
     await addTagToFile(state.selectedFile.path, tagStr, subject);
     input.value = '';
     renderTags();
@@ -415,40 +317,8 @@ function collectBulkSubjects() {
     return [...own, ...all.filter(s => !own.has(s))];
 }
 
-/// Returns true if `subjectName` exists in the known subject list.
-/// Shows a toast and returns false if it does not exist.
-function _assertSubjectExists(subjectName) {
-    if (!subjectName) return true; // no subject = OK
-    const known = (state.subjects || []).map(s => s.name);
-    if (known.includes(subjectName)) return true;
-    showToast(`Subject "${subjectName}" does not exist. Create it first in the Subjects manager.`);
-    return false;
-}
-
-/// Toggle the subject input field: fill it with `subjectName`, or clear it if
-/// it already contains that value. Called by clicking a subject label in the
-/// detail panel.
-function toggleSubjectInput(subjectName) {
-    const input = document.getElementById('tag-subject');
-    if (!input) return;
-    input.value = input.value === subjectName ? '' : subjectName;
-    input.focus();
-}
-
 /// Attach a simple autocomplete dropdown to a subject text input.
 /// `getSubjects` is called each time to retrieve the current subject list.
-
-// ---------------------------------------------------------------------------
-// Shared positioning helper for all autocomplete dropdowns
-// ---------------------------------------------------------------------------
-
-function positionDropdownNear(dropdown, inputEl) {
-    const rect = inputEl.getBoundingClientRect();
-    dropdown.style.top    = (rect.bottom + 2) + 'px';
-    dropdown.style.left   = rect.left + 'px';
-    dropdown.style.width  = rect.width + 'px';
-}
-
 function attachSubjectAutocomplete(inputEl, getSubjects) {
     if (!inputEl) return;
     let _dropdown = null;
@@ -457,9 +327,8 @@ function attachSubjectAutocomplete(inputEl, getSubjects) {
         if (!_dropdown) {
             _dropdown = document.createElement('ul');
             _dropdown.className = 'tag-autocomplete';
-            document.body.appendChild(_dropdown);
+            inputEl.parentElement.appendChild(_dropdown);
         }
-        positionDropdownNear(_dropdown, inputEl);
         const q = inputEl.value.trim().toLowerCase();
         const matches = q
             ? subjects.filter(s => s.toLowerCase().includes(q))
@@ -482,7 +351,6 @@ function attachSubjectAutocomplete(inputEl, getSubjects) {
         if (_dropdown) _dropdown.hidden = true;
     }
 
-    inputEl.addEventListener('focus', () => buildDropdown(getSubjects()));
     inputEl.addEventListener('input', () => buildDropdown(getSubjects()));
     inputEl.addEventListener('blur',  () => setTimeout(closeDropdown, 150));
     inputEl.addEventListener('keydown', e => {
@@ -492,23 +360,19 @@ function attachSubjectAutocomplete(inputEl, getSubjects) {
     });
 }
 
+/// Fill (or toggle-clear) the subject input from a subject-label click.
+/// Sets the value programmatically so no autocomplete dropdown is triggered.
+function toggleSubjectInput(subject) {
+    const input = document.getElementById('tag-subject');
+    if (!input) return;
+    input.value = input.value.trim() === subject ? '' : subject;
+}
+
 function attachTagAutocomplete(inputEl, submitFn) {
     let _dropdown = null;
     let _activeIdx = -1;
-    const _valCache = {};
 
-    async function fetchValues(key) {
-        if (_valCache[key] !== undefined) return _valCache[key];
-        try {
-            const vals = await api('/api/tag-values?' + new URLSearchParams({ name: key }) + dirParam('&'));
-            _valCache[key] = vals || [];
-        } catch (_) {
-            _valCache[key] = [];
-        }
-        return _valCache[key];
-    }
-
-    function getTagMatches(query) {
+    function getMatches(query) {
         const q = query.toLowerCase();
         if (!q) {
             // Show top tags by count, excluding ones already on the selected file(s)
@@ -532,17 +396,12 @@ function attachTagAutocomplete(inputEl, submitFn) {
             .slice(0, 15);
     }
 
-    function ensureDropdown() {
+    function buildDropdown(tags) {
         if (!_dropdown) {
             _dropdown = document.createElement('ul');
             _dropdown.className = 'tag-autocomplete';
-            document.body.appendChild(_dropdown);
+            inputEl.parentElement.appendChild(_dropdown);
         }
-        positionDropdownNear(_dropdown, inputEl);
-    }
-
-    function buildDropdown(tags) {
-        ensureDropdown();
         _activeIdx = -1;
         if (!tags.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
         _dropdown.innerHTML = tags.map(tag => {
@@ -555,28 +414,6 @@ function attachTagAutocomplete(inputEl, submitFn) {
         _dropdown.querySelectorAll('li').forEach(li => {
             li.addEventListener('mousedown', e => {
                 e.preventDefault(); // keep focus on input
-                inputEl.value = li.dataset.tagname;
-                closeDropdown();
-                submitFn();
-            });
-        });
-    }
-
-    function buildValueDropdown(key, values, partial) {
-        ensureDropdown();
-        _activeIdx = -1;
-        const matches = values
-            .filter(v => !partial || v.value.toLowerCase().startsWith(partial))
-            .slice(0, 15);
-        if (!matches.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
-        _dropdown.innerHTML = matches.map(v => {
-            const full = `${key}=${v.value}`;
-            return `<li data-tagname="${esc(full)}"><span class="ac-name">${esc(key)}<em>=</em>${esc(v.value)}</span><span class="ac-count">${v.count}</span></li>`;
-        }).join('');
-        _dropdown.hidden = false;
-        _dropdown.querySelectorAll('li').forEach(li => {
-            li.addEventListener('mousedown', e => {
-                e.preventDefault();
                 inputEl.value = li.dataset.tagname;
                 closeDropdown();
                 submitFn();
@@ -600,23 +437,9 @@ function attachTagAutocomplete(inputEl, submitFn) {
         }
     }
 
-    async function updateDropdown() {
-        const val = inputEl.value.trim();
-        const eqIdx = val.indexOf('=');
-        if (eqIdx !== -1) {
-            const key = val.slice(0, eqIdx).trim();
-            const partial = val.slice(eqIdx + 1).toLowerCase();
-            if (!key) { closeDropdown(); return; }
-            const values = await fetchValues(key);
-            buildValueDropdown(key, values, partial);
-        } else {
-            buildDropdown(getTagMatches(val));
-        }
-    }
+    inputEl.addEventListener('input', () => buildDropdown(getMatches(inputEl.value.trim())));
 
-    inputEl.addEventListener('input', () => updateDropdown());
-
-    inputEl.addEventListener('focus', () => updateDropdown());
+    inputEl.addEventListener('focus', () => buildDropdown(getMatches(inputEl.value.trim())));
 
     inputEl.addEventListener('blur', () => setTimeout(closeDropdown, 150));
 
@@ -625,7 +448,7 @@ function attachTagAutocomplete(inputEl, submitFn) {
         const count = items.length;
         if (e.key === 'ArrowDown') {
             e.preventDefault();
-            if (!_dropdown || _dropdown.hidden) updateDropdown();
+            if (!_dropdown || _dropdown.hidden) buildDropdown(getMatches(inputEl.value.trim()));
             setActive(Math.min(_activeIdx + 1, count - 1));
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
@@ -709,9 +532,8 @@ function attachSearchAutocomplete(inputEl, submitFn) {
         if (!_dropdown) {
             _dropdown = document.createElement('ul');
             _dropdown.className = 'tag-autocomplete';
-            document.body.appendChild(_dropdown);
+            inputEl.parentElement.appendChild(_dropdown);
         }
-        positionDropdownNear(_dropdown, inputEl);
         _activeIdx = -1;
         if (!tags.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
         _dropdown.innerHTML = tags.map(tag => {
@@ -798,7 +620,6 @@ async function doBulkAddTag() {
     const tagStr = input.value.trim();
     if (!tagStr) return;
     const subject = subjectInput?.value.trim() || undefined;
-    if (!_assertSubjectExists(subject)) return;
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
@@ -1202,27 +1023,18 @@ async function aiTestConnection() {
 }
 
 /// Promote an ai/* tag: add it without the prefix, then remove the original.
-async function aiPromoteTag(path, tagName, value, subject = null) {
+async function aiPromoteTag(path, tagName, value) {
     // tagName is e.g. "ai/necklace", promoted becomes "necklace".
     // value may be "" or e.g. "gold" for key=value tags.
-    // If no subject was passed (tag not yet in a subject), fall back to the
-    // subject currently typed in the detail panel's subject input field.
-    const resolvedSubject = subject
-        || document.getElementById('tag-subject')?.value.trim()
-        || null;
     const promoted = tagName.slice('ai/'.length);
     if (!promoted) return;
     const newTagStr = value ? `${promoted}=${value}` : promoted;
     const toast = showToast(t('toast.promoting', {tag: newTagStr}), 0);
     try {
-        // Add the promoted tag (with subject if present), then remove the ai/ original.
-        const tagBody = { path, tags: [newTagStr], dir: currentAbsDir() };
-        if (resolvedSubject) tagBody.subject = resolvedSubject;
-        await apiPost('/api/tag', tagBody);
+        // Add the promoted tag, then remove the ai/ original.
+        await apiPost('/api/tag', { path, tags: [newTagStr], dir: currentAbsDir() });
         const origStr = value ? `${tagName}=${value}` : tagName;
-        const untagBody = { path, tags: [origStr], dir: currentAbsDir() };
-        if (resolvedSubject) untagBody.subject = resolvedSubject;
-        await apiPost('/api/untag', untagBody);
+        await apiPost('/api/untag', { path, tags: [origStr], dir: currentAbsDir() });
         await loadFileDetail(path);
         await loadTags();
         renderTags();
@@ -1244,7 +1056,6 @@ async function aiClearTags(paths) {
         await loadTags();
         renderTags();
         await refreshSelectedFilesData();
-        if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
         renderDetail();
         _updateCardTagBadges();
         dismissToast(toast);
@@ -1889,8 +1700,6 @@ async function applyTagPicker() {
     const subjectChanged = state.tagPickerSubject !== state.tagPickerOriginalSubject;
     const subject = state.tagPickerSubject || undefined;
 
-    if (!_assertSubjectExists(subject)) return;
-
     if (toAdd.length === 0 && toRemove.length === 0 && !subjectChanged) {
         cancelTagPickerMode();
         return;
@@ -1911,18 +1720,12 @@ async function applyTagPicker() {
             ops.push(apiPost('/api/untag', { path: p, tags: [t], dir }));
         }
     }
-    // If subject changed but no tag delta, reassign existing bare tags to the new subject.
-    // We remove each bare row first, then re-insert with the new subject, to avoid duplicates.
+    // If subject changed but no tag delta, re-apply existing tags with new subject.
     if (subjectChanged && toAdd.length === 0 && toRemove.length === 0 && subject) {
         for (const p of paths) {
             const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
-            for (const tag of (data?.tags || [])) {
-                if (tag.subject && tag.subject !== '') continue; // skip already-assigned rows
-                const tagStr = tag.value ? `${tag.name}=${tag.value}` : tag.name;
-                ops.push(
-                    apiPost('/api/untag', { path: p, tags: [tagStr], subject: '', dir })
-                        .then(() => apiPost('/api/tag', { path: p, tags: [tagStr], dir, subject }))
-                );
+            for (const t of (data?.tags || [])) {
+                ops.push(apiPost('/api/tag', { path: p, tags: [t.value ? `${t.name}=${t.value}` : t.name], dir, subject }));
             }
         }
     }

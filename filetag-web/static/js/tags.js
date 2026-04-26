@@ -219,6 +219,7 @@ function renderTags() {
 
     const tree = buildTagTree(state.tags);
     const listHtml = state.tags.length ? renderTagTreeNodes(tree, 0) : '';
+    const subjectsHtml = _renderSubjectsInline();
 
     if (state.tagPickerMode) {
         // In picker mode: show sticky apply/cancel bar at the bottom.
@@ -241,7 +242,7 @@ function renderTags() {
             <button class="tag-picker-cancel" onclick="cancelTagPickerMode()">Cancel</button>
         </div>`;
         el.innerHTML = (listHtml || `<div class="empty-state"><span class="empty-state-text">No tags match</span></div>`)
-            + pickerBar;
+            + subjectsHtml + pickerBar;
     } else {
         // Normal mode: compact "Clear filters" bar
         const clearBar = state.activeTags.size > 0
@@ -249,39 +250,32 @@ function renderTags() {
             : '';
         el.innerHTML = clearBar + (listHtml || (state.tagFilter
             ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
-            : ''));
+            : '')) + subjectsHtml;
     }
-
-    // Render subjects in their own pane.
-    _renderSubjectPane();
+    // Clear the old separate subject container (no longer used for content).
+    const subjEl = document.getElementById('subject-list');
+    if (subjEl) subjEl.innerHTML = '';
 }
 
 /**
  * Render the subjects section as inline HTML to be appended to #tag-list.
  * Uses the same visual language as tags.
  */
-function _renderSubjectPane() {
-    const subjEl = document.getElementById('subject-list');
-    const divider = document.getElementById('sidebar-subject-divider');
-    if (!subjEl) return;
-    if (!state.subjects || !state.subjects.length) {
-        subjEl.innerHTML = '';
-        if (divider) divider.hidden = true;
-        return;
-    }
-    if (divider) divider.hidden = false;
+function _renderSubjectsInline() {
+    if (!state.subjects || !state.subjects.length) return '';
     const subjectTags = state.subjects.map(s => ({
         name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
     }));
     const tree = buildTagTree(subjectTags);
-    subjEl.innerHTML = `<div class="subjects-section-label">Subjects</div>` + renderSubjectTreeNodes(tree, 0);
+    return `<div class="subjects-section-divider">Subjects</div>`
+        + renderSubjectTreeNodes(tree, 0);
 }
 
 /**
  * @deprecated — kept so old callers don't break; renderTags now handles subjects inline.
  */
 function renderSubjects() {
-    _renderSubjectPane();
+    renderTags();
 }
 
 function renderSubjectTreeNodes(nodeMap, depth) {
@@ -368,6 +362,31 @@ async function doSubjectSearch(subject) {
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
     render();
+}
+
+async function applySubjectToSelection(subjectName) {
+    const paths = state.selectedPaths.size > 0
+        ? [...state.selectedPaths]
+        : state.selectedFile ? [state.selectedFile.path] : [];
+    if (!paths.length) return;
+    const dir = currentAbsDir();
+    // Re-apply every existing tag on each file with the new subject.
+    for (const p of paths) {
+        const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
+        const tags = data?.tags || [];
+        if (!tags.length) continue;
+        await Promise.all(tags.map(t =>
+            apiPost('/api/tag', {
+                path: p,
+                tags: [t.value ? `${t.name}=${t.value}` : t.name],
+                subject: subjectName,
+                dir,
+            })
+        ));
+    }
+    showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    renderDetailTagsOnly();
 }
 
 async function toggleKvExpand(tagName) {
@@ -561,62 +580,6 @@ async function tagDrop(event, tagName) {
     _updateCardTagBadges();
 }
 
-/**
- * Show a modal dialog asking the user how to handle a subject-assignment conflict.
- * Returns a Promise that resolves to 'reassign', 'add', or 'cancel'.
- *
- * @param {string} tagName     - The tag / subject name that conflicts.
- * @param {string} filePath    - The file path (for display).
- */
-function showSubjectConflictDialog(tagName, filePath) {
-    return new Promise(resolve => {
-        const fileName = filePath.split('/').pop();
-        const subst = s => s
-            .replace('{tag}',     tagName)
-            .replace('{file}',    fileName)
-            .replace(/{subject}/g, tagName);
-
-        const overlay = document.createElement('div');
-        overlay.className = 'subject-conflict-overlay';
-        overlay.innerHTML = `
-            <div class="subject-conflict-dialog">
-                <h4 class="subject-conflict-title">${esc(t('subject.conflict-title'))}</h4>
-                <p class="subject-conflict-body">${esc(subst(t('subject.conflict-body')))}</p>
-                <div class="subject-conflict-actions">
-                    <button class="subject-conflict-btn btn-primary" data-choice="reassign">
-                        ${esc(t('subject.conflict-reassign'))}
-                        <span class="subject-conflict-hint">${esc(subst(t('subject.conflict-reassign-hint')))}</span>
-                    </button>
-                    <button class="subject-conflict-btn" data-choice="add">
-                        ${esc(t('subject.conflict-add'))}
-                        <span class="subject-conflict-hint">${esc(subst(t('subject.conflict-add-hint')))}</span>
-                    </button>
-                    <button class="subject-conflict-btn btn-cancel" data-choice="cancel">
-                        ${esc(t('subject.conflict-cancel'))}
-                    </button>
-                </div>
-            </div>`;
-
-        document.body.appendChild(overlay);
-
-        overlay.addEventListener('click', e => {
-            const btn = e.target.closest('[data-choice]');
-            if (!btn) return;
-            overlay.remove();
-            resolve(btn.dataset.choice);
-        });
-    });
-}
-
-/**
- * Called when one or more file cards are dropped onto a subject in the sidebar.
- *
- * Per §6.4 of the architecture:
- *   1. Find or create a tag with the same name as the subject.
- *   2. Apply that tag to the file with subject = subjectName.
- *   3. If that tag already exists on the file as a bare assignment (subject=''),
- *      ask the user whether to Reassign, Add, or Cancel.
- */
 async function subjectDrop(event, subjectName) {
     event.preventDefault();
     event.currentTarget.classList.remove('tag-drag-over');
@@ -624,45 +587,22 @@ async function subjectDrop(event, subjectName) {
     if (!raw) return;
     const paths = JSON.parse(raw);
     const dir = currentAbsDir();
-
     for (const p of paths) {
-        // Get the current tag list for this file (from state if available).
         const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
-        const fileTags = data?.tags || [];
-
-        // Check whether a tag named subjectName already exists on this file.
-        const asSubject = fileTags.find(t => t.name === subjectName && t.subject === subjectName);
-        const asBare    = fileTags.find(t => t.name === subjectName && (!t.subject || t.subject === ''));
-
-        if (asSubject) {
-            // Tag already applied with this subject — nothing to do.
-            continue;
-        }
-
-        if (asBare) {
-            // Conflict: tag exists as a bare assignment. Ask the user.
-            const choice = await showSubjectConflictDialog(subjectName, p);
-            if (choice === 'cancel') continue;
-
-            if (choice === 'reassign') {
-                // Remove the bare row, then re-add with subject.
-                const tagStr = asBare.value ? `${asBare.name}=${asBare.value}` : asBare.name;
-                await apiPost('/api/untag', { path: p, tags: [tagStr], subject: '', dir });
-            }
-            // For both 'reassign' and 'add', add the tag with the subject.
-            await apiPost('/api/tag', { path: p, tags: [subjectName], subject: subjectName, dir });
-        } else {
-            // Tag not present at all — create and apply.
-            await apiPost('/api/tag', { path: p, tags: [subjectName], subject: subjectName, dir });
-        }
+        const tags = data?.tags || [];
+        if (!tags.length) continue;
+        await Promise.all(tags.map(t =>
+            apiPost('/api/tag', {
+                path: p,
+                tags: [t.value ? `${t.name}=${t.value}` : t.name],
+                subject: subjectName,
+                dir,
+            })
+        ));
     }
-
     showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
-    await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     renderDetailTagsOnly();
-    renderTags();
-    _updateCardTagBadges();
 }
 
 function startTagRename(tagName) {
@@ -854,7 +794,6 @@ function closeTagManager() {
     _tmSelectedTag = null;
     _tmSelectedSubject = null;
     _tmTab = 'tags';
-    renderTags();
 }
 
 async function pruneUnusedTags() {
@@ -868,7 +807,6 @@ async function pruneUnusedTags() {
             showToast(`Removed ${n} unused tag${n === 1 ? '' : 's'}.`);
             await loadTags();
             renderTmList();
-            renderTags();
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
@@ -884,7 +822,7 @@ function renderTmList() {
     const el = document.getElementById('tm-list');
     if (!el) return;
 
-    const q = _tmSearchQuery.toLowerCase();
+    const q = _tmSearchQuery;
     const filtered = q
         ? state.tags.filter(t => t.name.toLowerCase().includes(q))
         : state.tags;
@@ -894,69 +832,72 @@ function renderTmList() {
         return;
     }
 
-    const tree = buildTagTree(filtered);
-    el.innerHTML = _renderTmTreeNodes(tree, 0);
-}
-
-function _tmNodeMatchesFilter(node) {
-    const q = _tmSearchQuery.toLowerCase();
-    if (!q) return true;
-    if (node.fullPath.toLowerCase().includes(q)) return true;
-    for (const child of node.children.values()) {
-        if (_tmNodeMatchesFilter(child)) return true;
+    // Group by hierarchy prefix
+    const groups = {};
+    const standalone = [];
+    for (const tag of filtered) {
+        const slash = tag.name.indexOf('/');
+        if (slash > 0) {
+            const prefix = tag.name.slice(0, slash);
+            if (!groups[prefix]) groups[prefix] = { root: null, children: [] };
+            groups[prefix].children.push(tag);
+        } else {
+            standalone.push(tag);
+        }
     }
-    return false;
-}
+    for (const tag of standalone) {
+        if (groups[tag.name] && !groups[tag.name].root) {
+            groups[tag.name].root = tag;
+        }
+    }
+    const standaloneOnly = standalone.filter(t => !groups[t.name]);
 
-function _renderTmTreeNodes(nodeMap, depth) {
-    const q = _tmSearchQuery.toLowerCase();
-    let nodes = [...nodeMap.values()];
-    if (q) nodes = nodes.filter(n => _tmNodeMatchesFilter(n));
-    nodes.sort((a, b) => a.segment.localeCompare(b.segment));
-    return nodes.map(n => _renderTmTreeNode(n, depth)).join('');
-}
+    let html = '';
 
-function _renderTmTreeNode(node, depth) {
-    const { segment, fullPath, tag, children } = node;
-    const hasChildren = children.size > 0;
-    const q = _tmSearchQuery.toLowerCase();
-    const indent = depth > 0 ? ` style="padding-left:${12 + depth * 16}px"` : '';
-    const childIndent = `${12 + (depth + 1) * 16}px`;
+    for (const prefix of Object.keys(groups).sort()) {
+        const { root, children } = groups[prefix];
+        const totalCount = children.reduce((s, c) => s + c.count, 0) + (root?.count || 0);
+        const rootSel = _tmSelectedTag === prefix ? ' selected' : '';
+        // When searching or a child is selected, always expand.
+        const hasSelectedChild = children.some(c => c.name === _tmSelectedTag);
+        const collapsed = _tmCollapsedGroups.has(prefix) && !q && !hasSelectedChild;
+        const chevronClass = collapsed ? 'tm-chevron' : 'tm-chevron tm-chevron-open';
+        html += `<div class="tm-group">
+            <div class="tm-group-header${rootSel}">
+                <button class="${chevronClass}" onclick="tmToggleGroup('${jesc(prefix)}')" title="Expand/collapse">
+                    <svg viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <span class="tm-group-label" onclick="tmSelectTag('${jesc(prefix)}')">
+                    ${colorDot(root?.color || null)}<span class="tm-group-name">${esc(prefix)}</span>
+                    <span class="tm-count">${totalCount}</span>
+                </span>
+            </div>`;
+        if (!collapsed) {
+            for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
+                const suffix = child.name.slice(prefix.length + 1);
+                const sel = _tmSelectedTag === child.name ? ' selected' : '';
+                const synBadge = (child.synonyms || []).length ? ` <span class="tm-syn-badge">\u2261</span>` : '';
+                const kvBadge = child.has_values ? ` <span class="tm-kv-badge">k=v</span>` : '';
+                html += `<div class="tm-tag-row tm-tag-child${sel}" onclick="tmSelectTag('${jesc(child.name)}')">
+                    ${colorDot(child.color)}${esc(suffix)}${kvBadge}${synBadge}
+                    <span class="tm-count">${child.count}</span>
+                </div>`;
+            }
+        }
+        html += `</div>`;
+    }
 
-    if (!hasChildren) {
-        if (!tag) return '';
-        const sel = _tmSelectedTag === fullPath ? ' selected' : '';
+    for (const tag of standaloneOnly.sort((a, b) => a.name.localeCompare(b.name))) {
+        const sel = _tmSelectedTag === tag.name ? ' selected' : '';
         const synBadge = (tag.synonyms || []).length ? ` <span class="tm-syn-badge">\u2261</span>` : '';
         const kvBadge = tag.has_values ? ` <span class="tm-kv-badge">k=v</span>` : '';
-        const cls = depth === 0 ? 'tm-tag-row tm-tag-standalone' : 'tm-tag-row';
-        return `<div class="${cls}${sel}"${indent} onclick="tmSelectTag('${jesc(fullPath)}')">
-            ${colorDot(tag.color)}${esc(segment)}${kvBadge}${synBadge}
+        html += `<div class="tm-tag-row tm-tag-standalone${sel}" onclick="tmSelectTag('${jesc(tag.name)}')">
+            ${colorDot(tag.color)}${esc(tag.name)}${kvBadge}${synBadge}
             <span class="tm-count">${tag.count}</span>
         </div>`;
     }
 
-    // Group node
-    const totalCount = _nodeCount(node);
-    const hasSelectedChild = _tmSelectedTag !== null && _tmSelectedTag.startsWith(fullPath + '/');
-    const collapsed = _tmCollapsedGroups.has(fullPath) && !q && !hasSelectedChild;
-    const chevronClass = collapsed ? 'tm-chevron' : 'tm-chevron tm-chevron-open';
-    const rootSel = _tmSelectedTag === fullPath ? ' selected' : '';
-
-    let html = `<div class="tm-group">
-        <div class="tm-group-header${rootSel}">
-            <button class="${chevronClass}" onclick="tmToggleGroup('${jesc(fullPath)}')" title="Expand/collapse" style="padding-left:${depth > 0 ? 4 + depth * 16 : 4}px">
-                <svg viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-            <span class="tm-group-label" onclick="tmSelectTag('${jesc(fullPath)}')">
-                ${colorDot(tag?.color || null)}<span class="tm-group-name">${esc(segment)}</span>
-                <span class="tm-count">${totalCount}</span>
-            </span>
-        </div>`;
-    if (!collapsed) {
-        html += _renderTmTreeNodes(children, depth + 1);
-    }
-    html += `</div>`;
-    return html;
+    el.innerHTML = html;
 }
 
 async function tmSelectTag(name) {
@@ -1152,7 +1093,6 @@ async function tmAddSynonym(canonical) {
     await loadTags();
     renderTmList();
     await renderTmDetail(canonical);
-    renderTags();
 }
 
 async function tmRemoveSynonym(canonical, alias) {
@@ -1161,7 +1101,6 @@ async function tmRemoveSynonym(canonical, alias) {
     await loadTags();
     renderTmList();
     await renderTmDetail(canonical);
-    renderTags();
 }
 
 async function tmDoRename(oldName) {
@@ -1349,7 +1288,6 @@ async function tmCreateSubject() {
     _tmSelectedSubject = name;
     renderTmSubjectList();
     renderTmSubjectDetail(name);
-    _renderSubjectPane();
 }
 
 function tmSelectSubject(name) {
@@ -1377,12 +1315,22 @@ async function renderTmSubjectDetail(name) {
         <div class="tm-detail-placeholder" style="padding:12px 16px">Loading\u2026</div>
     `;
 
-    // Load subject tags (entity properties) in parallel
-    const [subjProps] = await Promise.all([
+    // Load file-level tags and entity properties in parallel
+    const [subjTags, subjProps] = await Promise.all([
+        api('/api/subject/tags?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
         api('/api/subject/props?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
     ]);
 
     if (document.getElementById('tm-subject-detail') !== panel) return; // closed meanwhile
+
+    const tagRows = subjTags.map(t => `
+        <div class="tm-val-row">
+            <span class="tm-val-name" onclick="tmSubjectTagSearch('${jesc(name)}','${jesc(t.value)}')"
+                title="Search ${esc(name)} and ${esc(t.value)}">${esc(t.value)}</span>
+            <span class="tm-val-count">${t.count}</span>
+            <button class="tm-val-rename" onclick="tmSubjectRemoveTag('${jesc(name)}','${jesc(t.value)}')"
+                title="Remove this tag from all files in subject">\u2715</button>
+        </div>`).join('');
 
     const propRows = subjProps.map(p => {
         const label = p.value ? `${esc(p.tag)} = ${esc(p.value)}` : esc(p.tag);
@@ -1401,17 +1349,45 @@ async function renderTmSubjectDetail(name) {
         </div>
 
         <section class="tm-section">
-            <div class="tm-section-title">Subject tags
-                <span class="tm-section-hint">(tags that describe this subject itself)</span>
+            <div class="tm-section-title">Properties
+                <span class="tm-section-hint">(describe what this subject <em>is</em>)</span>
             </div>
             ${subjProps.length
                 ? `<div class="tm-val-list">${propRows}</div>`
-                : `<div class="tm-empty-hint">No tags yet.</div>`}
+                : `<div class="tm-empty-hint">No properties yet.</div>`}
             <div class="tm-syn-add" style="margin-top:6px">
-                <input id="tm-subj-prop-input" class="tm-input" type="text"
-                    placeholder="tag or tag=value\u2026"
+                <input id="tm-subj-prop-tag" class="tm-input" type="text"
+                    placeholder="Property (e.g. geslacht, geboren\u2026)"
+                    list="tm-subj-prop-datalist"
+                    style="flex:1.5"
+                    onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
+                <datalist id="tm-subj-prop-datalist">
+                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
+                </datalist>
+                <input id="tm-subj-prop-val" class="tm-input" type="text"
+                    placeholder="Value (optional)"
+                    style="flex:1"
                     onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
                 <button class="tm-btn" onclick="tmSubjectSetProp('${jesc(name)}')">Add</button>
+            </div>
+        </section>
+
+        <section class="tm-section">
+            <div class="tm-section-title">File tags
+                <span class="tm-section-hint">(tags on files under this subject; click to search, \u2715 to remove)</span>
+            </div>
+            ${subjTags.length
+                ? `<div class="tm-val-list">${tagRows}</div>`
+                : `<div class="tm-empty-hint">No tags assigned yet.</div>`}
+            <div class="tm-syn-add" style="margin-top:6px">
+                <input id="tm-subj-tag-input" class="tm-input" type="text"
+                    placeholder="Add tag to all files in subject\u2026"
+                    list="tm-subj-tag-datalist"
+                    onkeydown="if(event.key==='Enter') tmSubjectAddTag('${jesc(name)}')">
+                <datalist id="tm-subj-tag-datalist">
+                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
+                </datalist>
+                <button class="tm-btn" onclick="tmSubjectAddTag('${jesc(name)}')">Add</button>
             </div>
         </section>
 
@@ -1447,9 +1423,39 @@ async function renderTmSubjectDetail(name) {
             </button>
         </div>
     `;
+}
 
-    const propInput = document.getElementById('tm-subj-prop-input');
-    if (propInput) attachTagAutocomplete(propInput, () => tmSubjectSetProp(name));
+async function tmSubjectAddTag(subject) {
+    const input = document.getElementById('tm-subj-tag-input');
+    const tag = input ? input.value.trim() : '';
+    if (!tag) return;
+    try {
+        const res = await apiPost('/api/subject/add-tag', { subject, tag, dir: currentAbsDir() });
+        showToast(`Added "${tag}" to ${res.inserted ?? 0} file(s) in subject "${subject}".`);
+        if (input) input.value = '';
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await loadTags();
+    renderTmSubjectList();
+    await renderTmSubjectDetail(subject);
+    renderSubjects();
+}
+
+async function tmSubjectRemoveTag(subject, tag) {
+    if (!confirm(`Remove tag "${tag}" from all files in subject "${subject}"?\nThis deletes ${tag} on files where it was assigned under this subject.`)) return;
+    try {
+        const res = await apiPost('/api/subject/remove-tag', { subject, tag, dir: currentAbsDir() });
+        showToast(`Removed "${tag}" from ${res.removed ?? 0} file(s) in subject "${subject}".`);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+        return;
+    }
+    await loadTags();
+    renderTmSubjectList();
+    await renderTmSubjectDetail(subject);
+    renderSubjects();
 }
 
 async function tmCloneSubject(name) {
@@ -1471,8 +1477,6 @@ async function tmCloneSubject(name) {
     renderTmSubjectList();
     await renderTmSubjectDetail(newName);
     renderSubjects();
-    if (state.selectedFile) { await loadFileDetail(state.selectedFile.path); renderDetailTagsOnly(); }
-    _updateCardTagBadges();
 }
 
 function tmSubjectTagSearch(subject, tag) {
@@ -1486,27 +1490,21 @@ function tmSubjectTagSearch(subject, tag) {
 }
 
 async function tmSubjectSetProp(subject) {
-    const input = document.getElementById('tm-subj-prop-input');
-    const raw = input ? input.value.trim() : '';
-    if (!raw) return;
-    const eqIdx = raw.indexOf('=');
-    const tag = eqIdx !== -1 ? raw.slice(0, eqIdx).trim() : raw;
-    const value = eqIdx !== -1 ? raw.slice(eqIdx + 1).trim() : '';
+    const tagInput = document.getElementById('tm-subj-prop-tag');
+    const valInput = document.getElementById('tm-subj-prop-val');
+    const tag = tagInput ? tagInput.value.trim() : '';
+    const value = valInput ? valInput.value.trim() : '';
     if (!tag) return;
     try {
         await apiPost('/api/subject/set-prop', { subject, tag, value, dir: currentAbsDir() });
         showToast(`Added property "${tag}${value ? '=' + value : ''}" to "${subject}".`);
-        if (input) input.value = '';
+        if (tagInput) tagInput.value = '';
+        if (valInput) valInput.value = '';
     } catch (e) {
         showToast('Error: ' + e.message);
         return;
     }
     await renderTmSubjectDetail(subject);
-    // Refresh the info pane so implicit tags from this subject update immediately.
-    if (state.selectedFile) {
-        await loadFileDetail(state.selectedFile.path);
-        renderDetailTagsOnly();
-    }
 }
 
 async function tmSubjectRemoveProp(subject, tag, value) {
@@ -1518,11 +1516,6 @@ async function tmSubjectRemoveProp(subject, tag, value) {
         return;
     }
     await renderTmSubjectDetail(subject);
-    // Refresh the info pane so implicit tags from this subject update immediately.
-    if (state.selectedFile) {
-        await loadFileDetail(state.selectedFile.path);
-        renderDetailTagsOnly();
-    }
 }
 
 async function tmDoRenameSubject(oldName) {
@@ -1537,8 +1530,6 @@ async function tmDoRenameSubject(oldName) {
     renderTmSubjectList();
     renderTmSubjectDetail(newName);
     renderSubjects();
-    if (state.selectedFile) { await loadFileDetail(state.selectedFile.path); renderDetailTagsOnly(); }
-    _updateCardTagBadges();
 }
 
 async function tmDeleteSubject(name) {
@@ -1553,6 +1544,4 @@ async function tmDeleteSubject(name) {
     const panel = document.getElementById('tm-subject-detail');
     if (panel) panel.innerHTML = `<div class="tm-detail-placeholder">Subject removed.</div>`;
     renderSubjects();
-    if (state.selectedFile) { await loadFileDetail(state.selectedFile.path); renderDetailTagsOnly(); }
-    _updateCardTagBadges();
 }
