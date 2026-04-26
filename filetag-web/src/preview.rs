@@ -1365,7 +1365,8 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
     // --- ImageMagick path ---
     for cmd_name in &["magick", "convert"] {
         let mut cmd = tokio::process::Command::new(cmd_name);
-        cmd.args(["-size", "240x240", "xc:#fefefe"]);
+        // Transparent canvas so the collage adapts to light/dark theme.
+        cmd.args(["-size", "240x240", "xc:none"]);
         for (i, (angle, x, y)) in slots.iter().take(n).enumerate() {
             cmd.arg("(");
             cmd.arg(&inputs[i]);
@@ -1377,7 +1378,7 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
                 "-extent",
                 &tile_geom2,
                 "-background",
-                "white",
+                "none",
                 "-rotate",
                 &angle.to_string(),
             ]);
@@ -1390,7 +1391,7 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
                 "-composite",
             ]);
         }
-        cmd.args(["-quality", "85"]);
+        // WebP output: no extra flags needed; ImageMagick infers format from extension.
         cmd.arg(output);
         let ok = cmd
             .stdout(std::process::Stdio::null())
@@ -1423,8 +1424,8 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
         .map(|i| {
             let a = angle_rads[i];
             format!(
-                "[{i}]scale={ts}:{ts}:force_original_aspect_ratio=increase,\
-                 crop={ts}:{ts},rotate={a}:ow=rotw({a}):oh=roth({a}):c=white[f{i}]"
+                "[{i}]format=rgba,scale={ts}:{ts}:force_original_aspect_ratio=increase,\
+                 crop={ts}:{ts},rotate={a}:ow=rotw({a}):oh=roth({a}):c=none[f{i}]"
             )
         })
         .collect::<Vec<_>>()
@@ -1446,14 +1447,26 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
         })
         .collect::<Vec<_>>()
         .join(";");
-    let filter = format!("color=white:size=240x240[bg];{tile_parts};{overlay_parts}");
+    // Transparent RGBA background for the ffmpeg fallback path.
+    let filter =
+        format!("color=c=0x00000000:s=240x240:r=1,format=rgba[bg];{tile_parts};{overlay_parts}");
     let mut cmd = tokio::process::Command::new("ffmpeg");
     for p in inputs.iter().take(n) {
         cmd.args(["-i", p.to_str().unwrap_or("")]);
     }
     let ok = cmd
         .args(["-filter_complex", &filter])
-        .args(["-map", "[out]", "-frames:v", "1", "-q:v", "5", "-y"])
+        .args([
+            "-map",
+            "[out]",
+            "-frames:v",
+            "1",
+            "-vcodec",
+            "libwebp",
+            "-lossless",
+            "1",
+            "-y",
+        ])
         .arg(output)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1465,9 +1478,10 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
     ok && output.exists()
 }
 
-/// Stitch `frames` side by side into a single JPEG sprite sheet.
+/// Stitch `frames` side by side into a single WebP sprite sheet.
 ///
-/// Returns the JPEG bytes of the combined image, or `None` if all tools fail.
+/// Tries ImageMagick (`+append`) first, then an ffmpeg fallback.
+/// Returns lossless WebP bytes with alpha, or `None` if all tools fail.
 async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
     if frames.is_empty() {
         return None;
@@ -1475,6 +1489,29 @@ async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
     if frames.len() == 1 {
         return tokio::fs::read(&frames[0]).await.ok();
     }
+
+    // --- ImageMagick path: horizontal append → WebP stdout ---
+    for cmd_name in &["magick", "convert"] {
+        let mut cmd = tokio::process::Command::new(cmd_name);
+        for f in frames {
+            cmd.arg(f);
+        }
+        cmd.args(["+append", "webp:-"]);
+        if let Ok(out) = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+        {
+            // WebP magic: starts with "RIFF"
+            if out.status.success() && out.stdout.starts_with(b"RIFF") {
+                return Some(out.stdout);
+            }
+        }
+    }
+
+    // --- ffmpeg fallback: hstack → libwebp lossless pipe ---
     let n = frames.len();
     let inputs: String = (0..n).map(|i| format!("[{i}]")).collect();
     let filter = format!("{inputs}hstack={n}[out]");
@@ -1490,12 +1527,12 @@ async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
             "[out]",
             "-frames:v",
             "1",
-            "-q:v",
-            "4",
-            "-f",
-            "image2pipe",
             "-vcodec",
-            "mjpeg",
+            "libwebp",
+            "-lossless",
+            "1",
+            "-f",
+            "webp",
             "pipe:1",
         ])
         .stdout(std::process::Stdio::piped())
@@ -1504,7 +1541,7 @@ async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
         .output()
         .await
         .ok()?;
-    if out.status.success() && out.stdout.starts_with(&[0xFF, 0xD8]) {
+    if out.status.success() && out.stdout.starts_with(b"RIFF") {
         Some(out.stdout)
     } else {
         None
@@ -1534,7 +1571,7 @@ fn dir_thumb_cache_path(dir_abs: &Path, root: &Path) -> Option<PathBuf> {
         dir_abs.hash(&mut h);
         format!("{:016x}", h.finish())
     };
-    let key = format!("{mtime}_{hash}_{stem}.sprite.jpg");
+    let key = format!("{mtime}_{hash}_{stem}.sprite.webp");
     let dir = root.join(".filetag").join("cache").join("dir-thumbs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(key))
@@ -1586,7 +1623,7 @@ pub async fn api_dir_thumbs(
     // Check cache before acquiring the permit.
     if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root) {
         if let Ok(data) = tokio::fs::read(&cache_path).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
         // --- Build the sprite sheet ---
@@ -1604,7 +1641,7 @@ pub async fn api_dir_thumbs(
 
         // Double-check after acquiring the permit.
         if let Ok(data) = tokio::fs::read(&cache_path).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
         const IMAGES_PER_FRAME: usize = 4;
@@ -1635,7 +1672,7 @@ pub async fn api_dir_thumbs(
             if thumb_paths.is_empty() {
                 continue;
             }
-            let frame_path = tmp_dir.join(format!("frame{frame_idx}.jpg"));
+            let frame_path = tmp_dir.join(format!("frame{frame_idx}.webp"));
             if build_collage(&thumb_paths, &frame_path).await {
                 frame_paths.push(frame_path);
             }
@@ -1654,7 +1691,7 @@ pub async fn api_dir_thumbs(
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
             let _ = tokio::fs::write(&cache_path, &data).await;
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
         return (StatusCode::UNPROCESSABLE_ENTITY, "No previewable files").into_response();
