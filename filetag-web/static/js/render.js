@@ -399,6 +399,10 @@ function renderContent() {
     // before the mouse-leave event fires).
     document.querySelectorAll('.card-trickplay-sprite').forEach(s => s.remove());
 
+    // Dismiss any open thumbnail hover popup: the card DOM is about to be
+    // replaced so mouseleave will never fire on the old element.
+    if (typeof dismissThumbPopup === 'function') dismissThumbPopup();
+
     const el = document.getElementById('content');
 
     // --- Zip directory mode ---

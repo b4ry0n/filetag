@@ -918,6 +918,84 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
 // Thumb handler (main thumbnail endpoint)
 // ---------------------------------------------------------------------------
 
+/// Generate and cache a thumbnail for a single entry inside an archive.
+///
+/// Cache key is derived from the zip file's mtime + size + entry name so
+/// thumbnails are invalidated automatically when the archive changes.
+async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> Response {
+    // Build a stable cache path: <root>/.filetag/cache/thumbs/<mtime>_<size>_<entry_slug>.thumb.jpg
+    let cache_path: Option<PathBuf> = (|| {
+        let meta = std::fs::metadata(zip_abs).ok()?;
+        let mtime = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        let size = meta.len();
+        // Sanitise entry name for use as a filename: replace path separators.
+        let slug = entry_name.replace(['/', '\\', ':'], "_");
+        let key = format!("{mtime}_{size}_{slug}.thumb.jpg");
+        let dir = root.join(".filetag").join("cache").join("thumbs");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir.join(key))
+    })();
+
+    // Serve from cache if available.
+    if let Some(ref p) = cache_path
+        && let Ok(data) = tokio::fs::read(p).await
+    {
+        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+    }
+
+    let _permit = match THUMB_LIMITER.try_acquire() {
+        Ok(p) => p,
+        Err(_) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+        }
+    };
+
+    let zip_abs = zip_abs.to_path_buf();
+    let entry_name = entry_name.to_string();
+
+    let result = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        let (bytes, _) = crate::archive::archive_read_entry(&zip_abs, &entry_name).ok()?;
+        let img = image::load_from_memory(&bytes).ok()?;
+        // Respect EXIF orientation for JPEG entries.
+        let orient = if entry_name.to_lowercase().ends_with(".jpg")
+            || entry_name.to_lowercase().ends_with(".jpeg")
+        {
+            jpeg_exif_orientation(&bytes)
+        } else {
+            1
+        };
+        let img = apply_exif_orientation(img, orient);
+        let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
+            .encode_image(&img.to_rgb8())
+            .ok()?;
+        if out.starts_with(&[0xFF, 0xD8]) {
+            Some(out)
+        } else {
+            None
+        }
+    })
+    .await
+    .ok()
+    .flatten();
+
+    match result {
+        Some(data) => {
+            if let Some(ref p) = cache_path {
+                let _ = tokio::fs::write(p, &data).await;
+            }
+            ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response()
+        }
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
 /// Thumbnail endpoint — generates a JPEG thumbnail for any previewable file.
 pub async fn thumb_handler(
     AxumPath(rel_path): AxumPath<String>,
@@ -931,6 +1009,20 @@ pub async fn thumb_handler(
         Some(r) => r,
         None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
+
+    // Virtual archive entry path (e.g. `archive.cbz::subdir/image.jpg`).
+    // The `::` separator is not a filesystem path separator, so we must handle
+    // it before calling `resolve_preview` (which would fail to canonicalize it).
+    if let Some(sep) = rel_path.find("::") {
+        let zip_rel = &rel_path[..sep];
+        let entry_name = &rel_path[sep + 2..];
+        let zip_abs = match crate::state::preview_safe_path(&db_root.root, zip_rel) {
+            Some(p) => p,
+            None => return (StatusCode::BAD_REQUEST, "Invalid archive path").into_response(),
+        };
+        return thumb_archive_entry(&zip_abs, entry_name, &db_root.root).await;
+    }
+
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),

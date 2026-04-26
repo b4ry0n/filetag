@@ -396,12 +396,12 @@
                     <label>
                         <span data-i18n="face.settings-min-size">Minimum face size (px)</span>
                         <small class="settings-desc-inline" data-i18n="face.settings-min-size-desc">Faces smaller than this are ignored.</small>
-                        <input type="number" id="face-min-size" value="20" min="5" max="200" step="5">
+                        <input type="number" id="face-min-size" value="40" min="5" max="200" step="5">
                     </label>
                     <label>
                         <span data-i18n="face.settings-cluster-dist">Cluster distance</span>
                         <small class="settings-desc-inline" data-i18n="face.settings-cluster-dist-desc">Maximum cosine distance for grouping faces (0.1–1.0).</small>
-                        <input type="number" id="face-cluster-dist" value="0.4" min="0.1" max="1.0" step="0.05">
+                        <input type="number" id="face-cluster-dist" value="0.35" min="0.1" max="1.0" step="0.05">
                     </label>
                     <label>
                         <span data-i18n="face.settings-prefix">Tag prefix</span>
@@ -411,12 +411,13 @@
                     <label>
                         <span data-i18n="face.settings-auto-match">Auto-match threshold</span>
                         <small class="settings-desc-inline" data-i18n="face.settings-auto-match-desc">Automatically assign known persons when cosine distance ≤ this value during clustering. Set to 0 to disable.</small>
-                        <input type="number" id="face-auto-match-threshold" value="0.25" min="0" max="1.0" step="0.05">
+                        <input type="number" id="face-auto-match-threshold" value="0.30" min="0" max="1.0" step="0.05">
                     </label>
                     </div><!-- #face-settings-fields -->
                     <div class="modal-actions">
-                        <button onclick="faceSaveSettings()">Save</button>
-                        <button onclick="closeSettings()">Cancel</button>
+                        <button onclick="faceSaveSettings()" data-i18n="settings.save">Save</button>
+                        <button class="btn-secondary" onclick="faceResetDefaults()" data-i18n="face.settings-reset">Reset to defaults</button>
+                        <button onclick="closeSettings()" data-i18n="settings.cancel">Cancel</button>
                     </div>
                 </div>
                 <div id="settings-tab-language" class="modal-tab-panel" hidden>

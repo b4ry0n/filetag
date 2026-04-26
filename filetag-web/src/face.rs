@@ -1219,14 +1219,14 @@ pub async fn api_face_analyse(
     let (conn, eff_root, rel) = open_for_file_op(root_entry, &req.path)?;
     let cfg = load_face_config(&conn);
 
-    let abs = eff_root.join(&rel);
     let models = tokio::task::spawn_blocking(load_models)
         .await
         .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
         .map_err(AppError)?;
 
+    let rel_clone = rel.clone();
     let rows = tokio::task::spawn_blocking(move || {
-        analyse_file_sync(&conn, &eff_root, &abs, &models, &cfg)
+        analyse_file_sync(&conn, &eff_root, &rel_clone, &models, &cfg)
     })
     .await
     .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
@@ -1239,22 +1239,52 @@ pub async fn api_face_analyse(
 }
 
 /// Synchronous wrapper for use inside `spawn_blocking`.
+///
+/// `rel` is the already-computed root-relative path (may be a virtual archive
+/// path of the form `archive.cbz::entry.jpg`).  `abs` is only used for
+/// regular files; for archive entries the image is read directly from the
+/// archive so `abs` is ignored.
 fn analyse_file_sync(
     conn: &Connection,
     root: &Path,
-    abs: &Path,
+    rel: &str,
     models: &FaceModels,
     cfg: &FaceConfig,
 ) -> anyhow::Result<Vec<db::FaceDetectionRow>> {
-    let rel = db::relative_to_root(abs, root)?;
-    let file_rec = db::get_or_index_file(conn, &rel, root)?;
+    // Determine the file record, handling archive entries separately.
+    let file_rec = if let Some((zip_rel, entry_name)) = rel.split_once("::") {
+        // Virtual archive path.  Index via the archive-entry helper.
+        let virtual_path = format!("{}::{}", root.join(zip_rel).to_string_lossy(), entry_name);
+        db::get_or_index_archive_entry(conn, &virtual_path)?
+    } else {
+        let abs = root.join(rel);
+        db::get_or_index_file(conn, rel, root).or_else(|_| {
+            // Fallback: try canonicalising the abs path.
+            let canon = std::fs::canonicalize(&abs)?;
+            let rel2 = db::relative_to_root(&canon, root)?;
+            db::get_or_index_file(conn, &rel2, root)
+        })?
+    };
     let file_id = file_rec.id;
 
     db::delete_face_detections_for_file(conn, file_id)?;
 
-    let img = match load_image(abs) {
-        Ok(i) => i,
-        Err(_) => return Ok(vec![]),
+    // Load image bytes — from archive or from disk.
+    let img = if let Some((zip_rel, entry_name)) = rel.split_once("::") {
+        let zip_abs = root.join(zip_rel);
+        match crate::archive::archive_read_entry(&zip_abs, entry_name) {
+            Ok((bytes, _)) => match image::load_from_memory(&bytes) {
+                Ok(i) => i,
+                Err(_) => return Ok(vec![]),
+            },
+            Err(_) => return Ok(vec![]),
+        }
+    } else {
+        let abs = root.join(rel);
+        match load_image(&abs) {
+            Ok(i) => i,
+            Err(_) => return Ok(vec![]),
+        }
     };
 
     let raw = detect_and_embed(&img, models, cfg)?;
@@ -1354,7 +1384,11 @@ async fn run_batch(
                  PRAGMA busy_timeout = 5000;",
             )?;
             let cfg = load_face_config(&conn);
-            analyse_file_sync(&conn, &root_c, &abs_c, &models_c, &cfg)?;
+            let rel = abs_c
+                .strip_prefix(&root_c)
+                .map(|r| r.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| abs_c.to_string_lossy().into_owned());
+            analyse_file_sync(&conn, &root_c, &rel, &models_c, &cfg)?;
             Ok(())
         })
         .await;

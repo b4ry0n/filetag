@@ -948,6 +948,14 @@ function faceToggleEnabled() {
     document.getElementById('face-settings-fields').hidden = !enabled;
 }
 
+function faceResetDefaults() {
+    document.getElementById('face-confidence').value         = 0.7;
+    document.getElementById('face-min-size').value           = 40;
+    document.getElementById('face-cluster-dist').value       = 0.35;
+    document.getElementById('face-tag-prefix').value         = 'person';
+    document.getElementById('face-auto-match-threshold').value = 0.30;
+}
+
 async function faceSaveSettings() {
     try {
         const body = {

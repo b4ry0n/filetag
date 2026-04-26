@@ -469,6 +469,21 @@ function _trickplayAttach(img, path) {
 // frame scrubbing).  Clicking pins the image inline inside the card;
 // clicking again removes the pinned view.
 
+/** Teardown function for the currently visible hover popup (if any). */
+let _activeThumbPopupTeardown = null;
+
+/** Remove any visible hover popup immediately (called on re-render, keydown, etc.). */
+function dismissThumbPopup() {
+    if (_activeThumbPopupTeardown) {
+        _activeThumbPopupTeardown();
+        _activeThumbPopupTeardown = null;
+    }
+}
+
+// Dismiss the popup on any keydown — keyboard shortcuts (Cmd+A, Escape, etc.)
+// can trigger a re-render that replaces card DOM nodes without firing mouseleave.
+document.addEventListener('keydown', dismissThumbPopup, { passive: true, capture: true });
+
 /**
  * Attach hover-popup behaviour to an <img> whose blob URL is already known.
  * @param {HTMLImageElement} img     The thumbnail image element inside .card-preview.
@@ -531,6 +546,9 @@ function _thumbHoverAttach(img, blobUrl) {
         popupEl.appendChild(popupImg);
         document.body.appendChild(popupEl);
         window.addEventListener('scroll', repositionPopup, { passive: true, capture: true });
+        // Register globally so keyboard shortcuts can dismiss the popup even
+        // when the card DOM node is replaced (and mouseleave never fires).
+        _activeThumbPopupTeardown = teardownPopup;
     }
 
     function repositionPopup() {
@@ -551,6 +569,9 @@ function _thumbHoverAttach(img, blobUrl) {
             popupEl.remove();
             popupEl = null;
             window.removeEventListener('scroll', repositionPopup, { capture: true });
+        }
+        if (_activeThumbPopupTeardown === teardownPopup) {
+            _activeThumbPopupTeardown = null;
         }
     }
 

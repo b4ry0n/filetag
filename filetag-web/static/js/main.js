@@ -179,6 +179,14 @@ async function _selectAllFiles() {
     _armedBulkTag = null;
     state.selectedDir = null;
     state.selectedFile = filePaths.length === 1 ? state.selectedFilesData.get(filePaths[0]) : null;
+    // Open the detail panel if it is currently closed.
+    if (!state.detailOpen && filePaths.length > 0) {
+        state.detailOpen = true;
+        document.querySelector('.layout').classList.remove('detail-collapsed');
+        const toggle = document.getElementById('detail-toggle');
+        if (toggle) toggle.classList.add('active');
+        if (typeof _syncChatRight === 'function') _syncChatRight();
+    }
     render();
 }
 
