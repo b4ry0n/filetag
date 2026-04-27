@@ -1,30 +1,28 @@
-//! On-device face detection and recognition for `filetag-web`.
-//!
-//! Uses two ONNX models from the InsightFace **buffalo_l** pack
-//! via `tract-onnx` (pure Rust, no system dependencies):
-//!
-//! * **det_10g** (~17 MB) — SCRFD-10GF face detector, outputs bounding boxes
-//!   AND 5-point facial landmarks per face.
-//! * **w600k_r50** (~166 MB) — InsightFace ResNet-50 ArcFace embedder, outputs
-//!   a 512-dimension vector per aligned face crop.
-//!
-//! Models are downloaded automatically on first use from the InsightFace v0.7
-//! release archive and stored in the platform-standard user-data directory
-//! (e.g. `~/Library/Application Support/filetag/models/` on macOS).
-//!
-//! Face detection pipeline:
-//!   1. Aspect-ratio-preserving resize + zero-pad to 640×640.
-//!   2. SCRFD inference → bounding boxes + 5 landmarks + confidence scores.
-//!   3. Similarity-transform warp of each face crop to a canonical 112×112
-//!      using the 5 landmarks (standard ArcFace alignment).
-//!   4. w600k_r50 inference on the aligned crop → L2-normalised 512-d vector.
-//!
-//! After embedding, faces are clustered using DBSCAN on cosine distance.
-//! Each cluster becomes a subject (`person/unknown-N`) that the user can later
-//! rename via the standard Subjects UI.
-//!
-//! **Licence note:** InsightFace models are for non-commercial research only.
-
+// On-device face detection and recognition for `filetag-web`.
+//
+// Uses two ONNX models from the InsightFace **buffalo_l** pack
+// via `tract-onnx` (pure Rust, no system dependencies):
+//
+// * **det_10g** (~17 MB) — SCRFD-10GF face detector, outputs bounding boxes
+//   AND 5-point facial landmarks per face.
+// * **w600k_r50** (~166 MB) — InsightFace ResNet-50 ArcFace embedder, outputs
+//   a 512-dimension vector per aligned face crop.
+//
+// Models are downloaded automatically on first use from the InsightFace v0.7
+// release archive and stored in the platform-standard user-data directory
+// (e.g. `~/Library/Application Support/filetag/models/` on macOS).
+//
+// Face detection pipeline:
+//   1. Aspect-ratio-preserving resize + zero-pad to 640×640.
+//   2. SCRFD inference → bounding boxes + 5 landmarks + confidence scores.
+//   3. Similarity-transform warp of each face crop to a canonical 112×112
+//      using the 5 landmarks (standard ArcFace alignment).
+//   4. w600k_r50 inference on the aligned crop → L2-normalised 512-d vector.
+//
+// After embedding, faces are clustered using DBSCAN on cosine distance.
+// Each cluster becomes a subject (`person/unknown-N`) that the user can later
+// rename via the standard Subjects UI.
+/// **Licence note:** InsightFace models are for non-commercial research only.
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -205,7 +203,7 @@ fn verify_model_file(path: &Path, expected_sha256: &str) -> anyhow::Result<()> {
     if !expected_sha256.is_empty() {
         let mut hasher = Sha256::new();
         hasher.update(&data);
-        let actual = format!("{:x}", hasher.finalize());
+        let actual = hex::encode(hasher.finalize());
         if actual != expected_sha256 {
             anyhow::bail!(
                 "SHA-256 mismatch for {}: expected {}, got {}",

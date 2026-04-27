@@ -126,6 +126,7 @@ function renderGrid(items) {
             const dirPath = entry.root_path == null ? fullPath(entry) : null;
             if (dirPath) {
                 const dts = `/api/dir-thumbs?${new URLSearchParams({path: dirPath}).toString()}${dirParam('&')}`;
+                // LOG frontend fetch naar dir-thumbs
                 preview = `<div class="card-icon" data-thumb-src="${esc(dts)}" data-dir-path="${esc(dirPath)}" data-name="${esc(name)}">${ICONS.folder}</div>`;
             } else {
                 preview = `<div class="card-icon">${ICONS.folder}</div>`;
@@ -301,7 +302,6 @@ function cardDragStart(event, path) {
 let _rootDragPath = null;
 
 function _rootDragStart(ev, rootPath) {
-    _rootDragPath = rootPath;
     ev.dataTransfer.effectAllowed = 'move';
 }
 

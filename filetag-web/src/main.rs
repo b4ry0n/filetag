@@ -36,6 +36,9 @@ use state::{AppState, resolve_names, terminal_width};
 #[derive(Parser)]
 #[command(name = "filetag-web", about = "Web interface for filetag", version)]
 struct Args {
+    /// Beperk browsen tot alleen de actieve root en expliciet gelinkte roots (geen parents of ongelinkte children)
+    #[arg(long)]
+    linked_only: bool,
     /// Database root directory (default: current directory)
     path: Option<PathBuf>,
 
@@ -89,7 +92,31 @@ async fn main() -> anyhow::Result<()> {
 
     // Open primary database and collect all explicitly linked databases.
     let (conn, root) = db::find_and_open(&root)?;
-    let mut all_dbs = db::collect_all_databases(conn, root.clone(), !args.no_parents)?;
+    let mut all_dbs = if args.linked_only {
+        // Alleen de actieve root en expliciet gelinkte roots (geen parents, geen ongelinkte children)
+        let mut dbs = vec![db::OpenDb {
+            conn,
+            root: root.clone(),
+        }];
+        // Voeg expliciet gelinkte databases toe
+        let linked = db::list_linked(&dbs[0].conn)?;
+        for path in linked {
+            let abs = if std::path::Path::new(&path).is_absolute() {
+                std::path::PathBuf::from(&path)
+            } else {
+                root.join(&path)
+            };
+            if let Ok(conn2) = Connection::open(abs.join(".filetag").join("db.sqlite3")) {
+                dbs.push(db::OpenDb {
+                    conn: conn2,
+                    root: abs,
+                });
+            }
+        }
+        dbs
+    } else {
+        db::collect_all_databases(conn, root.clone(), !args.no_parents)?
+    };
 
     // Discover nested databases by scanning the filesystem.
     if !args.no_scan {

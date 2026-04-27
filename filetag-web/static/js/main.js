@@ -305,8 +305,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Attempt to restore the last-visited path. If that fails (e.g. because new
     // databases changed the root index mapping, or the directory was removed),
     // fall back to the root of the selected database so the page is never blank.
+    // Controleer of initialPath geldig is binnen de huidige root(s)
+    let validInitial = false;
+    if (initialPath) {
+        // Vind de root waar initialPath onder valt
+        validInitial = state.roots.some(r => initialPath === '' || initialPath === r.path || initialPath.startsWith(r.path + '/'));
+    }
     try {
-        await loadFiles(initialPath);
+        if (validInitial) {
+            // Strip root-prefix uit initialPath indien nodig, zodat currentPath relatief blijft
+            let relPath = initialPath;
+            const root = state.currentBasePath;
+            if (root && relPath && relPath.startsWith(root + '/')) {
+                relPath = relPath.slice(root.length + 1);
+            } else if (root && relPath === root) {
+                relPath = '';
+            }
+            await loadFiles(relPath);
+        } else {
+            sessionStorage.removeItem('ft_path');
+            // Start altijd in de eerste entry_point root als initialPath ongeldig is
+            const entry = state.roots.find(r => r.entry_point) || state.roots[0];
+            // Bij fallback: currentPath moet leeg zijn (root zelf)
+            await loadFiles('');
+        }
     } catch (e) {
         console.error('loadFiles failed for path', JSON.stringify(initialPath), e);
         sessionStorage.removeItem('ft_path');

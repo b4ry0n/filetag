@@ -1,15 +1,15 @@
-//! Optional password authentication for filetag-web.
-//!
-//! When a password is configured (via `--password` or `$FILETAG_PASSWORD`),
-//! every request is checked for a valid session cookie.  Unauthenticated
-//! requests to API endpoints receive `401 Unauthorized`; requests to page
-//! URLs are redirected to `/login`.
-//!
-//! Session tokens are random 32-byte hex strings kept in an in-memory
-//! `HashSet`.  They are lost on server restart (users must log in again).
-//!
-//! When no password is configured, the middleware is a no-op.
-
+use rand::Rng;
+// Optional password authentication for filetag-web.
+//
+// When a password is configured (via `--password` or `$FILETAG_PASSWORD`),
+// every request is checked for a valid session cookie.  Unauthenticated
+// requests to API endpoints receive `401 Unauthorized`; requests to page
+// URLs are redirected to `/login`.
+//
+// Session tokens are random 32-byte hex strings kept in an in-memory
+// `HashSet`.  They are lost on server restart (users must log in again).
+//
+/// When no password is configured, the middleware is a no-op.
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -19,7 +19,6 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use rand::Rng as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
@@ -95,7 +94,9 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn random_token() -> String {
-    let bytes: [u8; 32] = rand::rng().random();
+    let mut bytes = [0u8; 32];
+    let mut rng = rand::rngs::ThreadRng::default();
+    rng.fill_bytes(&mut bytes);
     bytes.iter().fold(String::with_capacity(64), |mut s, b| {
         use std::fmt::Write as _;
         let _ = write!(s, "{:02x}", b);
@@ -108,7 +109,9 @@ fn random_token() -> String {
 /// devices while still providing ~95 bits of entropy.
 pub fn random_password() -> String {
     const CHARS: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
-    let bytes: [u8; 16] = rand::rng().random();
+    let mut bytes = [0u8; 16];
+    let mut rng = rand::rngs::ThreadRng::default();
+    rng.fill_bytes(&mut bytes);
     bytes
         .chunks(4)
         .map(|chunk| {

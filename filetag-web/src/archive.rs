@@ -29,15 +29,21 @@ const ZIP_IMAGE_EXTS: &[&str] = &[
 ];
 
 fn is_zip_image(name: &str) -> bool {
-    if name.starts_with("__MACOSX/") {
-        return false;
-    }
-    let basename = name.rsplit('/').next().unwrap_or(name);
-    if basename.starts_with("._") {
+    if is_ignored_archive_entry(name) {
         return false;
     }
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
     ZIP_IMAGE_EXTS.contains(&ext.as_str())
+}
+
+fn is_ignored_archive_entry(name: &str) -> bool {
+    name.replace('\\', "/")
+        .split('/')
+        .any(|part| part == "__MACOSX" || part == ".DS_Store" || part.starts_with("._"))
+}
+
+fn is_decodable_image(data: &[u8]) -> bool {
+    image::load_from_memory(data).is_ok()
 }
 
 /// Minimal natural-order string comparison for consistent page sorting.
@@ -120,11 +126,7 @@ fn zip_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>>
             && !entry.is_dir()
         {
             let name = entry.name().to_owned();
-            if name.starts_with("__MACOSX/") {
-                continue;
-            }
-            let basename = name.rsplit('/').next().unwrap_or(&name);
-            if basename.starts_with("._") {
+            if is_ignored_archive_entry(&name) {
                 continue;
             }
             let size = entry.size();
@@ -137,29 +139,13 @@ fn zip_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>>
 }
 
 fn zip_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
-    let file = std::fs::File::open(path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let mut best: Option<String> = None;
-    for i in 0..archive.len() {
-        let entry = archive.by_index_raw(i)?;
-        if entry.is_dir() {
-            continue;
-        }
-        let name = entry.name().to_owned();
-        if !is_zip_image(&name) {
-            continue;
-        }
-        if best
-            .as_ref()
-            .map(|b| natord(&name, b) == std::cmp::Ordering::Less)
-            .unwrap_or(true)
-        {
-            best = Some(name);
+    for name in zip_image_entries(path)? {
+        let (data, _mime) = zip_read_entry(path, &name)?;
+        if is_decodable_image(&data) {
+            return Ok(data);
         }
     }
-    let first = best.ok_or_else(|| anyhow::anyhow!("no images in archive"))?;
-    let (data, _mime) = zip_read_entry(path, &first)?;
-    Ok(data)
+    anyhow::bail!("no decodable images in archive")
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +201,7 @@ fn rar_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>>
             let is_im = is_zip_image(&name);
             (name, size, is_im)
         })
+        .filter(|(name, _, _)| !is_ignored_archive_entry(name))
         .collect();
     entries.sort_by(|a, b| natord(&a.0, &b.0));
     Ok(entries)
@@ -227,17 +214,14 @@ fn rar_list_entries_raw(_path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>
 
 #[cfg(feature = "rar")]
 fn rar_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
-    let mut archive = unrar::Archive::new(path).open_for_processing()?;
-    while let Some(header) = archive.read_header()? {
-        let name = header.entry().filename.to_string_lossy().replace('\\', "/");
-        let basename = name.rsplit('/').next().unwrap_or(&name);
-        if !basename.starts_with("._") && is_zip_image(&name) {
-            let (data, _rest) = header.read()?;
+    for name in rar_image_entries(path)? {
+        if let Ok((data, _mime)) = rar_read_entry(path, &name)
+            && is_decodable_image(&data)
+        {
             return Ok(data);
         }
-        archive = header.skip()?;
     }
-    anyhow::bail!("no images in archive")
+    anyhow::bail!("no decodable images in archive")
 }
 
 #[cfg(not(feature = "rar"))]
@@ -301,33 +285,21 @@ fn sevenz_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool
             let is_im = is_zip_image(&name);
             (name, size, is_im)
         })
+        .filter(|(name, _, _)| !is_ignored_archive_entry(name))
         .collect();
     entries.sort_by(|a, b| natord(&a.0, &b.0));
     Ok(entries)
 }
 
 fn sevenz_cover_image(path: &Path) -> anyhow::Result<Vec<u8>> {
-    let sz = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())?;
-    let mut best: Option<String> = None;
-    for e in sz.archive().files.iter() {
-        if e.is_directory() || !e.has_stream() {
-            continue;
-        }
-        let name = e.name().replace('\\', "/");
-        if !is_zip_image(&name) {
-            continue;
-        }
-        if best
-            .as_ref()
-            .map(|b| natord(&name, b) == std::cmp::Ordering::Less)
-            .unwrap_or(true)
+    for name in sevenz_image_entries(path)? {
+        if let Ok((data, _mime)) = sevenz_read_entry(path, &name)
+            && is_decodable_image(&data)
         {
-            best = Some(name);
+            return Ok(data);
         }
     }
-    let first = best.ok_or_else(|| anyhow::anyhow!("no images in archive"))?;
-    let (data, _mime) = sevenz_read_entry(path, &first)?;
-    Ok(data)
+    anyhow::bail!("no decodable images in archive")
 }
 
 // ---------------------------------------------------------------------------
@@ -768,4 +740,78 @@ pub async fn api_zip_entries(
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "filetag_archive_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn test_jpeg() -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(8, 8, image::Rgb([20, 80, 140]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut out, image::ImageFormat::Jpeg)
+            .unwrap();
+        out.into_inner()
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for (name, data) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn zip_entries_ignore_macosx_metadata_images() {
+        let dir = unique_temp_dir("metadata");
+        let path = dir.join("sample.cbz");
+        let jpeg = test_jpeg();
+        write_zip(
+            &path,
+            &[
+                ("pages/001.jpg", &jpeg),
+                ("__MACOSX/pages/._001.jpg", b"not an image"),
+                ("pages/.DS_Store", b"noise"),
+            ],
+        );
+
+        assert_eq!(zip_image_entries(&path).unwrap(), vec!["pages/001.jpg"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn zip_cover_skips_invalid_image_candidates() {
+        let dir = unique_temp_dir("invalid_cover");
+        let path = dir.join("sample.cbz");
+        let jpeg = test_jpeg();
+        write_zip(
+            &path,
+            &[("pages/000.jpg", b"not an image"), ("pages/001.jpg", &jpeg)],
+        );
+
+        let cover = archive_cover_image(&path).unwrap();
+        let decoded = image::load_from_memory(&cover).unwrap();
+        assert_eq!(decoded.width(), 8);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

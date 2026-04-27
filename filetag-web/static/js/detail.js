@@ -771,15 +771,22 @@ async function _thumbRun() {
                 if (el.isConnected) _thumbReplace(el, url);
             } else if (resp.status === 503) {
                 // Server busy: re-queue at back.
+                await new Promise(resolve => setTimeout(resolve, 250));
                 if (el.isConnected) {
                     _thumbQueue.push(el);
                     _thumbObserver.observe(el);
                 }
+            } else if (resp.status === 204) {
+                // No thumbnail available for this URL. Cache that result for
+                // the current page session so unsupported files are not refetched.
+                // Directory contents can change while the app is open, so folder
+                // misses stay retryable on the next render.
+                if (!src.includes('/api/dir-thumbs?')) _thumbCache.set(src, null);
+                if (el.isConnected) _thumbShowFailed(el);
             } else {
-                // 204 (thumbnail not available) or other permanent failure:
-                // show a type-appropriate icon placeholder and cache null so
-                // future renders skip the fetch without retrying.
-                _thumbCache.set(src, null);
+                // Other failures can be transient (tool not ready, stale cache,
+                // corrupt sampled candidate). Show the placeholder for this DOM
+                // node but do not cache failure globally; future renders may retry.
                 if (el.isConnected) _thumbShowFailed(el);
             }
         } catch (_) {

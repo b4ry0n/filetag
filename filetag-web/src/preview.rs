@@ -1225,45 +1225,69 @@ const DIR_VIDEO_EXTS: &[&str] = &[
 const DIR_PDF_EXTS: &[&str] = &["pdf"];
 const DIR_ARCHIVE_EXTS: &[&str] = &["zip", "cbz", "rar", "cbr", "7z", "cb7"];
 
-/// List previewable files (flat, no recursion) in `dir`, sorted by name.
+/// List previewable files in `dir`, sorted by path.
+///
+/// Direct children are scanned first, then subdirectories up to a small bounded
+/// depth so folders that only contain album/chapter subfolders still get a
+/// preview without walking very large trees indefinitely.
 fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else {
-        return Vec::new();
+        return files;
     };
-    let mut files: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_file())
-        .filter(|p| {
-            let ext = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            DIR_IMAGE_EXTS.contains(&ext.as_str())
-                || DIR_VIDEO_EXTS.contains(&ext.as_str())
-                || DIR_PDF_EXTS.contains(&ext.as_str())
-                || DIR_ARCHIVE_EXTS.contains(&ext.as_str())
-        })
-        .collect();
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.is_file() && !is_ignored_dir_preview_file(&path) && is_dir_preview_candidate(&path)
+        {
+            files.push(path);
+        }
+    }
     files.sort();
     files
 }
 
-/// Pick `n` items evenly spread across `items`.
-fn pick_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
-    if n == 0 || items.is_empty() {
+// Recursieve variant verwijderd: alleen directe kinderen worden nu meegenomen
+
+fn is_dir_preview_candidate(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    DIR_IMAGE_EXTS.contains(&ext.as_str())
+        || DIR_VIDEO_EXTS.contains(&ext.as_str())
+        || DIR_PDF_EXTS.contains(&ext.as_str())
+        || DIR_ARCHIVE_EXTS.contains(&ext.as_str())
+}
+
+fn is_ignored_dir_preview_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| name == ".DS_Store" || name.starts_with("._"))
+}
+
+/// Return candidate indices in expanding even samples. This keeps the first
+/// frames representative, but still falls back to more files when early
+/// candidates cannot actually produce thumbnails.
+fn preview_candidate_order(len: usize, target: usize) -> Vec<usize> {
+    if len == 0 || target == 0 {
         return Vec::new();
     }
-    if items.len() <= n {
-        return items.to_vec();
+    let mut order = Vec::new();
+    let mut sample = target.min(len).max(1);
+    loop {
+        for i in 0..sample {
+            let idx = (i * len) / sample;
+            if !order.contains(&idx) {
+                order.push(idx);
+            }
+        }
+        if sample >= len {
+            break;
+        }
+        sample = (sample * 2).min(len);
     }
-    (0..n)
-        .map(|i| {
-            let idx = (i * items.len()) / n;
-            items[idx].clone()
-        })
-        .collect()
+    order
 }
 
 /// Generate a small JPEG for a single directory item (image, video, or PDF).
@@ -1348,6 +1372,11 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
     if n == 0 {
         return false;
     }
+    for inp in inputs.iter().take(n) {
+        if !inp.exists() {
+            // input-bestand ontbreekt
+        }
+    }
 
     // All layouts use 100×100 tiles so no layout implies more or less importance.
     // Slots: (rotation_degrees, x_offset, y_offset) — NW corner of each tile on
@@ -1407,7 +1436,20 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
             .map(|s| s.success())
             .unwrap_or(false);
         if ok && output.exists() {
-            return true;
+            // Validatie: probeer het WebP-bestand te openen
+            match std::fs::read(output) {
+                Ok(bytes) => {
+                    match image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP) {
+                        Ok(_) => {
+                            return true;
+                        }
+                        Err(_e) => {
+                            let _ = std::fs::remove_file(output);
+                        }
+                    }
+                }
+                Err(_e) => {}
+            }
         }
     }
 
@@ -1470,7 +1512,51 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
         .await
         .map(|s| s.success())
         .unwrap_or(false);
-    ok && output.exists()
+    if ok && output.exists() {
+        return true;
+    }
+
+    let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+    let output = output.to_path_buf();
+    tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output))
+        .await
+        .unwrap_or(false)
+}
+
+fn build_collage_rust(inputs: &[PathBuf], output: &Path) -> bool {
+    let n = inputs.len().min(4);
+    if n == 0 {
+        return false;
+    }
+    for inp in inputs.iter().take(n) {
+        if !inp.exists() {
+            // input-bestand ontbreekt
+        }
+    }
+    let slots: &[(i64, i64)] = match n {
+        1 => &[(70, 70)],
+        2 => &[(10, 68), (128, 68)],
+        3 => &[(8, 10), (125, 3), (67, 128)],
+        _ => &[(8, 10), (125, 3), (11, 128), (122, 122)],
+    };
+    let mut canvas = image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
+    for (input, (x, y)) in inputs.iter().take(n).zip(slots.iter()) {
+        let Ok(img) = image::open(input) else {
+            continue;
+        };
+        let tile = img
+            .resize_to_fill(100, 100, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+        image::imageops::overlay(&mut canvas, &tile, *x, *y);
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    if image::DynamicImage::ImageRgba8(canvas)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .is_err()
+    {
+        return false;
+    }
+    std::fs::write(output, out.into_inner()).is_ok()
 }
 
 /// Stitch `frames` (PNG with alpha) side by side into a single WebP sprite sheet.
@@ -1480,6 +1566,22 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
 async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
     if frames.is_empty() {
         return None;
+    }
+    for f in frames.iter() {
+        if !f.exists() {
+            // frame ontbreekt
+        } else {
+            match std::fs::metadata(f) {
+                Ok(meta) => {
+                    if meta.len() == 0 {
+                        // frame is leeg
+                    }
+                }
+                Err(_e) => {
+                    // kan metadata niet lezen
+                }
+            }
+        }
     }
 
     // --- ImageMagick path: horizontal append → WebP stdout ---
@@ -1535,39 +1637,93 @@ async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .output()
-        .await
-        .ok()?;
-    if out.status.success() && out.stdout.starts_with(b"RIFF") {
-        Some(out.stdout)
-    } else {
-        None
+        .await;
+    if let Ok(out) = out {
+        // debug output verwijderd
+        if out.status.success() && out.stdout.starts_with(b"RIFF") {
+            // Extra: probeer het WebP-bestand te openen/parsen met image crate
+            match image::load_from_memory_with_format(&out.stdout, image::ImageFormat::WebP) {
+                Ok(_) => {
+                    return Some(out.stdout);
+                }
+                Err(_e) => {
+                    // parse error
+                }
+            }
+        }
     }
+
+    let frames = frames.to_vec();
+    // debug output verwijderd
+    tokio::task::spawn_blocking(move || stitch_dir_frames_rust(&frames))
+        .await
+        .ok()
+        .flatten()
 }
 
-/// Cache path for a directory sprite sheet, keyed on the directory's mtime.
+fn stitch_dir_frames_rust(frames: &[PathBuf]) -> Option<Vec<u8>> {
+    let mut decoded = Vec::new();
+    for frame in frames {
+        decoded.push(image::open(frame).ok()?.to_rgba8());
+    }
+    let height = decoded.iter().map(|img| img.height()).max().unwrap_or(240);
+    let width: u32 = decoded.iter().map(|img| img.width()).sum();
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let mut sheet = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 0]));
+    let mut x = 0_i64;
+    for img in &decoded {
+        image::imageops::overlay(&mut sheet, img, x, 0);
+        x += i64::from(img.width());
+    }
+
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(sheet)
+        .write_to(&mut out, image::ImageFormat::WebP)
+        .ok()?;
+    let bytes = out.into_inner();
+    bytes.starts_with(b"RIFF").then_some(bytes)
+}
+
+/// Cache path for a directory sprite sheet, keyed on discovered media files.
 ///
 /// Stored under `<root>/.filetag/cache/dir-thumbs/`.  The key includes a path
-/// hash so two directories with the same basename and mtime do not collide.
-fn dir_thumb_cache_path(dir_abs: &Path, root: &Path) -> Option<PathBuf> {
-    let mtime = std::fs::metadata(dir_abs)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+/// and metadata hash so nested-file changes invalidate recursive folder
+/// previews.
+fn dir_thumb_cache_path(
+    dir_abs: &Path,
+    root: &Path,
+    files: &[PathBuf],
+    features: Features,
+) -> Option<PathBuf> {
     let stem = dir_abs
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // Short path hash to disambiguate same-name directories.
     let hash = {
         use std::hash::{DefaultHasher, Hash, Hasher};
         let mut h = DefaultHasher::new();
         dir_abs.hash(&mut h);
+        features.video.hash(&mut h);
+        features.imagemagick.hash(&mut h);
+        features.pdf.hash(&mut h);
+        files.len().hash(&mut h);
+        for path in files {
+            path.hash(&mut h);
+            if let Ok(meta) = std::fs::metadata(path) {
+                meta.len().hash(&mut h);
+                if let Ok(modified) = meta.modified()
+                    && let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH)
+                {
+                    dur.as_nanos().hash(&mut h);
+                }
+            }
+        }
         format!("{:016x}", h.finish())
     };
-    let key = format!("{mtime}_{hash}_{stem}.sprite.webp");
+    let key = format!("{hash}_{stem}.sprite.webp");
     let dir = root.join(".filetag").join("cache").join("dir-thumbs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(key))
@@ -1600,13 +1756,14 @@ pub async fn api_dir_thumbs(
         Some(r) => r,
         None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
-    let features = load_features_for(&state, &db_root.root);
-
     let abs_dir = match crate::state::preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
-        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+        None => {
+            return (StatusCode::BAD_REQUEST, "Invalid path").into_response();
+        }
     };
 
+    // Log pad en previewbare bestanden voor debugging
     if !abs_dir.is_dir() {
         return (StatusCode::NOT_FOUND, "Not a directory").into_response();
     }
@@ -1615,19 +1772,20 @@ pub async fn api_dir_thumbs(
     let cache_root = root_for_dir(&state, &abs_dir)
         .map(|r| r.root.clone())
         .unwrap_or_else(|| db_root.root.clone());
+    let features = load_features_for(&state, &cache_root);
+
+    let files = list_previewable_files(&abs_dir);
+    if files.is_empty() {
+        return StatusCode::NO_CONTENT.into_response();
+    }
 
     // Check cache before acquiring the permit.
-    if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root) {
+    if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root, &files, features) {
         if let Ok(data) = tokio::fs::read(&cache_path).await {
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
         // --- Build the sprite sheet ---
-        let files = list_previewable_files(&abs_dir);
-        if files.is_empty() {
-            return StatusCode::NO_CONTENT.into_response();
-        }
-
         let _permit = match THUMB_LIMITER.try_acquire() {
             Ok(p) => p,
             Err(_) => {
@@ -1642,7 +1800,7 @@ pub async fn api_dir_thumbs(
 
         const IMAGES_PER_FRAME: usize = 4;
         const MAX_FRAMES: usize = 6;
-        let selected = pick_evenly(&files, (MAX_FRAMES * IMAGES_PER_FRAME).min(files.len()));
+        const MAX_ITEMS: usize = MAX_FRAMES * IMAGES_PER_FRAME;
 
         // Temp directory for intermediate thumbnail + frame files.
         let tmp_dir = cache_root
@@ -1653,23 +1811,30 @@ pub async fn api_dir_thumbs(
             return (StatusCode::INTERNAL_SERVER_ERROR, "tmp dir failed").into_response();
         }
 
-        let mut frame_paths: Vec<PathBuf> = Vec::new();
-        for (frame_idx, group) in selected.chunks(IMAGES_PER_FRAME).enumerate() {
-            // Generate per-item thumbnails (bounded by outer permit).
-            let mut thumb_paths: Vec<PathBuf> = Vec::new();
-            for (item_idx, item_path) in group.iter().enumerate() {
-                if let Some(jpeg) = dir_item_jpeg(item_path, &cache_root, features).await {
-                    let tp = tmp_dir.join(format!("t{frame_idx}_{item_idx}.jpg"));
-                    if tokio::fs::write(&tp, &jpeg).await.is_ok() {
-                        thumb_paths.push(tp);
-                    }
+        // First collect actual generated thumbnails, not merely files with a
+        // previewable extension. Some candidates can fail (corrupt files,
+        // disabled PDF/video support, archive without images, unsupported RAW).
+        let mut item_thumb_paths: Vec<PathBuf> = Vec::new();
+        for idx in preview_candidate_order(files.len(), MAX_ITEMS) {
+            if item_thumb_paths.len() >= MAX_ITEMS {
+                break;
+            }
+            let item_path = &files[idx];
+            if let Some(jpeg) = dir_item_jpeg(item_path, &cache_root, features).await {
+                let tp = tmp_dir.join(format!("item{}.jpg", item_thumb_paths.len()));
+                if tokio::fs::write(&tp, &jpeg).await.is_ok() {
+                    item_thumb_paths.push(tp);
                 }
             }
-            if thumb_paths.is_empty() {
+        }
+
+        let mut frame_paths: Vec<PathBuf> = Vec::new();
+        for (frame_idx, group) in item_thumb_paths.chunks(IMAGES_PER_FRAME).enumerate() {
+            if group.is_empty() {
                 continue;
             }
             let frame_path = tmp_dir.join(format!("frame{frame_idx}.png"));
-            if build_collage(&thumb_paths, &frame_path).await {
+            if build_collage(group, &frame_path).await {
                 frame_paths.push(frame_path);
             }
         }
@@ -1690,7 +1855,7 @@ pub async fn api_dir_thumbs(
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
-        return (StatusCode::UNPROCESSABLE_ENTITY, "No previewable files").into_response();
+        return StatusCode::NO_CONTENT.into_response();
     }
 
     (StatusCode::INTERNAL_SERVER_ERROR, "cache path unavailable").into_response()
@@ -1705,4 +1870,73 @@ fn rand_hex() -> String {
         .unwrap_or_default()
         .subsec_nanos();
     format!("{t:08x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "filetag_{name}_{}_{}",
+            std::process::id(),
+            rand_hex()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn preview_candidate_order_eventually_covers_all_items() {
+        let order = preview_candidate_order(100, 24);
+        assert_eq!(order.len(), 100);
+        for idx in 0..100 {
+            assert!(order.contains(&idx));
+        }
+    }
+
+    #[test]
+    fn list_previewable_files_skips_metadata_dirs_and_appledouble_files() {
+        let dir = unique_temp_dir("dir_scan_metadata");
+        let album = dir.join("album");
+        let macosx = dir.join("__MACOSX").join("album");
+        let cache = dir.join(".filetag").join("cache");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::create_dir_all(&macosx).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(dir.join("cover.jpg"), b"").unwrap();
+        std::fs::write(album.join("page.png"), b"").unwrap();
+        std::fs::write(macosx.join("._page.png"), b"").unwrap();
+        std::fs::write(cache.join("cached.webp"), b"").unwrap();
+
+        let files = list_previewable_files(&dir);
+        let names = files
+            .iter()
+            .map(|p| p.strip_prefix(&dir).unwrap().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["cover.jpg", "album/page.png"]);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rust_dir_collage_fallback_outputs_webp_sprite() {
+        let dir = unique_temp_dir("dir_collage");
+        let input = dir.join("input.jpg");
+        let frame = dir.join("frame.png");
+
+        let img = image::RgbImage::from_pixel(120, 120, image::Rgb([200, 30, 80]));
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        std::fs::write(&input, jpeg.into_inner()).unwrap();
+
+        assert!(build_collage_rust(std::slice::from_ref(&input), &frame));
+        let webp = stitch_dir_frames_rust(std::slice::from_ref(&frame)).unwrap();
+        assert!(webp.starts_with(b"RIFF"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -1,4 +1,3 @@
-
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
@@ -108,143 +107,81 @@ function navigateToParent(filePath) {
 }
 
 /// Quote a tag name for the query language if it contains special characters.
-function quoteTag(name) {
-    if (!/^[a-zA-Z0-9_\-\/.:*]+$/.test(name)) return '"' + name.replace(/"/g, "'") + '"';
-    return name;
-}
+function openSettings(tab = 'video') {
+    console.log('[DEBUG] state.settings:', state.settings);
+    const menu = document.getElementById('more-menu');
+    if (menu) menu.hidden = true;
+    // Video settings from per-root state
+    document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
+    document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
+    // PDF (altijd invullen, want veld bestaat altijd)
+    document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
+    // Features-tab initialisatie uitgesteld tot tab zichtbaar wordt
 
-function handleTagSearch(val) {
-    state.tagFilter = val.trim();
-    renderTags();
-}
-
-async function doTagSearch(tagName) {
-    const q = quoteTag(tagName);
-    document.getElementById('search-input').value = q;
-    await searchFiles(q);
-    document.getElementById('search-clear').hidden = false;
-    render();
-}
-
-async function toggleTagFilter(tagName) {
-    if (state.activeTags.has(tagName)) {
-        state.activeTags.delete(tagName);
-    } else {
-        state.activeTags.add(tagName);
-    }
-    if (state.activeTags.size === 0) {
-        document.getElementById('search-input').value = '';
-        document.getElementById('search-clear').hidden = true;
-        await navigateTo(state.currentPath || '');
-        return;
-    }
-    _thumbClearCache();
-    const q = [...state.activeTags].map(quoteTag).join(' and ');
-    document.getElementById('search-input').value = q;
-    await searchFiles(q);
-    document.getElementById('search-clear').hidden = false;
-    render();
-}
-
-async function clearTagFilters() {
-    state.activeTags.clear();
-    document.getElementById('search-input').value = '';
-    document.getElementById('search-clear').hidden = true;
-    await navigateTo(state.currentPath || '');
-}
-
-async function selectFile(path, event) {
-    // Dismiss trickplay overlay and move keyboard focus to the clicked item.
-    // Floating sprites are cleaned up by the trickplay click handler; here we
-    // only clear pinned inline sprites from cards that are not the clicked one.
-    if (event && event.target) {
-        const clickedCard = event.target.closest('.card');
-        document.querySelectorAll('.card-trickplay-pinned').forEach(el => {
-            if (!clickedCard || !clickedCard.contains(el)) el.remove();
+    // AI settings from server
+    fetch('/api/ai/config?' + new URLSearchParams({ dir: currentAbsDir() || '' }))
+        .then(res => res.json())
+        .then(cfg => {
+            document.getElementById('ai-endpoint').value = cfg.endpoint || '';
+            document.getElementById('ai-model').value = cfg.model || '';
+            document.getElementById('ai-api-key').value = '';
+            document.getElementById('ai-api-key').placeholder = cfg.api_key || 'Leave empty for local models';
+            document.getElementById('ai-tag-prefix').value = cfg.tag_prefix || 'ai/';
+            document.getElementById('ai-max-tokens').value = cfg.max_tokens || 512;
+            document.getElementById('ai-subject').value = cfg.subject || '';
+            document.getElementById('ai-prompt-image').value = cfg.prompt_image || '';
+            document.getElementById('ai-prompt-image').placeholder = cfg.default_prompt_image || '';
+            document.getElementById('ai-prompt-video').value = cfg.prompt_video || '';
+            document.getElementById('ai-prompt-video').placeholder = cfg.default_prompt_video || 'Look at this video contact sheet.';
+            document.getElementById('ai-video-max-mb') && (document.getElementById('ai-video-max-mb').value = cfg.video_max_mb ?? 50);
+            document.getElementById('ai-video-sheet-max-frames').value = cfg.video_sheet_max_frames ?? 16;
+            document.getElementById('ai-video-frame-selection').value = cfg.video_frame_selection || 'interval';
+            _updateVideoMaxMbVisibility();
+            document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
+            document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
+            const pre = document.getElementById('ai-output-format');
+            if (pre) {
+                pre.value = cfg.output_format || '';
+                pre.placeholder = cfg.default_output_format || '';
+            }
+            document.getElementById('ai-format').value = cfg.format || 'openai';
+            const enabled = cfg.enabled !== false; // default true if key absent
+            document.getElementById('ai-enabled').checked = enabled;
+            document.getElementById('ai-settings-fields').hidden = !enabled;
+            document.getElementById('ai-test-result').hidden = true;
         });
-        const el = event.target.closest('[data-path], [data-root-path]');
-        if (el) {
-            const items = _kbItems();
-            const idx = items.indexOf(el);
-            if (idx !== -1) _kbSetCursor(idx, false);
+    // Face settings — always fetch fresh so the form reflects the saved DB value.
+    const dirQ = currentAbsDir() ? '?dir=' + encodeURIComponent(currentAbsDir()) : '';
+    fetch('/api/face/config' + dirQ)
+        .then(r => r.json())
+        .then(fc => {
+            const enabled = !!fc.enabled;
+            document.getElementById('face-enabled').checked = enabled;
+            document.getElementById('face-settings-fields').hidden = !enabled;
+            document.getElementById('face-confidence').value = fc.confidence ?? 0.7;
+            document.getElementById('face-min-size').value = fc.min_face_px ?? 20;
+            document.getElementById('face-cluster-dist').value = fc.cluster_distance ?? 0.4;
+            document.getElementById('face-tag-prefix').value = fc.tag_prefix || 'person';
+            document.getElementById('face-auto-match-threshold').value = fc.auto_match_threshold ?? 0.25;
+            const ready = !!fc.models_ready;
+            document.getElementById('face-models-status').textContent = ready ? t('face.settings-models-ready') : t('face.settings-models-missing');
+            document.getElementById('face-models-download-btn').hidden = ready;
+        });
+    // Language selector — populate on demand so it works regardless of load order.
+    const langSel = document.getElementById('lang-select');
+    if (langSel) {
+        if (!langSel.options.length) {
+            langSel.innerHTML = LANG_OPTIONS.map(o =>
+                `<option value="${o.code}">${o.label}</option>`
+            ).join('');
         }
+        langSel.value = getLang();
     }
+    switchSettingsTab(tab);
+    document.getElementById('settings-modal').hidden = false;
 
-    const layout = document.querySelector('.layout');
-    const anchor = saveScrollAnchor(path);
-
-    const isMulti = event && (event.ctrlKey || event.metaKey);
-    const isShift = event && event.shiftKey;
-
-    if (isMulti) {
-        // When transitioning from single-select: sync the currently selected file's
-        // data into selectedFilesData. Always overwrite to avoid using stale cached data
-        // (e.g. tags added after the last multi-select were only reflected in selectedFile).
-        if (state.selectedFile) {
-            state.selectedFilesData.set(state.selectedFile.path, state.selectedFile);
-        }
-        // Toggle this path in the multi-select set
-        if (state.selectedPaths.has(path)) {
-            state.selectedPaths.delete(path);
-        } else {
-            state.selectedPaths.add(path);
-            if (!state.selectedFilesData.has(path)) {
-                const data = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
-                state.selectedFilesData.set(path, data);
-            }
-        }
-        _armedBulkTag = null;
-        _lastClickedPath = path;
-        // Keep selectedFile in sync with the most recently toggled file, or clear if set is empty
-        if (state.selectedPaths.size === 1) {
-            await loadFileDetail([...state.selectedPaths][0]);
-        } else if (state.selectedPaths.size === 0) {
-            state.selectedFile = null;
-            state.selectedDir = null;
-        } else {
-            // Multi: update state but don't reload preview
-            state.selectedDir = null;
-        }
-    } else if (isShift && _lastClickedPath) {
-        // Range-select between _lastClickedPath and path
-        const items = state.mode === 'search' ? state.searchResults
-            : state.mode === 'zip' ? state.zipEntries.map(e => ({ path: state.zipPath + '::' + e.name }))
-            : state.entries;
-        const paths = items.filter(e => !e.is_dir).map(e => state.mode === 'search' ? e.path
-            : state.mode === 'zip' ? e.path
-            : fullPath(e));
-        const a = paths.indexOf(_lastClickedPath);
-        const b = paths.indexOf(path);
-        if (a !== -1 && b !== -1) {
-            const [lo, hi] = a < b ? [a, b] : [b, a];
-            for (let i = lo; i <= hi; i++) state.selectedPaths.add(paths[i]);
-        }
-        _armedBulkTag = null;
-        state.selectedDir = null;
-        // Batch-fetch file data for newly added paths
-        await Promise.all([...state.selectedPaths].map(async p => {
-            if (!state.selectedFilesData.has(p)) {
-                const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
-                state.selectedFilesData.set(p, data);
-            }
-        }));
-    } else {
-        // Plain click: single select
-        state.selectedPaths.clear();
-        state.selectedPaths.add(path);
-        _lastClickedPath = path;
-        await loadFileDetail(path);
-    }
-
-    if (!state.detailOpen) {
-        state.detailOpen = true;
-        layout.classList.remove('detail-collapsed');
-        document.getElementById('detail-toggle').classList.add('active');
-        _syncChatRight();
-    }
-    _updateCardSelection();
-    renderDetail();
-    restoreScrollAnchor(anchor);
+    // Als het features-tabblad direct geopend wordt, initialiseer toggles/waarschuwingen
+    if (tab === 'features') updateFeaturesTab();
 }
 
 async function doAddTag() {
@@ -601,8 +538,8 @@ function attachSearchAutocomplete(inputEl, submitFn) {
                 closeDropdown();
             } else {
                 closeDropdown();
-                submitFn();
             }
+            submitFn();
         }
     });
 }
@@ -815,79 +752,61 @@ function switchSettingsTab(tab) {
     document.querySelectorAll('.modal-tab-panel').forEach(p => {
         p.hidden = (p.id !== `settings-tab-${tab}`);
     });
+    // Features-tab: toggles/waarschuwingen bijwerken zodra tab zichtbaar wordt
+    if (tab === 'features') updateFeaturesTab();
+}
+
+// Nieuwe functie: vult toggles en waarschuwingen in features-tab
+function updateFeaturesTab() {
+    // Video/ffmpeg
+    const ffmpegInstalled = state.settings.ffmpeg_installed === true;
+    const ffmpegBox = document.getElementById('feat-video');
+    if (ffmpegBox) {
+        ffmpegBox.checked = state.settings.feature_video ?? false;
+        ffmpegBox.disabled = !ffmpegInstalled;
+    }
+    const ffmpegWarn = document.getElementById('feat-video-warn');
+    if (ffmpegWarn) {
+        ffmpegWarn.hidden = ffmpegInstalled;
+        if (ffmpegInstalled) ffmpegWarn.style.display = 'none';
+        else ffmpegWarn.style.display = 'block';
+    }
+
+    // ImageMagick
+    const magickInstalled = state.settings.imagemagick_installed === true;
+    const magickBox = document.getElementById('feat-imagemagick');
+    if (magickBox) {
+        magickBox.checked = state.settings.feature_imagemagick ?? false;
+        magickBox.disabled = !magickInstalled;
+    }
+    const magickWarn = document.getElementById('feat-imagemagick-warn');
+    if (magickWarn) {
+        magickWarn.hidden = magickInstalled;
+        if (magickInstalled) magickWarn.style.display = 'none';
+        else magickWarn.style.display = 'block';
+    }
 }
 
 async function openSettings(tab = 'video') {
+    console.log('[DEBUG] state.settings:', state.settings);
     const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
     // Video settings from per-root state
     document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
     document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
-    // Feature flags from per-root state
-    document.getElementById('feat-video').checked = state.settings.feature_video ?? false;
-    document.getElementById('feat-imagemagick').checked = state.settings.feature_imagemagick ?? false;
+    // PDF (altijd invullen, want veld bestaat altijd)
     document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
-    // AI settings from server
-    try {
-        const res = await fetch('/api/ai/config?' + new URLSearchParams({ dir: currentAbsDir() || '' }));
-        const cfg = await res.json();
-        document.getElementById('ai-endpoint').value = cfg.endpoint || '';
-        document.getElementById('ai-model').value = cfg.model || '';
-        document.getElementById('ai-api-key').value = '';
-        document.getElementById('ai-api-key').placeholder = cfg.api_key || 'Leave empty for local models';
-        document.getElementById('ai-tag-prefix').value = cfg.tag_prefix || 'ai/';
-        document.getElementById('ai-max-tokens').value = cfg.max_tokens || 512;
-        document.getElementById('ai-subject').value = cfg.subject || '';
-        document.getElementById('ai-prompt-image').value = cfg.prompt_image || '';
-        document.getElementById('ai-prompt-image').placeholder = cfg.default_prompt_image || '';
-        document.getElementById('ai-prompt-video').value = cfg.prompt_video || '';
-        document.getElementById('ai-prompt-video').placeholder = cfg.default_prompt_video || 'Look at this video contact sheet.';
-        document.getElementById('ai-video-max-mb') && (document.getElementById('ai-video-max-mb').value = cfg.video_max_mb ?? 50);
-        document.getElementById('ai-video-sheet-max-frames').value = cfg.video_sheet_max_frames ?? 16;
-        document.getElementById('ai-video-frame-selection').value = cfg.video_frame_selection || 'interval';
-        _updateVideoMaxMbVisibility();
-        document.getElementById('ai-prompt-archive').value = cfg.prompt_archive || '';
-        document.getElementById('ai-prompt-archive').placeholder = cfg.default_prompt_archive || '';
-        const pre = document.getElementById('ai-output-format');
-        if (pre) {
-            pre.value = cfg.output_format || '';
-            pre.placeholder = cfg.default_output_format || '';
-        }
-        document.getElementById('ai-format').value = cfg.format || 'openai';
-        const enabled = cfg.enabled !== false; // default true if key absent
-        document.getElementById('ai-enabled').checked = enabled;
-        document.getElementById('ai-settings-fields').hidden = !enabled;
-    } catch (_) { /* defaults are fine */ }
-    document.getElementById('ai-test-result').hidden = true;
-    // Face settings — always fetch fresh so the form reflects the saved DB value.
-    try {
-        const dirQ = currentAbsDir() ? '?dir=' + encodeURIComponent(currentAbsDir()) : '';
-        const fc = await fetch('/api/face/config' + dirQ).then(r => r.json());
-        const enabled = !!fc.enabled;
-        document.getElementById('face-enabled').checked = enabled;
-        document.getElementById('face-settings-fields').hidden = !enabled;
-        document.getElementById('face-confidence').value = fc.confidence ?? 0.7;
-        document.getElementById('face-min-size').value = fc.min_face_px ?? 20;
-        document.getElementById('face-cluster-dist').value = fc.cluster_distance ?? 0.4;
-        document.getElementById('face-tag-prefix').value = fc.tag_prefix || 'person';
-        document.getElementById('face-auto-match-threshold').value = fc.auto_match_threshold ?? 0.25;
-        const ready = !!fc.models_ready;
-        document.getElementById('face-models-status').textContent = ready ? t('face.settings-models-ready') : t('face.settings-models-missing');
-        document.getElementById('face-models-download-btn').hidden = ready;
-    } catch (_) { /* defaults are fine */ }
-    // Language selector — populate on demand so it works regardless of load order.
-    const langSel = document.getElementById('lang-select');
-    if (langSel) {
-        if (!langSel.options.length) {
-            langSel.innerHTML = LANG_OPTIONS.map(o =>
-                `<option value="${o.code}">${o.label}</option>`
-            ).join('');
-        }
-        langSel.value = getLang();
-    }
+    // Features-tab initialisatie uitgesteld tot tab zichtbaar wordt
+
     switchSettingsTab(tab);
     document.getElementById('settings-modal').hidden = false;
+
+    // Als het features-tabblad direct geopend wordt, initialiseer toggles/waarschuwingen
+    if (tab === 'features') updateFeaturesTab();
 }
+    // AI settings from server
+// ... oude try/await/fetch-blok verwijderd ...
+// ... einde openSettings ...
 
 function closeSettings() {
     document.getElementById('settings-modal').hidden = true;
@@ -1822,3 +1741,6 @@ function cancelTagPickerMode() {
     renderTags();
     renderDetail();
 }
+
+window.doSearch = doSearch;
+window.doClearSearch = doClearSearch;

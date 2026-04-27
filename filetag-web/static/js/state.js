@@ -75,7 +75,10 @@ async function apiPost(url, body) {
 // This is what the backend uses to determine the correct (deepest) root.
 function currentAbsDir() {
     if (state.currentBasePath == null) return null;
-    return state.currentPath ? state.currentBasePath + '/' + state.currentPath : state.currentBasePath;
+    if (!state.currentPath) return state.currentBasePath;
+    // voorkom dubbele prefix: als currentPath al met currentBasePath begint, plak niet nogmaals
+    if (state.currentPath.startsWith(state.currentBasePath + '/')) return state.currentPath;
+    return state.currentBasePath + '/' + state.currentPath;
 }
 
 // Append dir query param with the current absolute directory path.
@@ -156,7 +159,13 @@ async function loadFiles(path) {
     // 'path' is relative to the current deepest root (currentBasePath).
     let absDir = null;
     if (state.currentBasePath != null) {
-        absDir = path ? state.currentBasePath + '/' + path : state.currentBasePath;
+        if (!path) {
+            absDir = state.currentBasePath;
+        } else if (path.startsWith(state.currentBasePath + '/')) {
+            absDir = path;
+        } else {
+            absDir = state.currentBasePath + '/' + path;
+        }
     }
     const dirPart = absDir != null ? 'dir=' + encodeURIComponent(absDir) : null;
     const url = '/api/files?' + [dirPart, state.showHidden ? 'show_hidden=true' : null]

@@ -1329,12 +1329,26 @@ pub async fn api_settings_get(
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
     };
+    // Detecteer of ImageMagick (magick/convert) en ffmpeg geïnstalleerd zijn
+    fn tool_installed(names: &[&str]) -> bool {
+        let mut found = false;
+        for &n in names {
+            if which::which(n).is_ok() {
+                found = true;
+            }
+        }
+        found
+    }
+    let imagemagick_installed = tool_installed(&["magick", "convert"]);
+    let ffmpeg_installed = tool_installed(&["ffmpeg"]);
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
         "sprite_max": sprite_max,
         "feature_video": bool_setting("feature.video"),
         "feature_imagemagick": bool_setting("feature.imagemagick"),
         "feature_pdf": bool_setting("feature.pdf"),
+        "imagemagick_installed": imagemagick_installed,
+        "ffmpeg_installed": ffmpeg_installed
     })))
 }
 
