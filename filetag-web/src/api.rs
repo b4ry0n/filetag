@@ -1,9 +1,3 @@
-//! Core CRUD API handlers and embedded static-file serving for `filetag-web`.
-//!
-//! All JSON-returning handlers follow the pattern:
-//! - Resolve the active root via [`root_from_dir`] (from the `dir` query / body field).
-//! - For file operations, open the correct child database via [`open_for_file_op`].
-//! - Return `Result<Json<…>, AppError>` so errors become JSON HTTP responses.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -115,6 +109,7 @@ js_handler!(js_viewer, "../static/js/viewer.js");
 js_handler!(js_main, "../static/js/main.js");
 js_handler!(js_chat, "../static/js/chat.js");
 js_handler!(js_face, "../static/js/face.js");
+js_handler!(js_select, "../static/js/select.js");
 css_handler!(css_face, "../static/css/face.css");
 
 /// Serve the embedded `favicon.ico`.

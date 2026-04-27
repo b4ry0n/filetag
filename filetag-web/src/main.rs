@@ -36,44 +36,41 @@ use state::{AppState, resolve_names, terminal_width};
 #[derive(Parser)]
 #[command(name = "filetag-web", about = "Web interface for filetag", version)]
 struct Args {
-    /// Beperk browsen tot alleen de actieve root en expliciet gelinkte roots (geen parents of ongelinkte children)
-    #[arg(long)]
-    linked_only: bool,
-    /// Database root directory (default: current directory)
+    // --- Database and Root Options ---
+    /// Path to the database root directory (default: current directory)
     path: Option<PathBuf>,
 
-    /// Port to listen on
-    #[arg(short, long, default_value_t = 3000)]
-    port: u16,
+    /// Only use the active root and explicitly linked roots (no parent or unlinked child databases)
+    #[arg(long)]
+    linked_only: bool,
 
-    /// Address to bind to
-    #[arg(short, long, default_value = "127.0.0.1")]
-    bind: String,
-
-    /// Do not automatically include ancestor databases (stop at the current root)
+    /// Do not include ancestor databases (only use the current root)
     #[arg(long)]
     no_parents: bool,
 
-    /// Do not scan loaded roots for nested databases during startup
+    /// Do not scan for nested databases during startup
     #[arg(long)]
     no_scan: bool,
 
-    /// Password to protect the web interface.
-    /// Can also be set via the FILETAG_PASSWORD environment variable.
-    /// When not set, the interface is unauthenticated (loopback-only by default).
+    // --- Network Options ---
+    /// Port to listen on (default: 3000)
+    #[arg(short, long, default_value_t = 3000)]
+    port: u16,
+
+    /// Address to bind to (default: 127.0.0.1)
+    #[arg(short, long, default_value = "127.0.0.1")]
+    bind: String,
+
+    // --- Authentication Options ---
+    /// Password to protect the web interface. Can also be set via the FILETAG_PASSWORD environment variable. If not set, the interface is unauthenticated (loopback-only by default).
     #[arg(long, env = "FILETAG_PASSWORD")]
     password: Option<String>,
 
-    /// Read the password from a file instead of the command line.
-    /// The file must contain the password as plain text (leading/trailing
-    /// whitespace is stripped). Use `chmod 600` to restrict access.
-    /// Takes precedence over --password and FILETAG_PASSWORD.
+    /// Read the password from a file (plain text, leading/trailing whitespace is stripped). Use `chmod 600` to restrict access. Takes precedence over --password and FILETAG_PASSWORD.
     #[arg(long)]
     password_file: Option<PathBuf>,
 
-    /// Generate a random password, print it to stderr, and start with authentication enabled.
-    /// Useful for ad-hoc access from another device on the local network.
-    /// The password is only valid for the current server session.
+    /// Generate a random password, print it to stderr, and enable authentication for this session only (useful for ad-hoc access on a local network)
     #[arg(long, short = 'P')]
     generate_password: bool,
 }
@@ -118,8 +115,8 @@ async fn main() -> anyhow::Result<()> {
         db::collect_all_databases(conn, root.clone(), !args.no_parents)?
     };
 
-    // Discover nested databases by scanning the filesystem.
-    if !args.no_scan {
+    // Discover nested databases by scanning the filesystem, unless --linked-only is set.
+    if !args.linked_only && !args.no_scan {
         let mut visited: std::collections::HashSet<PathBuf> = all_dbs
             .iter()
             .filter_map(|db| std::fs::canonicalize(&db.root).ok())
@@ -261,6 +258,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/js/lightbox.js", get(api::js_lightbox))
         .route("/js/viewer.js", get(api::js_viewer))
         .route("/js/main.js", get(api::js_main))
+        .route("/js/select.js", get(api::js_select))
         .route("/js/chat.js", get(api::js_chat))
         .route("/js/face.js", get(api::js_face))
         .route("/css/face.css", get(api::css_face))
