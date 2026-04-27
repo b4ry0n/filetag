@@ -39,7 +39,7 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
-    /// Use a specific database path (override auto-detect)
+    /// Use a specific database root path (override auto-detect)
     #[arg(long, global = true)]
     db: Option<PathBuf>,
 
@@ -1298,19 +1298,12 @@ fn cmd_merge(cli: &Cli, from: String, into: String, force: bool, dry_run: bool) 
         }
     }
 
-    let to_id = db::get_or_create_tag(&conn, &into)?;
-
-    let moved = conn.execute(
-        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, created_at)
-         SELECT file_id, ?1, value, created_at FROM file_tags WHERE tag_id = ?2",
-        rusqlite::params![to_id, from_id],
-    )?;
-
-    conn.execute(
-        "DELETE FROM file_tags WHERE tag_id = ?1",
-        rusqlite::params![from_id],
-    )?;
-    conn.execute("DELETE FROM tags WHERE id = ?1", rusqlite::params![from_id])?;
+    let outcome = db::rename_tag(&conn, &from, &into)?;
+    let moved = match outcome {
+        db::RenameOutcome::Merged { assignments } => assignments,
+        db::RenameOutcome::Renamed => assignment_count as usize,
+        db::RenameOutcome::NotFound => anyhow::bail!("tag '{}' not found", from),
+    };
 
     info!(
         cli,
@@ -1608,11 +1601,11 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                     .unwrap_or(&f.rel_path);
 
                 // Insert file record into linked DB
-                linked_conn.execute(
+                linked_tx.execute(
                     "INSERT OR IGNORE INTO files (path, file_id, size, mtime_ns) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![dest_path, f.file_id, f.size, f.mtime_ns],
                 )?;
-                let linked_file_id: i64 = linked_conn.query_row(
+                let linked_file_id: i64 = linked_tx.query_row(
                     "SELECT id FROM files WHERE path = ?1",
                     rusqlite::params![dest_path],
                     |row| row.get(0),
@@ -1620,9 +1613,9 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
 
                 // Copy tags
                 for (tag_name, value, subject) in &f.tags {
-                    let tag_id = db::get_or_create_tag(&linked_conn, tag_name)?;
+                    let tag_id = db::get_or_create_tag(&linked_tx, tag_name)?;
                     db::apply_tag(
-                        &linked_conn,
+                        &linked_tx,
                         linked_file_id,
                         tag_id,
                         if value.is_empty() { None } else { Some(value) },

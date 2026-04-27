@@ -293,6 +293,9 @@ pub struct AssignSubjectRequest {
     pub path: String,
     /// Subject name to assign.
     pub subject: String,
+    /// Conflict handling for an existing bare tag with the subject name.
+    /// Supported values: `"add"` (default) or `"reassign"`.
+    pub mode: Option<String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }

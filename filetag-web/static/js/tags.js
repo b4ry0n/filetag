@@ -358,8 +358,7 @@ function toggleSubjectPick(subjectName) {
 }
 
 async function doSubjectSearch(subject) {
-    // Subjectnamen zijn altijd veilig, nooit quoten.
-    const q = 'subject:' + subject;
+    const q = 'subject:' + quoteQueryToken(subject);
     // Toggle: clicking an already-active subject clears the search.
     if (state.mode === 'search' && state.searchQuery === q) {
         doClearSearch();
@@ -369,6 +368,11 @@ async function doSubjectSearch(subject) {
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
     render();
+}
+
+function quoteQueryToken(value) {
+    if (/^[A-Za-z0-9_./:*:-]+$/.test(value)) return value;
+    return '"' + String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
 async function applySubjectToSelection(subjectName) {
@@ -617,22 +621,85 @@ async function subjectDrop(event, subjectName) {
     if (!raw) return;
     const paths = JSON.parse(raw);
     const dir = currentAbsDir();
+    let assigned = 0;
     for (const p of paths) {
-        const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
-        const tags = data?.tags || [];
-        if (!tags.length) continue;
-        await Promise.all(tags.map(t =>
-            apiPost('/api/tag', {
-                path: p,
-                tags: [t.value ? `${t.name}=${t.value}` : t.name],
+        let data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
+        if (!data) {
+            data = await api('/api/file?' + new URLSearchParams({ path: p }) + dirParam('&')).catch(() => null);
+        }
+
+        const bareSubjectTag = (data?.tags || []).some(t =>
+            t.name === subjectName && !t.value && !t.subject
+        );
+        let mode = 'add';
+        if (bareSubjectTag) {
+            const choice = await showSubjectConflictDialog({
+                file: p.split('/').pop(),
+                tag: subjectName,
                 subject: subjectName,
-                dir,
-            })
-        ));
+            });
+            if (!choice) continue;
+            mode = choice;
+        }
+
+        await apiPost('/api/assign-subject', {
+            path: p,
+            subject: subjectName,
+            mode,
+            dir,
+        });
+        assigned += 1;
     }
-    showToast(`Assigned subject "${subjectName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
+    showToast(`Assigned subject "${subjectName}" to ${assigned} file${assigned === 1 ? '' : 's'}.`);
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    await loadTags();
     renderDetailTagsOnly();
+    renderTags();
+    _updateCardTagBadges();
+}
+
+function showSubjectConflictDialog({ file, tag, subject }) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'subject-conflict-overlay';
+        overlay.innerHTML = `
+            <div class="subject-conflict-dialog" role="dialog" aria-modal="true">
+                <div class="subject-conflict-title">${esc(t('subject.conflict-title'))}</div>
+                <div class="subject-conflict-body">${esc(t('subject.conflict-body', { tag, file }))}</div>
+                <div class="subject-conflict-actions">
+                    <button class="subject-conflict-btn btn-primary" data-choice="reassign">
+                        ${esc(t('subject.conflict-reassign'))}
+                        <span class="subject-conflict-hint">${esc(t('subject.conflict-reassign-hint', { subject }))}</span>
+                    </button>
+                    <button class="subject-conflict-btn" data-choice="add">
+                        ${esc(t('subject.conflict-add'))}
+                        <span class="subject-conflict-hint">${esc(t('subject.conflict-add-hint', { subject }))}</span>
+                    </button>
+                    <button class="subject-conflict-btn btn-cancel" data-choice="">
+                        ${esc(t('subject.conflict-cancel'))}
+                    </button>
+                </div>
+            </div>
+        `;
+        const close = choice => {
+            document.removeEventListener('keydown', onKeyDown);
+            overlay.remove();
+            resolve(choice || null);
+        };
+        const onKeyDown = e => {
+            if (e.key === 'Escape') close(null);
+            if (e.key === 'Enter') close('reassign');
+        };
+        overlay.addEventListener('click', e => {
+            if (e.target === overlay) close(null);
+        });
+        overlay.querySelectorAll('[data-choice]').forEach(btn => {
+            btn.addEventListener('click', () => close(btn.dataset.choice));
+        });
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(overlay);
+        overlay.querySelector('[data-choice="reassign"]')?.focus();
+    });
 }
 
 function startTagRename(tagName) {

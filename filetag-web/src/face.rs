@@ -25,9 +25,10 @@
 //!
 //! **Licence note:** InsightFace models are for non-commercial research only.
 
+use std::collections::HashSet;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     body::Body,
@@ -42,7 +43,9 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tract_onnx::prelude::*;
 
-use crate::state::{AppError, AppState, open_conn, open_for_file_op, root_for_dir};
+use crate::state::{
+    AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
+};
 use crate::types::{
     ApiFaceDetection, ApiFaceResult, FaceAnalyseBatchRequest, FaceAnalyseRequest,
     FaceAssignRequest, FaceClusterRequest, FaceConfigRequest, FaceConfigResponse,
@@ -359,6 +362,8 @@ pub struct FaceModels {
     pub embedder: OnnxModel,
 }
 
+static FACE_MODEL_CACHE: Mutex<Option<Arc<FaceModels>>> = Mutex::new(None);
+
 /// Load and optimise both models from disk.
 ///
 /// This is expensive (~100 ms per model) and should only be called once, then
@@ -390,6 +395,20 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         .into_runnable()?;
 
     Ok(FaceModels { detector, embedder })
+}
+
+fn load_models_cached() -> anyhow::Result<Arc<FaceModels>> {
+    if let Some(models) = FACE_MODEL_CACHE.lock().unwrap().clone() {
+        return Ok(models);
+    }
+
+    let loaded = Arc::new(load_models()?);
+    let mut guard = FACE_MODEL_CACHE.lock().unwrap();
+    if let Some(models) = guard.as_ref() {
+        return Ok(models.clone());
+    }
+    *guard = Some(loaded.clone());
+    Ok(loaded)
 }
 
 // ---------------------------------------------------------------------------
@@ -1134,12 +1153,39 @@ fn load_image(abs: &Path) -> anyhow::Result<DynamicImage> {
 /// Render a JPEG crop of a face detection and return it as bytes.
 pub fn face_crop_jpeg(abs: &Path, x: i32, y: i32, w: i32, h: i32) -> anyhow::Result<Vec<u8>> {
     let img = load_image(abs)?;
+    face_crop_jpeg_from_image(img, x, y, w, h)
+}
+
+fn face_crop_jpeg_from_image(
+    img: DynamicImage,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> anyhow::Result<Vec<u8>> {
     let crop = img.crop_imm(x.max(0) as u32, y.max(0) as u32, w as u32, h as u32);
     // Thumbnail at most 200×200 while maintaining aspect ratio.
     let thumb = crop.thumbnail(200, 200);
     let mut buf = Vec::new();
     thumb.write_to(&mut Cursor::new(&mut buf), ImageFormat::Jpeg)?;
     Ok(buf)
+}
+
+fn face_crop_jpeg_for_rel(
+    root: &Path,
+    rel_path: &str,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> anyhow::Result<Vec<u8>> {
+    if let Some((zip_rel, entry_name)) = rel_path.split_once("::") {
+        let zip_abs = root.join(zip_rel);
+        let (bytes, _) = crate::archive::archive_read_entry(&zip_abs, entry_name)?;
+        let img = image::load_from_memory(&bytes)?;
+        return face_crop_jpeg_from_image(img, x, y, w, h);
+    }
+    face_crop_jpeg(&root.join(rel_path), x, y, w, h)
 }
 
 // ---------------------------------------------------------------------------
@@ -1219,14 +1265,14 @@ pub async fn api_face_analyse(
     let (conn, eff_root, rel) = open_for_file_op(root_entry, &req.path)?;
     let cfg = load_face_config(&conn);
 
-    let models = tokio::task::spawn_blocking(load_models)
+    let models = tokio::task::spawn_blocking(load_models_cached)
         .await
         .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
         .map_err(AppError)?;
 
     let rel_clone = rel.clone();
     let rows = tokio::task::spawn_blocking(move || {
-        analyse_file_sync(&conn, &eff_root, &rel_clone, &models, &cfg)
+        analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg)
     })
     .await
     .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
@@ -1252,10 +1298,9 @@ fn analyse_file_sync(
     cfg: &FaceConfig,
 ) -> anyhow::Result<Vec<db::FaceDetectionRow>> {
     // Determine the file record, handling archive entries separately.
-    let file_rec = if let Some((zip_rel, entry_name)) = rel.split_once("::") {
+    let file_rec = if rel.contains("::") {
         // Virtual archive path.  Index via the archive-entry helper.
-        let virtual_path = format!("{}::{}", root.join(zip_rel).to_string_lossy(), entry_name);
-        db::get_or_index_archive_entry(conn, &virtual_path)?
+        db::get_or_index_archive_entry(conn, rel)?
     } else {
         let abs = root.join(rel);
         db::get_or_index_file(conn, rel, root).or_else(|_| {
@@ -1335,12 +1380,11 @@ pub async fn api_face_analyse_batch(
     let dir_abs = std::fs::canonicalize(&req.dir)
         .map_err(|e| AppError(anyhow::anyhow!("invalid dir: {e}")))?;
     let root_path = root_entry.root.clone();
-    let db_path = root_entry.db_path.clone();
     let recursive = req.recursive;
     let state_clone = state.clone();
 
     tokio::task::spawn(async move {
-        if let Err(e) = run_batch(state_clone, root_path, db_path, dir_abs, recursive).await {
+        if let Err(e) = run_batch(state_clone, root_path, dir_abs, recursive).await {
             eprintln!("[face] batch error: {e:#}");
         }
     });
@@ -1351,12 +1395,10 @@ pub async fn api_face_analyse_batch(
 async fn run_batch(
     state: Arc<AppState>,
     root: PathBuf,
-    db_path: PathBuf,
     dir: PathBuf,
     recursive: bool,
 ) -> anyhow::Result<()> {
-    let models = tokio::task::spawn_blocking(load_models).await??;
-    let models = Arc::new(models);
+    let models = tokio::task::spawn_blocking(load_models_cached).await??;
 
     let files = collect_images(&dir, recursive);
     let total = files.len();
@@ -1364,6 +1406,8 @@ async fn run_batch(
         let mut p = state.face_progress.lock().unwrap();
         p.total = total;
     }
+
+    let mut touched_roots = HashSet::new();
 
     for (idx, abs) in files.into_iter().enumerate() {
         {
@@ -1373,25 +1417,23 @@ async fn run_batch(
 
         let abs_c = abs.clone();
         let root_c = root.clone();
-        let db_path_c = db_path.clone();
         let models_c = models.clone();
 
-        let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let conn = Connection::open(&db_path_c)?;
-            conn.execute_batch(
-                "PRAGMA journal_mode = WAL;
-                 PRAGMA foreign_keys = ON;
-                 PRAGMA busy_timeout = 5000;",
-            )?;
-            let cfg = load_face_config(&conn);
-            let rel = abs_c
+        let touched = tokio::task::spawn_blocking(move || -> anyhow::Result<PathBuf> {
+            let rel_from_entry_root = abs_c
                 .strip_prefix(&root_c)
                 .map(|r| r.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| abs_c.to_string_lossy().into_owned());
-            analyse_file_sync(&conn, &root_c, &rel, &models_c, &cfg)?;
-            Ok(())
+            let (conn, effective_root, rel) =
+                open_for_file_op_under(&root_c, &rel_from_entry_root)?;
+            let cfg = load_face_config(&conn);
+            analyse_file_sync(&conn, &effective_root, &rel, models_c.as_ref(), &cfg)?;
+            Ok(effective_root)
         })
         .await;
+        if let Ok(Ok(effective_root)) = touched {
+            touched_roots.insert(effective_root);
+        }
 
         {
             let mut p = state.face_progress.lock().unwrap();
@@ -1399,18 +1441,15 @@ async fn run_batch(
         }
     }
 
-    // Re-cluster after all detections are in.
-    let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
-        let conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA foreign_keys = ON;
-             PRAGMA busy_timeout = 5000;",
-        )?;
-        let cfg = load_face_config(&conn);
-        cluster_and_assign(&conn, &cfg)
-    })
-    .await;
+    // Re-cluster each database that received detections.
+    for effective_root in touched_roots {
+        let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
+            let (conn, _) = db::open_root_db(&effective_root)?;
+            let cfg = load_face_config(&conn);
+            cluster_and_assign(&conn, &cfg)
+        })
+        .await;
+    }
 
     {
         let mut p = state.face_progress.lock().unwrap();
@@ -1498,12 +1537,13 @@ pub async fn api_face_thumbnail(
     let (x, y, w, h, rel_path) =
         row.ok_or_else(|| AppError(anyhow::anyhow!("detection not found")))?;
 
-    let abs = root_entry.root.join(&rel_path);
+    let root = root_entry.root.clone();
 
-    let jpeg = tokio::task::spawn_blocking(move || face_crop_jpeg(&abs, x, y, w, h))
-        .await
-        .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
-        .map_err(AppError)?;
+    let jpeg =
+        tokio::task::spawn_blocking(move || face_crop_jpeg_for_rel(&root, &rel_path, x, y, w, h))
+            .await
+            .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
+            .map_err(AppError)?;
 
     Ok(([(header::CONTENT_TYPE, "image/jpeg")], Body::from(jpeg)).into_response())
 }

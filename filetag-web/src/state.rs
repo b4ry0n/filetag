@@ -158,13 +158,28 @@ pub fn resolve_names(names: Vec<String>) -> Vec<String> {
 // Error handling
 // ---------------------------------------------------------------------------
 
-/// [`anyhow::Error`] wrapper that converts to an HTTP 500 JSON response.
+/// [`anyhow::Error`] wrapper that converts to a JSON response.
 pub struct AppError(pub anyhow::Error);
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let body = serde_json::json!({ "error": self.0.to_string() });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+        let msg = self.0.to_string();
+        let lower = msg.to_ascii_lowercase();
+        let status = if lower.contains("not found") || lower.contains("no database loaded") {
+            StatusCode::NOT_FOUND
+        } else if lower.contains("dir ")
+            || lower.contains("invalid ")
+            || lower.contains("unknown root")
+            || lower.contains("not within any loaded database root")
+            || lower.contains("must ")
+            || lower.contains("parameter is required")
+        {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        let body = serde_json::json!({ "error": msg });
+        (status, Json(body)).into_response()
     }
 }
 
@@ -256,10 +271,18 @@ pub fn open_for_file_op_under(
 /// a given path. All API handlers that need to access `.filetag/` data call
 /// this function. No other root-resolution functions exist.
 pub fn root_for_dir<'a>(state: &'a AppState, abs: &Path) -> Option<&'a TagRoot> {
+    let abs_path = abs.canonicalize().unwrap_or_else(|_| abs.to_path_buf());
+    let abs_vol = db::volume_id(&abs_path);
     state
         .roots
         .iter()
-        .filter(|r| abs.starts_with(&r.root))
+        .filter(|r| {
+            let vol_match = match (abs_vol, r.dev) {
+                (Some(av), Some(rv)) => av == rv,
+                _ => true,
+            };
+            vol_match && abs_path.starts_with(&r.root)
+        })
         .max_by_key(|r| r.root.as_os_str().len())
 }
 

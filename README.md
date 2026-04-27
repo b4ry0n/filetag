@@ -378,7 +378,7 @@ At startup it loads the primary database, all explicitly linked child databases,
 
 Use `--no-scan` to skip that recursive discovery step and start faster. With `--no-scan`, the session includes only the primary database, explicitly linked child databases, and any ancestor databases that are still enabled.
 
-The reason for this difference: in the web interface the user browses the full directory tree and expects that what they can see they can also search and tag consistently. Tags always land in the most specific database for a file (the innermost `.filetag/` that covers it), and searches cover all loaded databases, so browsing, tagging, and searching are always in sync.
+The reason for this difference: in the web interface the user browses the full directory tree and expects writes to land in the right place. Tags always land in the most specific database for a file (the innermost `.filetag/` that covers it). Search, tag, and subject sidebars are evaluated for the active database root selected by the current directory.
 
 The CLI does not scan automatically because it operates from a working directory and follows explicit intent: unexpected databases in unrelated sub-trees would be surprising there.
 

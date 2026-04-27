@@ -48,7 +48,7 @@ filetag/
 
 ### filetag-web
 
-`src/main.rs` — axum 0.7 web server. JSON REST API + embedded static files (`include_str!`). Frontend is vanilla HTML/CSS/JS in `static/`.
+`src/main.rs` — axum web server. JSON REST API + embedded static files (`include_str!`). Frontend is vanilla HTML/CSS/JS in `static/`.
 
 ## Database schema
 
@@ -72,26 +72,48 @@ file_tags (
     file_id    INTEGER REFERENCES files(id) ON DELETE CASCADE,
     tag_id     INTEGER REFERENCES tags(id)  ON DELETE CASCADE,
     value      TEXT NOT NULL DEFAULT '',    -- empty string = no value
+    subject    TEXT NOT NULL DEFAULT '',    -- empty string = no subject
     created_at TEXT,
-    PRIMARY KEY (file_id, tag_id, value)
+    PRIMARY KEY (file_id, tag_id, value, subject)
 )
 
-linked_databases (
-    id   INTEGER PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE   -- relative to this database's root
+subjects (name TEXT PRIMARY KEY)
+
+subject_tags (
+    subject    TEXT NOT NULL,
+    tag_id     INTEGER REFERENCES tags(id) ON DELETE CASCADE,
+    value      TEXT NOT NULL DEFAULT '',
+    created_at TEXT,
+    PRIMARY KEY (subject, tag_id, value)
 )
 
-settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL DEFAULT ''
+tag_synonyms (
+    alias        TEXT PRIMARY KEY,
+    canonical_id INTEGER REFERENCES tags(id) ON DELETE CASCADE
+)
+
+linked_databases (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE)
+settings         (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')
+
+face_detections (
+    id           INTEGER PRIMARY KEY,
+    file_id      INTEGER REFERENCES files(id) ON DELETE CASCADE,
+    x            INTEGER NOT NULL,
+    y            INTEGER NOT NULL,
+    w            INTEGER NOT NULL,
+    h            INTEGER NOT NULL,
+    confidence   REAL NOT NULL,
+    embedding    BLOB,
+    subject_name TEXT,
+    detected_at  TEXT
 )
 ```
 
-Schema version 6. Migrations: v1→v2 adds `child_databases`; v2→v3 adds `file_id`, removes `blake3`; v3→v4 adds `color` to `tags`; v4→v5 renames `child_databases` to `linked_databases` and `rel_path` to `path`; v5→v6 adds `settings` table.
+Schema version 11. Migrations are forward-only in `filetag-lib/src/db.rs`.
 
 ## Core principles
 
-- **Data isolation:** filetag MUST NEVER write outside the `.filetag/` directory of the active database root. This applies to all temporary files, caches, logs, and any other artefacts. System directories such as `std::env::temp_dir()`, `$TMPDIR`, `/tmp`, or `~/.cache` are forbidden. All intermediate and cached files go under `.filetag/` (e.g. `.filetag/cache/`, `.filetag/tmp/`).
+- **Data isolation:** root-derived artefacts (temporary files, previews, caches) stay under the active database root's `.filetag/` directory. Explicit user outputs such as `view --output`, the global registry, and shared face models are documented exceptions.
 - **Read-only towards your files:** filetag never modifies, moves, or deletes the files it describes. It only reads them to collect metadata.
 
 ## Key design decisions

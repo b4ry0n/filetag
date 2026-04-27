@@ -1038,7 +1038,8 @@ pub async fn thumb_handler(
     match ext.as_str() {
         // ZIP/CBZ/RAR/CBR/7z/CB7: thumbnail = first image page, resized
         "zip" | "cbz" | "rar" | "cbr" | "7z" | "cb7" => {
-            thumb_cached(&abs, &cache_root, |abs| {
+            let root = cache_root.clone();
+            thumb_cached(&abs, &cache_root, move |abs| {
                 Box::pin(async move {
                     let abs2 = abs.to_path_buf();
                     let result = tokio::task::spawn_blocking(move || {
@@ -1046,7 +1047,7 @@ pub async fn thumb_handler(
                     })
                     .await;
                     if let Ok(Ok(img_bytes)) = result {
-                        thumb_from_raw_bytes(&img_bytes, abs, features).await
+                        thumb_from_raw_bytes(&img_bytes, &root, features).await
                     } else {
                         None
                     }
@@ -1090,7 +1091,8 @@ pub async fn thumb_handler(
         // RAW / PSD / layered
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
-            thumb_cached(&abs, &cache_root, |abs| {
+            let root = cache_root.clone();
+            thumb_cached(&abs, &cache_root, move |abs| {
                 Box::pin(async move {
                     // raw_thumb_rust reads TIFF IFD0 orientation (tag 0x0112) correctly.
                     // Embedded JPEG previews in TIFF-family RAW files (ARW, NEF, CR2, …)
@@ -1101,7 +1103,7 @@ pub async fn thumb_handler(
                     }
                     // Fallback for formats not in RAW_THUMB_EXTS (PSD, XCF, CR3, EPS, …)
                     if let Some(full_jpeg) = raw_extract_jpeg(abs, features).await {
-                        thumb_from_raw_bytes(&full_jpeg, abs, features).await
+                        thumb_from_raw_bytes(&full_jpeg, &root, features).await
                     } else {
                         None
                     }
@@ -1112,10 +1114,9 @@ pub async fn thumb_handler(
 
         // PDF
         "pdf" => {
-            thumb_cached(&abs, &cache_root, |abs| {
-                Box::pin(
-                    async move { pdf_thumb_jpeg(abs, abs.parent().unwrap_or(abs), features).await },
-                )
+            let root = cache_root.clone();
+            thumb_cached(&abs, &cache_root, move |abs| {
+                Box::pin(async move { pdf_thumb_jpeg(abs, &root, features).await })
             })
             .await
         }
@@ -1189,9 +1190,12 @@ where
 /// Convert raw image bytes (e.g. from an archive or RAW extraction) into a
 /// thumbnail JPEG by writing to a temp file and calling `image_thumb_jpeg`.
 /// Falls back to the raw bytes if resizing fails.
-async fn thumb_from_raw_bytes(raw_bytes: &[u8], abs: &Path, features: Features) -> Option<Vec<u8>> {
-    let root = abs.parent()?;
-    let tmp_dir = root.join(".filetag").join("tmp");
+async fn thumb_from_raw_bytes(
+    raw_bytes: &[u8],
+    cache_root: &Path,
+    features: Features,
+) -> Option<Vec<u8>> {
+    let tmp_dir = cache_root.join(".filetag").join("tmp");
     let _ = tokio::fs::create_dir_all(&tmp_dir).await;
     let tmp = tmp_dir.join("thumb_src.jpg");
     if tokio::fs::write(&tmp, raw_bytes).await.is_ok() {
@@ -1576,7 +1580,7 @@ pub struct DirThumbsParams {
     dir: Option<String>,
 }
 
-/// `GET /api/dir-thumbs` — return a horizontal JPEG sprite sheet of 240 × 240
+/// `GET /api/dir-thumbs` — return a horizontal WebP sprite sheet of 240 × 240
 /// collage frames for a directory.
 ///
 /// Each frame is a 2 × 2 grid of file thumbnails from the directory.  The
@@ -1584,7 +1588,7 @@ pub struct DirThumbsParams {
 /// previewable files are found.  The client animates through frames on hover
 /// (same technique as video trickplay).
 ///
-/// Returns 204 when the directory contains fewer than 4 previewable files.
+/// Returns 204 when the directory contains no previewable files.
 pub async fn api_dir_thumbs(
     Query(params): Query<DirThumbsParams>,
     State(state): State<Arc<AppState>>,

@@ -127,6 +127,10 @@ fn tokenize(input: &str) -> Result<Vec<String>> {
             loop {
                 match chars.next() {
                     Some(c) if c == quote => break,
+                    Some('\\') => match chars.next() {
+                        Some(c) => word.push(c),
+                        None => bail!("unterminated escape in quoted string"),
+                    },
                     Some(c) => word.push(c),
                     None => bail!("unterminated quoted string"),
                 }
@@ -288,10 +292,20 @@ impl Parser {
 
         // subject:name filter
         if let Some(subj) = token.strip_prefix("subject:") {
+            let subj = if subj.is_empty() {
+                self.peek()
+                    .ok_or_else(|| anyhow::anyhow!("expected a subject name after 'subject:'"))?
+                    .to_string()
+            } else {
+                subj.to_string()
+            };
             if subj.is_empty() {
                 anyhow::bail!("expected a subject name after 'subject:'");
             }
-            return Ok(Expr::SubjectName(subj.to_string()));
+            if token == "subject:" {
+                self.advance();
+            }
+            return Ok(Expr::SubjectName(subj));
         }
 
         // Check for comparison operator
@@ -432,12 +446,14 @@ impl QueryBuilder {
                     )
                 } else {
                     let p1 = self.param(pattern);
+                    let p1_child = self.param(&format!("{pattern}/%"));
                     let p2 = self.param(pattern);
+                    let p2_child = self.param(&format!("{pattern}/%"));
                     format!(
                         "f.id IN (SELECT DISTINCT file_id FROM file_tags \
-                         WHERE subject = {p1} \
+                         WHERE subject = {p1} OR subject LIKE {p1_child} \
                          UNION SELECT DISTINCT file_id FROM face_detections \
-                         WHERE subject_name = {p2})"
+                         WHERE subject_name = {p2} OR subject_name LIKE {p2_child})"
                     )
                 }
             }
@@ -713,5 +729,11 @@ mod tests {
     fn parse_quoted_and() {
         let expr = parse("\"Extra models\" and 3D").unwrap();
         assert!(matches!(expr, Expr::And(_, _)));
+    }
+
+    #[test]
+    fn parse_quoted_subject_name() {
+        let expr = parse("subject:\"person/alice smith\"").unwrap();
+        assert!(matches!(expr, Expr::SubjectName(ref s) if s == "person/alice smith"));
     }
 }

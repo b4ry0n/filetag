@@ -264,6 +264,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/delete-subject", post(api::api_delete_subject))
         .route("/api/assign-subject", post(api::api_assign_subject))
         .route("/api/clone-subject", post(api::api_clone_subject))
+        .route("/api/subject/tags", get(api::api_subject_tags))
+        .route("/api/subject/add-tag", post(api::api_subject_add_tag))
+        .route("/api/subject/remove-tag", post(api::api_subject_remove_tag))
         .route("/api/subject/props", get(api::api_subject_props))
         .route("/api/subject/set-prop", post(api::api_subject_set_prop))
         .route(

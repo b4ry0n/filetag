@@ -3,7 +3,7 @@
 //! All JSON-returning handlers follow the pattern:
 //! - Resolve the active root via [`root_from_dir`] (from the `dir` query / body field).
 //! - For file operations, open the correct child database via [`open_for_file_op`].
-//! - Return `Result<Json<…>, AppError>` so errors become HTTP 500 responses.
+//! - Return `Result<Json<…>, AppError>` so errors become JSON HTTP responses.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -1186,8 +1186,9 @@ pub async fn api_delete_subject(
     Ok(Json(serde_json::json!({ "updated": updated })))
 }
 
-/// `POST /api/assign-subject` — assign a file to a subject by moving its
-/// unassigned file-tag rows (subject = '') to the given subject name.
+/// `POST /api/assign-subject` — assign a file to a subject by adding a
+/// same-named subject-scoped tag, or by reassigning an existing bare row when
+/// `mode = "reassign"`.
 pub async fn api_assign_subject(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AssignSubjectRequest>,
@@ -1202,7 +1203,13 @@ pub async fn api_assign_subject(
             .map_err(AppError)?
             .id
     };
-    let updated = db::assign_file_to_subject(&conn, file_id, &body.subject).map_err(AppError)?;
+    let updated = match body.mode.as_deref() {
+        Some("reassign") => {
+            db::reassign_file_tag_to_subject(&conn, file_id, &body.subject, &body.subject)
+                .map_err(AppError)?
+        }
+        _ => db::assign_file_to_subject(&conn, file_id, &body.subject).map_err(AppError)?,
+    };
     Ok(Json(serde_json::json!({ "updated": updated })))
 }
 
@@ -1230,6 +1237,45 @@ pub async fn api_subject_props(
             .map(|(tag, value)| serde_json::json!({ "tag": tag, "value": value }))
             .collect(),
     ))
+}
+
+/// `GET /api/subject/tags` — list file-level tags assigned under a subject.
+pub async fn api_subject_tags(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubjectPropsParams>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let rows = db::subject_file_tags(&conn, &params.name).map_err(AppError)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(value, count)| serde_json::json!({ "value": value, "count": count }))
+            .collect(),
+    ))
+}
+
+/// `POST /api/subject/add-tag` — add a tag to all files in a subject.
+pub async fn api_subject_add_tag(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SubjectPropRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let inserted =
+        db::add_tag_to_subject_files(&conn, &body.subject, &body.tag).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "inserted": inserted })))
+}
+
+/// `POST /api/subject/remove-tag` — remove a tag from all files in a subject.
+pub async fn api_subject_remove_tag(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SubjectPropRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let removed =
+        db::remove_tag_from_subject_files(&conn, &body.subject, &body.tag).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
 /// `POST /api/subject/set-prop` — add a property to a subject entity.

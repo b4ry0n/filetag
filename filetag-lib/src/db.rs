@@ -1,7 +1,7 @@
 //! Database layer: initialisation, schema migration, and all CRUD operations.
 //!
 //! Each filetag database lives at `<root>/.filetag/db.sqlite3`. The current
-//! schema version is 8.
+//! schema version is 11.
 
 use std::path::{Path, PathBuf};
 
@@ -274,7 +274,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         )?
     }
     if version < 11 {
-        // Face detection results: bounding box, confidence, 128-dim embedding,
+        // Face detection results: bounding box, confidence, 512-dim embedding,
         // and optional subject assignment.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS face_detections (
@@ -538,6 +538,11 @@ pub fn apply_tag(
     value: Option<&str>,
     subject: Option<&str>,
 ) -> Result<()> {
+    if let Some(subject) = subject
+        && !subject.is_empty()
+    {
+        create_subject(conn, subject)?;
+    }
     conn.execute(
         "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject) VALUES (?1, ?2, ?3, ?4)",
         params![file_id, tag_id, value.unwrap_or(""), subject.unwrap_or("")],
@@ -763,22 +768,47 @@ pub fn delete_subject(conn: &Connection, name: &str) -> Result<usize> {
     Ok(n)
 }
 
-/// Assign a file to a subject by moving all its unassigned file_tag rows
-/// (subject = '') to `subject_name`.  Returns the number of rows updated.
+/// Assign a file to a subject by adding/reusing a tag with the same name as the
+/// subject and applying it under that subject. Returns the number of rows added.
 pub fn assign_file_to_subject(
     conn: &Connection,
     file_id: i64,
     subject_name: &str,
 ) -> Result<usize> {
-    conn.execute(
-        "INSERT OR IGNORE INTO subjects (name) VALUES (?1)",
-        params![subject_name],
-    )?;
+    create_subject(conn, subject_name)?;
+    let tag_id = get_or_create_tag(conn, subject_name)?;
     let n = conn.execute(
-        "UPDATE file_tags SET subject = ?1 WHERE file_id = ?2 AND subject = ''",
-        params![subject_name, file_id],
+        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject) VALUES (?1, ?2, '', ?3)",
+        params![file_id, tag_id, subject_name],
     )?;
     Ok(n)
+}
+
+/// Reassign an existing bare tag row for `tag_name` on `file_id` to `subject`.
+/// Returns the number of rows updated.
+pub fn reassign_file_tag_to_subject(
+    conn: &Connection,
+    file_id: i64,
+    tag_name: &str,
+    subject: &str,
+) -> Result<usize> {
+    create_subject(conn, subject)?;
+    let n = conn.execute(
+        "UPDATE OR IGNORE file_tags
+         SET subject = ?1
+         WHERE file_id = ?2
+           AND tag_id = (SELECT id FROM tags WHERE name = ?3)
+           AND subject = ''",
+        params![subject, file_id, tag_name],
+    )?;
+    let deleted = conn.execute(
+        "DELETE FROM file_tags
+         WHERE file_id = ?1
+           AND tag_id = (SELECT id FROM tags WHERE name = ?2)
+           AND subject = ''",
+        params![file_id, tag_name],
+    )?;
+    Ok(n + deleted)
 }
 
 /// Clone a subject: insert copies of all file_tags and subject_tags rows for
@@ -853,6 +883,56 @@ pub fn get_subject_props(conn: &Connection, subject: &str) -> Result<Vec<(String
         result.push(row?);
     }
     Ok(result)
+}
+
+/// Return file-level tags that are assigned under a subject as `(tag_name, count)`.
+pub fn subject_file_tags(conn: &Connection, subject: &str) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.name, COUNT(DISTINCT ft.file_id)
+         FROM file_tags ft
+         JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.subject = ?1
+         GROUP BY t.id
+         ORDER BY t.name",
+    )?;
+    let rows = stmt.query_map(params![subject], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+/// Add `tag_name` to every file currently belonging to `subject`.
+/// The added rows remain scoped to the same subject.
+pub fn add_tag_to_subject_files(conn: &Connection, subject: &str, tag_name: &str) -> Result<usize> {
+    create_subject(conn, subject)?;
+    let tag_id = get_or_create_tag(conn, tag_name)?;
+    let n = conn.execute(
+        "INSERT OR IGNORE INTO file_tags (file_id, tag_id, value, subject)
+         SELECT DISTINCT file_id, ?1, '', ?2
+         FROM file_tags
+         WHERE subject = ?2",
+        params![tag_id, subject],
+    )?;
+    Ok(n)
+}
+
+/// Remove `tag_name` from all files where it is assigned under `subject`.
+pub fn remove_tag_from_subject_files(
+    conn: &Connection,
+    subject: &str,
+    tag_name: &str,
+) -> Result<usize> {
+    let n = conn.execute(
+        "DELETE FROM file_tags
+         WHERE subject = ?1
+           AND tag_id = (SELECT id FROM tags WHERE name = ?2)",
+        params![subject, tag_name],
+    )?;
+    Ok(n)
 }
 
 /// Add (or silently ignore if already present) a property to a subject entity.

@@ -48,8 +48,10 @@ let _kbCursor = -1;          // keyboard navigation cursor (-1 = none)
 async function api(url) {
     const res = await fetch(url);
     if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || res.statusText);
+        const text = await res.text().catch(() => '');
+        let body = {};
+        try { body = text ? JSON.parse(text) : {}; } catch (_) { /* plain text */ }
+        throw new Error(body.error || text || res.statusText);
     }
     return res.json();
 }
@@ -61,8 +63,10 @@ async function apiPost(url, body) {
         body: JSON.stringify(body),
     });
     if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        throw new Error(b.error || res.statusText);
+        const text = await res.text().catch(() => '');
+        let body = {};
+        try { body = text ? JSON.parse(text) : {}; } catch (_) { /* plain text */ }
+        throw new Error(body.error || text || res.statusText);
     }
     return res.json();
 }
