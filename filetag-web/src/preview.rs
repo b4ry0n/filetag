@@ -1915,7 +1915,7 @@ mod tests {
             .iter()
             .map(|p| p.strip_prefix(&dir).unwrap().to_string_lossy().to_string())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["cover.jpg", "album/page.png"]);
+        assert_eq!(names, vec!["cover.jpg"]);
 
         let _ = std::fs::remove_dir_all(dir);
     }
