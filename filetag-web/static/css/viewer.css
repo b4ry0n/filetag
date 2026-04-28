@@ -1,3 +1,30 @@
+
+.card.selected .card-body, .card.selected .card-meta {
+    background: rgba(51, 138, 252, 0.38) !important;
+    color: #f3f6fa !important;
+    text-shadow: 0 1px 2px #000a;
+    border-radius: 0 0 12px 12px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.card.selected .card-name {
+    color: #eaf2ff !important;
+    text-shadow: 0 1px 2px #000b;
+}
+/* Extra opvallende selectie voor file grid/list */
+.card.selected, .list-row.selected {
+    border: 3px solid #338afc !important;
+    background: rgba(51,138,252,0.10) !important;
+    box-shadow: 0 0 0 2px #338afc33, 0 2px 8px rgba(51,138,252,0.10);
+    z-index: 2;
+    position: relative;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.card.selected .card-name, .list-row.selected .name {
+    color: #1560b3;
+    font-weight: 600;
+}
 /* ------------------------------------------------------------------ */
 /* Comic viewer                                                       */
 /* ------------------------------------------------------------------ */

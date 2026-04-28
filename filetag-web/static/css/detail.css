@@ -1,3 +1,8 @@
+.tag-input-wrap {
+    position: relative;
+    width: 100%;
+    display: flex;
+}
 /* ------------------------------------------------------------------ */
 /* Detail panel                                                       */
 /* ------------------------------------------------------------------ */
@@ -413,7 +418,10 @@
 }
 
 .tag-autocomplete {
-    position: fixed;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
     z-index: 9999;
     background: var(--bg-panel);
     border: 1px solid var(--border);
@@ -421,7 +429,7 @@
     box-shadow: 0 4px 14px rgba(0,0,0,0.14);
     list-style: none;
     padding: 4px 0;
-    margin: 0;
+    margin: 2px 0 0 0;
     max-height: 220px;
     overflow-y: auto;
 }

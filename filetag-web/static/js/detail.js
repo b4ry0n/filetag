@@ -867,8 +867,12 @@ function renderDetail() {
                 <div class="bulk-tag-chips" id="bulk-tag-chips">${chipsHtml}</div>` : ''}
                 <p class="bulk-section-label" style="margin-top:12px">${esc(t('bulk.add-label'))}</p>
                 <div class="tag-add-form">
-                    <input type="text" id="bulk-tag-input" placeholder="${esc(t('bulk.tag-input'))}">
-                    <input type="text" id="bulk-tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
+                    <div class="tag-input-wrap">
+                        <input type="text" id="bulk-tag-input" placeholder="${esc(t('bulk.tag-input'))}">
+                    </div>
+                    <div class="tag-input-wrap">
+                        <input type="text" id="bulk-tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
+                    </div>
                     <button onclick="doBulkAddTag()">${esc(t('bulk.add-btn'))}</button>
                 </div>
                 ${aiAcceptBulkBtn}
@@ -982,29 +986,29 @@ function renderDetail() {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
-        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
+        preview = `<a class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewImgError(this)"></a>`;
     } else if (type_ === 'raw') {
-        preview = `<a class="preview-zoomable" onclick="openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
+        preview = `<a class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
                   ` onerror="_previewRawError(this)"></a>`;
     } else if (type_ === 'audio') {
-        preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')"></audio>`;
+        preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></audio>`;
     } else if (type_ === 'video') {
         preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}"` +
-                  ` onerror="_previewVideoError(this)"></video>`;
+                  ` onerror="_previewVideoError(this)" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></video>`;
     } else if (type_ === 'pdf') {
-        preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}"></iframe>` +
+        preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></iframe>` +
                   `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${jesc(f.path)}','pdf')">Full-size PDF</button></div>`;
     } else if (type_ === 'markdown') {
-        preview = `<div class="preview-markdown" id="preview-md-content" ondblclick="openLightbox('${jesc(f.path)}','markdown')"` +
+        preview = `<div class="preview-markdown" id="preview-md-content" ondblclick="openLightbox('${jesc(f.path)}','markdown')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"` +
                   ` title="Double-click to enlarge">Loading…</div>`;
     } else if (type_ === 'text') {
-        preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${jesc(f.path)}','text')"` +
+        preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${jesc(f.path)}','text')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
-        preview = `<div class="zip-cover-wrap">
+        preview = `<div class="zip-cover-wrap" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);">
             <img src="/thumb/${encodePath(f.path)}${dirParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
             <button class="tag-action-btn" onclick="openMediaViewer('${jesc(f.path)}')">Open in viewer</button>
@@ -1020,8 +1024,12 @@ function renderDetail() {
 
     const tagAddSection = covered
         ? `<div class="tag-add-form">
-                <input type="text" id="tag-input" placeholder="${esc(t('detail.tag-add'))}">
-                <input type="text" id="tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
+                <div class="tag-input-wrap">
+                    <input type="text" id="tag-input" placeholder="${esc(t('detail.tag-add'))}">
+                </div>
+                <div class="tag-input-wrap">
+                    <input type="text" id="tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
+                </div>
                 <button onclick="doAddTag()">${esc(t('detail.tag-add-btn'))}</button>
             </div>`
         : `<div class="uncovered-notice">${esc(t('detail.uncovered'))}</div>`;

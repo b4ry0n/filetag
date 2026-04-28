@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 // Handles file selection (single and multi-select with shift/ctrl/cmd)
-function selectFile(path, event) {
+async function selectFile(path, event) {
     // Multi-select with Ctrl/Cmd
     if (event && (event.ctrlKey || event.metaKey)) {
         if (state.selectedPaths.has(path)) {
@@ -38,8 +38,9 @@ function selectFile(path, event) {
     state.selectedPaths.clear();
     state.selectedPaths.add(path);
     _lastClickedPath = path;
-    // Optionally load file detail for the selected file
-    loadFileDetail(path);
+    // Laad file detail en update info-panel direct
+    if (!state.detailOpen) state.detailOpen = true;
+    await loadFileDetail(path);
     _updateCardSelection();
     renderDetail();
 }

@@ -382,8 +382,6 @@ function attachTagAutocomplete(inputEl, submitFn) {
 
     inputEl.addEventListener('input', () => buildDropdown(getMatches(inputEl.value.trim())));
 
-    inputEl.addEventListener('focus', () => buildDropdown(getMatches(inputEl.value.trim())));
-
     inputEl.addEventListener('blur', () => setTimeout(closeDropdown, 150));
 
     inputEl.addEventListener('keydown', e => {
