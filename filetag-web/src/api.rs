@@ -813,14 +813,19 @@ pub async fn api_files(
         }
     }
 
+    // Combineer en sorteer entries volgens gewenst beleid: directories eerst, dan files, beide alfabetisch
     dirs.sort_by_key(|a| a.name.to_lowercase());
     files.sort_by_key(|a| a.name.to_lowercase());
-    dirs.extend(files);
+    let mut entries = Vec::with_capacity(dirs.len() + files.len());
+    entries.extend(dirs);
+    entries.extend(files);
+
+    // Toekomst: hier kan eenvoudig een andere sortering worden toegepast
 
     Ok(Json(ApiDirListing {
         path: db_rel,
         root_path: db_root.root.display().to_string(),
-        entries: dirs,
+        entries,
     }))
 }
 

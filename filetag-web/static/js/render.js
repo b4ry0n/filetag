@@ -112,7 +112,10 @@ function startRootRename(rootPath, el) {
 
 function renderGrid(items) {
     let html = '';
-    for (const entry of items) {
+    // Render eerst alle directories, daarna alle files (DOM-volgorde = previewqueue-volgorde)
+    const files = items.filter(e => !e.is_dir);
+    const dirs  = items.filter(e =>  e.is_dir);
+    for (const entry of [...dirs, ...files]) {
         const isDir = entry.is_dir;
         const name = isDir ? entry.name : (entry.name || entry.path.split('/').pop());
         const path = isDir ? null : fullPath(entry);
@@ -201,6 +204,43 @@ function renderGrid(items) {
     }
     return html;
 }
+
+// Poll voor ontbrekende directory previews en update de kaarten zodra de preview beschikbaar is
+function pollDirPreviews() {
+    const dirCards = document.querySelectorAll('.card.folder .card-icon[data-thumb-src]');
+    let anyPending = false;
+    dirCards.forEach(cardIcon => {
+        const thumbUrl = cardIcon.getAttribute('data-thumb-src');
+        if (!thumbUrl) return;
+        // Alleen pollen als er nog geen sprite aanwezig is
+        if (cardIcon.querySelector('.card-dir-sprite')) return;
+        anyPending = true;
+        fetch(thumbUrl)
+            .then(resp => {
+                if (resp.ok && resp.headers.get('content-type')?.startsWith('image/')) {
+                    resp.blob().then(blob => {
+                        const blobUrl = URL.createObjectURL(blob);
+                        // Gebruik de bestaande thumbReplace logica voor correcte animatie/hover
+                        if (typeof window._thumbReplace === 'function') {
+                            window._thumbReplace(cardIcon, blobUrl);
+                        }
+                    });
+                }
+            });
+    });
+    // Blijf pollen zolang er kaarten zonder img zijn, of als er nieuwe kaarten verschijnen
+    if (anyPending) {
+        setTimeout(pollDirPreviews, 1200);
+    }
+}
+
+// Start polling na elke render
+const origRender = window.render;
+window.render = function(...args) {
+    const result = origRender.apply(this, args);
+    setTimeout(pollDirPreviews, 200);
+    return result;
+};
 
 // ---------------------------------------------------------------------------
 // Render: File list
@@ -439,7 +479,7 @@ function renderContent() {
     }
 
     // For search results, transform to match grid/list entry format
-    const displayItems = state.mode === 'search'
+    let displayItems = state.mode === 'search'
         ? items.map(r => ({
             name: r.path.split('/').pop(),
             path: r.path,
@@ -450,6 +490,8 @@ function renderContent() {
         }))
         : items;
 
+
+
     if (state.viewMode === 'grid') {
         el.className = 'file-grid';
         el.innerHTML = renderGrid(displayItems);
@@ -457,6 +499,8 @@ function renderContent() {
         el.className = 'file-list';
         el.innerHTML = renderList(displayItems);
     }
+    // Start polling na elke content render
+    setTimeout(pollDirPreviews, 200);
 
     // Entry count
     const dirs = displayItems.filter(e => e.is_dir).length;

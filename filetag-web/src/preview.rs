@@ -1242,7 +1242,16 @@ fn list_previewable_files(dir: &Path) -> Vec<PathBuf> {
             files.push(path);
         }
     }
-    files.sort();
+    // Sorteer: gewone bestanden/archieven vóór directories (voor batch preview)
+    files.sort_by(|a, b| {
+        let a_is_dir = a.is_dir();
+        let b_is_dir = b.is_dir();
+        match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => a.cmp(b),
+        }
+    });
     files
 }
 
@@ -1779,83 +1788,73 @@ pub async fn api_dir_thumbs(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // Check cache before acquiring the permit.
+    // Check cache before starting background generation.
     if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root, &files, features) {
         if let Ok(data) = tokio::fs::read(&cache_path).await {
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
-        // --- Build the sprite sheet ---
-        let _permit = match THUMB_LIMITER.try_acquire() {
-            Ok(p) => p,
-            Err(_) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
-            }
-        };
-
-        // Double-check after acquiring the permit.
-        if let Ok(data) = tokio::fs::read(&cache_path).await {
-            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
-        }
-
-        const IMAGES_PER_FRAME: usize = 4;
-        const MAX_FRAMES: usize = 6;
-        const MAX_ITEMS: usize = MAX_FRAMES * IMAGES_PER_FRAME;
-
-        // Temp directory for intermediate thumbnail + frame files.
-        let tmp_dir = cache_root
-            .join(".filetag")
-            .join("tmp")
-            .join(format!("dpt_{}", rand_hex()));
-        if tokio::fs::create_dir_all(&tmp_dir).await.is_err() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "tmp dir failed").into_response();
-        }
-
-        // First collect actual generated thumbnails, not merely files with a
-        // previewable extension. Some candidates can fail (corrupt files,
-        // disabled PDF/video support, archive without images, unsupported RAW).
-        let mut item_thumb_paths: Vec<PathBuf> = Vec::new();
-        for idx in preview_candidate_order(files.len(), MAX_ITEMS) {
-            if item_thumb_paths.len() >= MAX_ITEMS {
-                break;
-            }
-            let item_path = &files[idx];
-            if let Some(jpeg) = dir_item_jpeg(item_path, &cache_root, features).await {
-                let tp = tmp_dir.join(format!("item{}.jpg", item_thumb_paths.len()));
-                if tokio::fs::write(&tp, &jpeg).await.is_ok() {
-                    item_thumb_paths.push(tp);
+        // Start background generation if not already running.
+        // Use a lock file to avoid duplicate work (best-effort, not perfect).
+        let lock_path = cache_path.with_extension(".lock");
+        let already_running = tokio::fs::try_exists(&lock_path).await.unwrap_or(false);
+        if !already_running {
+            // Create lock file (best-effort, ignore errors)
+            let _ = tokio::fs::write(&lock_path, b"generating").await;
+            let cache_root = cache_root.clone();
+            let files = files.clone();
+            let cache_path2 = cache_path.clone();
+            let features_bg = features;
+            tokio::spawn(async move {
+                const IMAGES_PER_FRAME: usize = 4;
+                const MAX_FRAMES: usize = 6;
+                const MAX_ITEMS: usize = MAX_FRAMES * IMAGES_PER_FRAME;
+                let tmp_dir = cache_root
+                    .join(".filetag")
+                    .join("tmp")
+                    .join(format!("dpt_{}", rand_hex()));
+                let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+                let mut item_thumb_paths: Vec<PathBuf> = Vec::new();
+                for idx in preview_candidate_order(files.len(), MAX_ITEMS) {
+                    if item_thumb_paths.len() >= MAX_ITEMS {
+                        break;
+                    }
+                    let item_path = &files[idx];
+                    if let Some(jpeg) = dir_item_jpeg(item_path, &cache_root, features_bg).await {
+                        let tp = tmp_dir.join(format!("item{}.jpg", item_thumb_paths.len()));
+                        if tokio::fs::write(&tp, &jpeg).await.is_ok() {
+                            item_thumb_paths.push(tp);
+                        }
+                    }
                 }
-            }
+                let mut frame_paths: Vec<PathBuf> = Vec::new();
+                for (frame_idx, group) in item_thumb_paths.chunks(IMAGES_PER_FRAME).enumerate() {
+                    if group.is_empty() {
+                        continue;
+                    }
+                    let frame_path = tmp_dir.join(format!("frame{frame_idx}.png"));
+                    if build_collage(group, &frame_path).await {
+                        frame_paths.push(frame_path);
+                    }
+                }
+                let result = if frame_paths.is_empty() {
+                    None
+                } else {
+                    stitch_dir_frames(&frame_paths).await
+                };
+                let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+                if let Some(data) = result {
+                    if let Some(parent) = cache_path2.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    let _ = tokio::fs::write(&cache_path2, &data).await;
+                }
+                // Remove lock file
+                let _ = tokio::fs::remove_file(&lock_path).await;
+            });
         }
-
-        let mut frame_paths: Vec<PathBuf> = Vec::new();
-        for (frame_idx, group) in item_thumb_paths.chunks(IMAGES_PER_FRAME).enumerate() {
-            if group.is_empty() {
-                continue;
-            }
-            let frame_path = tmp_dir.join(format!("frame{frame_idx}.png"));
-            if build_collage(group, &frame_path).await {
-                frame_paths.push(frame_path);
-            }
-        }
-
-        let result = if frame_paths.is_empty() {
-            None
-        } else {
-            stitch_dir_frames(&frame_paths).await
-        };
-
-        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
-
-        if let Some(data) = result {
-            if let Some(parent) = cache_path.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            let _ = tokio::fs::write(&cache_path, &data).await;
-            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
-        }
-
-        return StatusCode::NO_CONTENT.into_response();
+        // Geef aan dat de preview in de maak is
+        return (StatusCode::ACCEPTED, "directory preview wordt gegenereerd").into_response();
     }
 
     (StatusCode::INTERNAL_SERVER_ERROR, "cache path unavailable").into_response()
