@@ -1043,9 +1043,7 @@ function renderDetail() {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
-        preview = `<a class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
-                  `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
-                  ` onerror="_previewImgError(this)"></a>`;
+        preview = `<img class="detail-img-zoomable" src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}" onerror="_previewImgError(this)">`;
     } else if (type_ === 'raw') {
         preview = `<a class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
@@ -1142,6 +1140,8 @@ function renderDetail() {
                 </div>
             </div>
         </div>
+        // Activeer na elke render (ook na panel.innerHTML)
+        setTimeout(enableDetailPreviewZoomPan, 0);
         ${(type_ === 'image' || type_ === 'raw') ? '<div id="face-toolbar-row"></div>' : ''}
         </div>
         <div class="detail-v-handle" id="detail-v-handle"></div>
