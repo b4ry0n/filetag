@@ -1147,8 +1147,7 @@ function renderDetail() {
                 </div>
             </div>
         </div>
-        // Activeer na elke render (ook na panel.innerHTML)
-        setTimeout(enableDetailPreviewZoomPan, 0);
+        // ...existing code...
         ${(type_ === 'image' || type_ === 'raw') ? '<div id="face-toolbar-row"></div>' : ''}
         </div>
         <div class="detail-v-handle" id="detail-v-handle"></div>

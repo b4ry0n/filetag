@@ -1,7 +1,7 @@
 .meta-info-btn {
     position: absolute;
-    top: 10px;
     right: 10px;
+    bottom: 10px;
     z-index: 10;
     background: rgba(255,255,255,0.7);
     border: none;
@@ -17,6 +17,47 @@
 }
 .meta-info-btn:hover {
     background: rgba(200,200,200,0.9);
+}
+
+.meta-overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0 auto;
+    width: 96%;
+    max-width: 420px;
+    min-width: 220px;
+    background: rgba(30,30,30,0.97);
+    color: #fff;
+    border-radius: 10px 10px 0 0;
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.18);
+    padding: 12px 16px 10px 16px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    animation: metaOverlayIn 0.18s;
+}
+@keyframes metaOverlayIn {
+    from { transform: translateY(40px); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+}
+.meta-overlay-content {
+    width: 100%;
+    font-size: 0.98em;
+    line-height: 1.5;
+}
+.meta-overlay-close {
+    position: absolute;
+    top: 4px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.2em;
+    cursor: pointer;
+    z-index: 21;
 }
 .meta-overlay {
     position: absolute;
