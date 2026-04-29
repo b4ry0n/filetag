@@ -1,4 +1,64 @@
 // ---------------------------------------------------------------------------
+// Zoom & pan functionaliteit voor afbeelding in detail-preview
+// ---------------------------------------------------------------------------
+
+function enableDetailPreviewZoomPan() {
+    const preview = document.querySelector('.detail-preview');
+    if (!preview) return;
+    const img = preview.querySelector('img');
+    if (!img) return;
+    let zoom = 1;
+    let panX = 0, panY = 0;
+    let dragging = false, lastX = 0, lastY = 0;
+
+    function update() {
+        img.style.transform = `scale(${zoom}) translate(${panX/zoom}px,${panY/zoom}px)`;
+        img.style.cursor = zoom > 1 ? 'grab' : 'zoom-in';
+    }
+
+    img.addEventListener('dblclick', e => {
+        if (zoom === 1) {
+            zoom = 2;
+            img.style.cursor = 'grab';
+        } else {
+            zoom = 1; panX = 0; panY = 0;
+        }
+        update();
+    });
+
+    img.addEventListener('mousedown', e => {
+        if (zoom === 1) return;
+        dragging = true;
+        lastX = e.clientX; lastY = e.clientY;
+        img.style.cursor = 'grabbing';
+        e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        panX += e.clientX - lastX;
+        panY += e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        // Clamp zodat je niet buiten het frame kunt pannen
+        const rect = img.getBoundingClientRect();
+        const pRect = preview.getBoundingClientRect();
+        const maxX = Math.max(0, (rect.width - pRect.width) / 2);
+        const maxY = Math.max(0, (rect.height - pRect.height) / 2);
+        panX = Math.max(-maxX, Math.min(maxX, panX));
+        panY = Math.max(-maxY, Math.min(maxY, panY));
+        update();
+    });
+    window.addEventListener('mouseup', () => {
+        if (dragging) img.style.cursor = 'grab';
+        dragging = false;
+    });
+    // Reset bij nieuwe afbeelding
+    img.addEventListener('load', () => { zoom = 1; panX = 0; panY = 0; update(); });
+    update();
+}
+
+// Activeer na elke render
+setTimeout(enableDetailPreviewZoomPan, 0);
+// ---------------------------------------------------------------------------
 // Zip directory: open, refresh, helper, grid + list render
 // ---------------------------------------------------------------------------
 
