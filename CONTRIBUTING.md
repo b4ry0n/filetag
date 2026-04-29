@@ -162,3 +162,12 @@ Tokeniser supports quoted strings (`"Extra models"`, `'tag with spaces'`) for ta
 ## Commit style
 
 Plain imperative subject line: `Fix breadcrumb double slash`, `web: add detail panel toggle`. No conventional-commits prefix required except `web:` or `cli:` when the change is scoped to one binary.
+
+## Async best practices en locking
+
+- Gebruik altijd `tokio::task::spawn_blocking` voor CPU- of IO-bound taken die blocking zijn (zoals externe tools of zware bestandsoperaties).
+- Gebruik `tokio::sync::Mutex` of `std::sync::Mutex` alleen waar strikt noodzakelijk voor gedeelde state. Minimaliseer lock scope.
+- Vervang alle `.unwrap()`/`.expect()` op locks door `map_err` of `.ok()?` met duidelijke foutmelding, zodat panics worden voorkomen en fouten traceerbaar zijn.
+- Gebruik `Arc` alleen voor gedeelde immutable state of als het niet anders kan voor thread safety.
+- Houd async-functies zo non-blocking mogelijk: zware taken altijd offloaden naar een threadpool.
+- Documenteer blocking gedrag en locking in comments bij gevoelige functies.

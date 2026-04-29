@@ -248,7 +248,9 @@ async fn download_buffalo_l(
     let content_length = head.and_then(|r| r.content_length());
 
     {
-        let mut p = prog.lock().unwrap();
+        let mut p = prog
+            .lock()
+            .map_err(|_| anyhow::anyhow!("model_download lock poisoned"))?;
         p.active = true;
         p.phase = "buffalo_l".to_string();
         p.bytes_done = 0;
@@ -274,7 +276,9 @@ async fn download_buffalo_l(
         bytes_done += chunk.len() as u64;
         buf.extend_from_slice(&chunk);
         let elapsed = start.elapsed().as_secs_f64().max(0.001);
-        let mut p = prog.lock().unwrap();
+        let mut p = prog
+            .lock()
+            .map_err(|_| anyhow::anyhow!("model_download lock poisoned"))?;
         p.bytes_done = bytes_done;
         p.speed_bps = (bytes_done as f64 / elapsed) as u64;
     }

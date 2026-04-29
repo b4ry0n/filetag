@@ -239,14 +239,11 @@ async fn ai_prepare_jpeg(abs_path: &Path, root: &Path) -> Option<Vec<u8>> {
         .to_lowercase();
 
     let source_path;
-    let _tmp_data: Option<Vec<u8>>;
-
     match ext.as_str() {
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" => {
             if let Some(cache) = raw_cache_path(abs_path, root) {
                 if !cache.exists() {
-                    // AI analysis implies external tool availability for RAW extraction.
                     let feats = Features {
                         imagemagick: true,
                         ..Features::default()
@@ -258,77 +255,87 @@ async fn ai_prepare_jpeg(abs_path: &Path, root: &Path) -> Option<Vec<u8>> {
                     }
                 }
                 source_path = cache;
-                _tmp_data = None;
             } else {
                 return None;
             }
         }
         _ => {
             source_path = abs_path.to_path_buf();
-            _tmp_data = None;
         }
     }
 
     let path_layer = format!("{}[0]", source_path.display());
-    for cmd in &["magick", "convert"] {
-        if let Ok(out) = tokio::process::Command::new(cmd)
-            .arg(&path_layer)
+    // Clone voor spawn_blocking zodat source_path bruikbaar blijft
+    let source_path_block = source_path.clone();
+    let path_layer_block = path_layer.clone();
+    let jpeg_result = tokio::task::spawn_blocking(move || {
+        for cmd in &["magick", "convert"] {
+            let out = std::process::Command::new(cmd)
+                .arg(&path_layer_block)
+                .args([
+                    "-auto-orient",
+                    "-strip",
+                    "-resize",
+                    "800x800>",
+                    "-quality",
+                    "85",
+                    "jpg:-",
+                ])
+                .stderr(std::process::Stdio::null())
+                .output();
+            if let Ok(out) = out
+                && out.status.success()
+                && out.stdout.starts_with(&[0xFF, 0xD8])
+            {
+                return Some(out.stdout);
+            }
+        }
+        // ffmpeg fallback
+        let out = std::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg", "-i"])
+            .arg(&source_path_block)
             .args([
-                "-auto-orient",
-                "-strip",
-                "-resize",
-                "800x800>",
-                "-quality",
-                "85",
-                "jpg:-",
+                "-vf",
+                "scale='if(gt(iw,ih),800,-2)':'if(gt(iw,ih),-2,800)':flags=lanczos",
+                "-vframes",
+                "1",
+                "-map_metadata",
+                "-1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-q:v",
+                "4",
+                "pipe:1",
             ])
             .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .output()
-            .await
+            .output();
+        if let Ok(out) = out
             && out.status.success()
             && out.stdout.starts_with(&[0xFF, 0xD8])
         {
             return Some(out.stdout);
         }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    if let Some(jpeg) = jpeg_result {
+        return Some(jpeg);
     }
-
-    // ffmpeg fallback
-    if let Ok(out) = tokio::process::Command::new("nice")
-        .args(["-n", "10", "ffmpeg", "-i"])
-        .arg(&source_path)
-        .args([
-            "-vf",
-            "scale='if(gt(iw,ih),800,-2)':'if(gt(iw,ih),-2,800)':flags=lanczos",
-            "-vframes",
-            "1",
-            "-map_metadata",
-            "-1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-q:v",
-            "4",
-            "pipe:1",
-        ])
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        && out.status.success()
-        && out.stdout.starts_with(&[0xFF, 0xD8])
-    {
-        return Some(out.stdout);
-    }
-
     tokio::fs::read(&source_path).await.ok()
 }
 
 /// Prepare a JPEG from raw bytes (e.g. an archive entry) for AI analysis.
 async fn ai_prepare_jpeg_from_bytes(bytes: Vec<u8>, ext: &str) -> Option<Vec<u8>> {
-    if let Ok(mut child) = tokio::process::Command::new("magick")
-        .args([
+    // Verplaats blocking external tool call naar spawn_blocking
+    let bytes_clone = bytes.clone();
+    let ext_lc = ext.to_lowercase();
+    let jpeg_result = tokio::task::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("magick");
+        cmd.args([
             "-",
             "-auto-orient",
             "-strip",
@@ -338,28 +345,29 @@ async fn ai_prepare_jpeg_from_bytes(bytes: Vec<u8>, ext: &str) -> Option<Vec<u8>
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        && let Some(mut stdin) = child.stdin.take()
-    {
-        use tokio::io::AsyncWriteExt;
-        let bytes_for_stdin = bytes.clone();
-        let write_handle = tokio::spawn(async move {
-            let _ = stdin.write_all(&bytes_for_stdin).await;
-        });
-        if let Ok(out) = child.wait_with_output().await {
-            let _ = write_handle.await;
-            if out.status.success() && !out.stdout.is_empty() {
+        .stderr(std::process::Stdio::null());
+        if let Ok(mut child) = cmd.spawn() {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(&bytes_clone);
+            }
+            if let Ok(out) = child.wait_with_output()
+                && out.status.success()
+                && !out.stdout.is_empty()
+            {
                 return Some(out.stdout);
             }
-        } else {
-            write_handle.abort();
         }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    if let Some(jpeg) = jpeg_result {
+        return Some(jpeg);
     }
-
-    let e = ext.to_lowercase();
     if matches!(
-        e.as_str(),
+        ext_lc.as_str(),
         "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif"
     ) {
         Some(bytes)
