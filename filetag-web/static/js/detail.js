@@ -1147,7 +1147,7 @@ function renderDetail() {
                 </div>
             </div>
         </div>
-        // ...existing code...
+
         ${(type_ === 'image' || type_ === 'raw') ? '<div id="face-toolbar-row"></div>' : ''}
         </div>
         <div class="detail-v-handle" id="detail-v-handle"></div>
