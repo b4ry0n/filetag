@@ -588,7 +588,7 @@ fn canonical_name(conn: &Connection, name: &str) -> Result<String> {
         )?
         .query_row(params![name], |r| r.get(0))
         .ok();
-    Ok(canonical.unwrap_or_else(|| name.to_string()))
+    Ok(canonical.unwrap_or(name.to_string()))
 }
 
 /// Execute a query expression and return matching file paths.

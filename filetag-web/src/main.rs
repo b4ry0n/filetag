@@ -83,7 +83,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let root = args.path.unwrap_or_else(|| ".".into());
+    let root = args.path.unwrap_or(".".into());
     let root =
         std::fs::canonicalize(&root).with_context(|| format!("resolving {}", root.display()))?;
 

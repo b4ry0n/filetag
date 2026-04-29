@@ -161,9 +161,10 @@ fn cleanup_empty_dirs(dir: &Path) -> Result<usize> {
             let path = entry.path();
             if path.is_dir()
                 && !seen.contains(path)
-                && std::fs::read_dir(path)
-                    .map(|mut d| d.next().is_none())
-                    .unwrap_or(false)
+                && match std::fs::read_dir(path) {
+                    Ok(mut d) => d.next().is_none(),
+                    Err(_) => false,
+                }
             {
                 std::fs::remove_dir(path).ok();
                 seen.insert(path.to_path_buf());

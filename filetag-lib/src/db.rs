@@ -368,9 +368,10 @@ pub fn get_or_index_file(conn: &Connection, rel_path: &str, root: &Path) -> Resu
         let mt = meta
             .modified()
             .with_context(|| format!("reading mtime for {}", abs.display()))?;
-        mt.duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0)
+        match mt.duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_nanos() as i64,
+            Err(_) => 0,
+        }
     };
     let fid = get_file_id(&meta);
 

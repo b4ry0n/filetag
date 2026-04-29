@@ -583,7 +583,7 @@ fn make_progress(cli: &Cli, len: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(len);
     pb.set_style(
         ProgressStyle::with_template("{msg} [{bar:30}] {pos}/{len} {per_sec}")
-            .unwrap()
+            .unwrap_or_else(|_| ProgressStyle::default_bar())
             .progress_chars("=> "),
     );
     pb.set_message(msg.to_string());

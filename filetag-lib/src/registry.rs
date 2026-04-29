@@ -67,7 +67,7 @@ pub fn add(root: &Path) -> Result<bool> {
 
 /// Remove a database root from the registry.
 pub fn remove(root: &Path) -> Result<bool> {
-    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical = std::fs::canonicalize(root).unwrap_or(root.to_path_buf());
     let s = canonical.to_string_lossy().into_owned();
 
     let mut reg = load()?;
