@@ -191,10 +191,6 @@ async function doAddTag() {
     const tagStr = input.value.trim();
     if (!tagStr) return;
     const subject = subjectInput?.value.trim() || undefined;
-    if (subject) {
-        const { ensureSubjectExists } = await import('./subject.js');
-        await ensureSubjectExists(subject);
-    }
     await addTagToFile(state.selectedFile.path, tagStr, subject);
     input.value = '';
     renderTags();
