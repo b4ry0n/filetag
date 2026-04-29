@@ -1167,6 +1167,7 @@ function renderFileTagChips(f, covered) {
         if (!covered) {
             return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
         }
+        const subjArg = tag.subject ? `'${jesc(tag.subject)}'` : 'null';
         // Haal subject dynamisch uit het formulier bij promote
         const promoteBtn = tag.name.startsWith('ai/')
             ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="(function(){
