@@ -65,34 +65,40 @@ function cvThumbUrl(i) {
 }
 
 async function openMediaViewer(path, startPage = 0) {
-    const overlay = document.getElementById('media-viewer');
-    overlay.hidden = false;
+    // Detecteer zip-entry (virtueel pad met '::'), anders gewone afbeelding
+    if (typeof path === 'string' && path.includes('::')) {
+        const overlay = document.getElementById('media-viewer');
+        overlay.hidden = false;
 
-    _cv.path = path;
-    _cv.current = startPage;
-    _cv.pages = [];
+        _cv.path = path;
+        _cv.current = startPage;
+        _cv.pages = [];
 
-    document.getElementById('cv-status').textContent = 'Loading…';
-    document.getElementById('cv-pages').innerHTML = '';
+        document.getElementById('cv-status').textContent = 'Loading…';
+        document.getElementById('cv-pages').innerHTML = '';
 
-    const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }) + dirParam('&'));
-    if (!res.ok) {
-        document.getElementById('cv-status').textContent = 'Cannot read ZIP';
-        return;
-    }
-    const data = await res.json();
-    _cv.pages = data.pages || [];
-    if (_cv.pages.length === 0) {
-        document.getElementById('cv-status').textContent = 'No images in ZIP';
-        return;
-    }
-    cvBuildThumbs();
-    if (_cv.scroll) {
-        cvBuildScrollView();
+        const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }) + dirParam('&'));
+        if (!res.ok) {
+            document.getElementById('cv-status').textContent = 'Cannot read ZIP';
+            return;
+        }
+        const data = await res.json();
+        _cv.pages = data.pages || [];
+        if (_cv.pages.length === 0) {
+            document.getElementById('cv-status').textContent = 'No images in ZIP';
+            return;
+        }
+        cvBuildThumbs();
+        if (_cv.scroll) {
+            cvBuildScrollView();
+        } else {
+            cvShowPage(startPage);
+        }
+        document.addEventListener('keydown', _cvKeyHandler);
     } else {
-        cvShowPage(startPage);
+        // Gewone afbeelding: open directory viewer
+        openFileInDirViewer(path);
     }
-    document.addEventListener('keydown', _cvKeyHandler);
 }
 
 // Open the viewer for a list of plain image files from a directory.
