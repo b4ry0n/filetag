@@ -197,10 +197,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     zoom.addEventListener('input', () => setCardSize(zoom.value));
     setCardSize(zoom.value);
 
-    // Close detail panel when clicking empty space in the content area
-    document.getElementById('content').addEventListener('click', e => {
-        if (e.target === e.currentTarget) closeDetail();
-    });
+
 
     // Keyboard shortcuts (file browser navigation + Escape handling)
     document.addEventListener('keydown', e => {
@@ -208,7 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.key === 'Escape') {
             if (state.tagPickerMode)           { cancelTagPickerMode(); return; }
             if (state.selectedPaths.size > 1)  { clearSelection(); return; }
-            if (state.selectedFile)            { closeDetail();   return; }
+            // detail-pane mag niet meer sluiten via Escape
             if (state.mode === 'search')       { doClearSearch(); return; }
             if (_kbCursor >= 0)                { _kbClearCursor(); return; }
             return;
