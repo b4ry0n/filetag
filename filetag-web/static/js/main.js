@@ -489,7 +489,13 @@ function initDetailVHandle(el) {
 
     const saved = localStorage.getItem('ft-detail-top-height');
     if (saved) {
-        root.style.setProperty('--detail-top-height', saved);
+        // Limiteer aan max-height (min(60vh, 420px))
+        const maxPx = Math.min(window.innerHeight * 0.6, 420);
+        let px = parseInt(saved, 10);
+        if (isNaN(px) || px < 60) px = 60;
+        if (px > maxPx) px = maxPx;
+        root.style.setProperty('--detail-top-height', px + 'px');
+        localStorage.setItem('ft-detail-top-height', px + 'px');
     }
     // If no saved value, leave the variable unset → height:auto → natural position.
 
