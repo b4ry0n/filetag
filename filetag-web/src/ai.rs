@@ -916,7 +916,7 @@ const SPRITE_META_BLOCKLIST: &[&str] = &[
     "subtitles",
 ];
 
-fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
+fn parse_ai_tags(text: &str, _prefix: &str) -> anyhow::Result<Vec<String>> {
     let trimmed = text.trim();
 
     let mut raw_tags: Option<Vec<String>> = None;
@@ -958,28 +958,16 @@ fn parse_ai_tags(text: &str, prefix: &str) -> anyhow::Result<Vec<String>> {
         .into_iter()
         .map(|t| {
             // Strip leading/trailing punctuation that the model sometimes appends
-            // (e.g. trailing dot, comma, exclamation mark).  Characters that are
-            // legitimate *inside* a tag (hyphen, underscore, slash, equals sign,
-            // period as a decimal separator like "5.1") are left intact when they
-            // occur in the middle of the string.
             let clean = t
                 .trim()
                 .trim_matches(|c: char| {
                     c.is_ascii_punctuation() && c != '/' && c != '=' && c != '-' && c != '_'
                 })
                 .to_string();
-            if prefix.is_empty() {
-                clean
-            } else {
-                format!("{prefix}{clean}")
-            }
+            format!("ai/{clean}")
         })
         .filter(|t| {
-            let tag_part = if prefix.is_empty() {
-                t.as_str()
-            } else {
-                &t[prefix.len()..]
-            };
+            let tag_part = &t[3..]; // altijd na ai/
             tag_candidate_ok(tag_part)
                 && !SPRITE_META_BLOCKLIST.contains(&tag_part)
                 && seen.insert(t.clone())
@@ -1023,7 +1011,7 @@ fn apply_ai_tags(
     root: &Path,
     rel_path: &str,
     tags: &[String],
-    prefix: &str,
+    _prefix: &str,
 ) -> anyhow::Result<()> {
     let file_rec = if rel_path.contains("::") {
         db::get_or_index_archive_entry(conn, rel_path)?
@@ -1032,19 +1020,19 @@ fn apply_ai_tags(
     };
     let existing = db::tags_for_file(conn, file_rec.id)?;
 
+    let ai_prefix = "ai/";
     let existing_names: std::collections::HashSet<String> = existing
         .iter()
-        .filter(|(name, _)| !name.starts_with(prefix))
+        .filter(|(name, _)| !name.starts_with(ai_prefix))
         .map(|(name, _)| name.to_lowercase())
         .collect();
 
-    if !prefix.is_empty() {
-        for (name, value) in &existing {
-            if name.starts_with(prefix)
-                && let Ok(tag_id) = db::get_or_create_tag(conn, name)
-            {
-                let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref(), None);
-            }
+    // Verwijder oude AI-tags (altijd ai/-prefix)
+    for (name, value) in &existing {
+        if name.starts_with(ai_prefix)
+            && let Ok(tag_id) = db::get_or_create_tag(conn, name)
+        {
+            let _ = db::remove_tag(conn, file_rec.id, tag_id, value.as_deref(), None);
         }
     }
 
@@ -1057,8 +1045,8 @@ fn apply_ai_tags(
         } else {
             (tag_str.clone(), None)
         };
-        let bare = if !prefix.is_empty() && name.starts_with(prefix) {
-            name[prefix.len()..].to_string()
+        let bare = if let Some(stripped) = name.strip_prefix(ai_prefix) {
+            stripped.to_string()
         } else {
             name.clone()
         };
