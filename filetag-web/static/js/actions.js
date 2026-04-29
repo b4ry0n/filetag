@@ -1005,7 +1005,7 @@ async function aiTestConnection() {
 }
 
 /// Promote an ai/* tag: add it without the prefix, then remove the original.
-async function aiPromoteTag(path, tagName, value) {
+async function aiPromoteTag(path, tagName, value, subject) {
     // tagName is e.g. "ai/necklace", promoted becomes "necklace".
     // value may be "" or e.g. "gold" for key=value tags.
     const promoted = tagName.slice('ai/'.length);
@@ -1014,7 +1014,9 @@ async function aiPromoteTag(path, tagName, value) {
     const toast = showToast(t('toast.promoting', {tag: newTagStr}), 0);
     try {
         // Add the promoted tag, then remove the ai/ original.
-        await apiPost('/api/tag', { path, tags: [newTagStr], dir: currentAbsDir() });
+        const tagBody = { path, tags: [newTagStr], dir: currentAbsDir() };
+        if (subject && subject !== 'null') tagBody.subject = subject;
+        await apiPost('/api/tag', tagBody);
         const origStr = value ? `${tagName}=${value}` : tagName;
         await apiPost('/api/untag', { path, tags: [origStr], dir: currentAbsDir() });
         await loadFileDetail(path);
