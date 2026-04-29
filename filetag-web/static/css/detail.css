@@ -182,7 +182,7 @@
     justify-content: center;
     min-height: 60px;
     max-height: 70vh;
-    flex: 1 1 auto;
+    height: auto;
     overflow: hidden;
     position: relative;
 }
