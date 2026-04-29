@@ -1050,7 +1050,8 @@ function renderDetail() {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
-        preview = `<img class="detail-img-zoomable" src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}" onerror="_previewImgError(this)">`;
+        preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(f.path)}')" title="Klik om te openen in viewer">` +
+                  `<img class="detail-img-zoomable" src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}" onerror="_previewImgError(this)"></a>`;
     } else if (type_ === 'raw') {
         preview = `<a class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
