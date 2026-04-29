@@ -1,3 +1,23 @@
+// Globale functie: activeer/deactiveer tag-filter in de sidebar
+window.toggleTagFilter = async function(tagName) {
+    if (state.activeTags.has(tagName)) {
+        state.activeTags.delete(tagName);
+    } else {
+        state.activeTags.add(tagName);
+    }
+    // Bouw query uit alle actieve tags
+    const tags = [...state.activeTags];
+    if (tags.length === 0) {
+        doClearSearch();
+        renderTags();
+        return;
+    }
+    const q = tags.map(quoteQueryToken).join(' and ');
+    document.getElementById('search-input').value = q;
+    document.getElementById('search-clear').hidden = false;
+    await searchFiles(q);
+    renderTags();
+};
 // Alias voor oude code: quoteTag is nu quoteQueryToken
 function quoteTag(value) {
     return quoteQueryToken(value);

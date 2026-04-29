@@ -38,8 +38,6 @@ async function selectFile(path, event) {
     state.selectedPaths.clear();
     state.selectedPaths.add(path);
     _lastClickedPath = path;
-    // Laad file detail en update info-panel direct
-    if (!state.detailOpen) state.detailOpen = true;
     await loadFileDetail(path);
     _updateCardSelection();
     renderDetail();
