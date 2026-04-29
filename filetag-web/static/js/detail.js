@@ -1,3 +1,10 @@
+// Globale functie voor info-overlay
+window.toggleMetaOverlay = function(e) {
+    e.stopPropagation();
+    const overlay = document.getElementById('meta-overlay');
+    if (!overlay) return;
+    overlay.style.display = (overlay.style.display === 'none' || !overlay.style.display) ? 'flex' : 'none';
+};
 // ---------------------------------------------------------------------------
 // Zoom & pan functionaliteit voor afbeelding in detail-preview
 // ---------------------------------------------------------------------------
