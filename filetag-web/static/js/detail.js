@@ -1126,17 +1126,23 @@ function renderDetail() {
                 </button>
             </div>
         </div>
-        <div class="detail-preview">${preview}</div>
-        ${(type_ === 'image' || type_ === 'raw') ? '<div id="face-toolbar-row"></div>' : ''}
-        <div class="detail-meta">
-            ${zipEntry
-                ? `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.archive'))}</span><span class="detail-meta-value">${esc(zipEntry.zipPath.split('/').pop())}</span></div>
-                   <div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.entry'))}</span><span class="detail-meta-value">${esc(zipEntry.entryName)}</span></div>`
-                : `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.path'))}</span><span class="detail-meta-value">${esc(f.path)}</span></div>
-                   <div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.size'))}</span><span class="detail-meta-value">${formatSize(f.size)}</span></div>
-                   ${f.indexed_at ? `<div class="detail-meta-row"><span class="detail-meta-label">${esc(t('detail.indexed'))}</span><span class="detail-meta-value">${esc(f.indexed_at)}</span></div>` : ''}`
-            }
+        <div class="detail-preview">
+            <button class="meta-info-btn" title="Toon info" onclick="toggleMetaOverlay(event)">i</button>
+            ${preview}
+            <div class="meta-overlay" id="meta-overlay" style="display:none;">
+                <div class="meta-overlay-content">
+                    <button class="meta-overlay-close" onclick="toggleMetaOverlay(event)">&times;</button>
+                    ${zipEntry
+                        ? `<div class=\"detail-meta-row\"><span class=\"detail-meta-label\">${esc(t('detail.archive'))}</span><span class=\"detail-meta-value\">${esc(zipEntry.zipPath.split('/').pop())}</span></div>
+                           <div class=\"detail-meta-row\"><span class=\"detail-meta-label\">${esc(t('detail.entry'))}</span><span class=\"detail-meta-value\">${esc(zipEntry.entryName)}</span></div>`
+                        : `<div class=\"detail-meta-row\"><span class=\"detail-meta-label\">${esc(t('detail.path'))}</span><span class=\"detail-meta-value\">${esc(f.path)}</span></div>
+                           <div class=\"detail-meta-row\"><span class=\"detail-meta-label\">${esc(t('detail.size'))}</span><span class=\"detail-meta-value\">${formatSize(f.size)}</span></div>
+                           ${f.indexed_at ? `<div class=\"detail-meta-row\"><span class=\"detail-meta-label\">${esc(t('detail.indexed'))}</span><span class=\"detail-meta-value\">${esc(f.indexed_at)}</span></div>` : ''}`
+                    }
+                </div>
+            </div>
         </div>
+        ${(type_ === 'image' || type_ === 'raw') ? '<div id="face-toolbar-row"></div>' : ''}
         </div>
         <div class="detail-v-handle" id="detail-v-handle"></div>
         <div class="detail-tags-section">

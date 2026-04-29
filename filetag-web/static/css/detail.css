@@ -25,6 +25,8 @@
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 60px;
+    display: flex;
+    flex-direction: column;
 }
 
 .detail-empty {
@@ -104,8 +106,10 @@
     align-items: center;
     justify-content: center;
     min-height: 60px;
-    max-height: min(40vh, 320px);
-    overflow: auto;
+    flex: 1 1 auto;
+    max-height: 100%;
+    overflow: hidden;
+    position: relative;
 }
 
 .detail-preview img {
@@ -114,6 +118,10 @@
     object-fit: contain;
     display: block;
     margin: 0 auto;
+    transition: transform 0.2s;
+    cursor: zoom-in;
+    user-select: none;
+    will-change: transform;
 }
 
 .detail-preview audio,
