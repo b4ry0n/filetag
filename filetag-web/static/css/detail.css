@@ -181,9 +181,8 @@
     align-items: center;
     justify-content: center;
     min-height: 60px;
-    height: 60vh;
     max-height: 70vh;
-    flex: none;
+    flex: 1 1 auto;
     overflow: hidden;
     position: relative;
 }
@@ -191,18 +190,17 @@
 
 
 .detail-preview audio,
-.detail-preview video {
-    width: 100%;
-}
-
-.detail-preview video {
-    max-height: min(52vh, 420px);
-    height: auto;
+.detail-preview img {
+    max-width: 100%;
+    max-height: 100%;
     object-fit: contain;
+    display: block;
+    margin: 0 auto;
+    transition: transform 0.2s;
+    cursor: zoom-in;
+    user-select: none;
+    will-change: transform;
 }
-
-.detail-preview .no-preview {
-    padding: 32px;
     text-align: center;
     color: var(--text-tertiary);
     font-size: 48px;
