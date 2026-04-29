@@ -108,7 +108,7 @@
 
 .detail-preview img {
     max-width: 100%;
-    max-height: 300px;
+    max-height: min(40vh, 300px);
     object-fit: contain;
 }
 
