@@ -1241,13 +1241,14 @@ function renderFileTagChips(f, covered) {
             return `<span class="tag-chip tag-chip--readonly"${chipColor}>${esc(tagStr)}</span>`;
         }
         const subjArg = tag.subject ? `'${jesc(tag.subject)}'` : 'null';
-        // Haal subject dynamisch uit het formulier bij promote
+        // Haal subject dynamisch uit het formulier bij promote, maar geef null door als subject leeg is
         const promoteBtn = tag.name.startsWith('ai/')
-            ? `<button class="promote" title="${esc(t('detail.promote-title'))}" onclick="(function(){
+            ? `<button class=\"promote\" title=\"${esc(t('detail.promote-title'))}\" onclick=\"(function(){
                 const subjInput = document.getElementById('tag-subject');
-                const subj = subjInput && subjInput.value.trim() ? subjInput.value.trim() : (tag.subject || null);
+                let subj = subjInput && subjInput.value.trim() ? subjInput.value.trim() : (tag.subject || null);
+                if (!subj) subj = null;
                 aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}', subj);
-            })()">&uarr;</button>`
+            })()\">&uarr;</button>`
             : '';
         return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}',${subjArg})">&times;</button></span>`;
     }

@@ -12,46 +12,41 @@
 }
 .meta-info-btn {
     position: absolute;
-    right: 10px;
-    bottom: 10px;
-    z-index: 10;
-    background: rgba(255,255,255,0.7);
-    border: none;
-    border-radius: 50%;
-    width: 22px;
-    height: 22px;
-    font-size: 14px;
-    font-weight: bold;
-    color: #333;
-    cursor: pointer;
-    transition: background 0.2s;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-}
-.meta-info-btn:hover {
-    background: rgba(200,200,200,0.9);
-}
-
-/* Compact overlay onderin de afbeelding */
-.meta-overlay {
-    position: absolute;
-    left: 50%;
-    bottom: 12px;
-    transform: translateX(-50%);
-    width: 90%;
-    max-width: 340px;
-    min-width: 180px;
-    max-height: 120px;
-    background: rgba(30,30,30,0.97);
-    color: #fff;
-    border-radius: 10px 10px 10px 10px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.18);
-    padding: 10px 14px 8px 14px;
-    z-index: 20;
+    left: 10px;
+    top: 10px;
+    z-index: 40;
+    width: 36px;
+    height: 36px;
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    animation: metaOverlayIn 0.18s;
-    overflow-y: auto;
+    align-items: center;
+    justify-content: center;
+    background: rgba(30,30,30,0.82);
+    color: #fff;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    cursor: pointer;
+    border: none;
+    outline: none;
+    transition: background 0.15s;
+}
+.meta-info-btn {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    z-index: 40;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(30,30,30,0.82);
+    color: #fff;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    cursor: pointer;
+    border: none;
+    outline: none;
+    transition: background 0.15s;
 }
 @keyframes metaOverlayIn {
     from { transform: translateY(40px); opacity: 0; }
@@ -76,14 +71,35 @@
 .detail-preview img {
     max-width: 100%;
     max-height: 100%;
-    height: 100%;
+    width: auto;
+    height: auto;
     object-fit: contain;
     display: block;
     margin: 0 auto;
+    background: #000;
     transition: transform 0.2s;
-    cursor: zoom-in;
     user-select: none;
     will-change: transform;
+    position: relative;
+    z-index: 1;
+}
+.detail-preview video {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+    background: #000;
+    transition: transform 0.2s;
+    user-select: none;
+    will-change: transform;
+    position: relative;
+    z-index: 1;
+}
+.detail-preview .meta-info-btn {
+    z-index: 2;
 }
 .tag-input-wrap {
     position: relative;
@@ -125,8 +141,8 @@
     max-width: 340px;
     min-width: 180px;
     max-height: 120px;
-    background: rgba(30,30,30,0.72);
-    color: #fff;
+    background: rgba(30,30,30,0.97);
+    color: #f8f9fa;
     border-radius: 12px 12px 12px 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.18);
     padding: 12px 16px 10px 16px;
@@ -137,6 +153,12 @@
     animation: metaOverlayIn 0.18s;
     overflow-y: auto;
     pointer-events: auto;
+    text-shadow: 0 1px 4px #000a, 0 0px 1px #000c;
+}
+.meta-overlay .detail-meta-label,
+.meta-overlay .detail-meta-value {
+    color: #f8f9fa !important;
+    text-shadow: 0 1px 4px #000a, 0 0px 1px #000c;
 }
 .detail-header-actions {
     display: flex;
@@ -212,10 +234,6 @@
     cursor: zoom-in;
     user-select: none;
     will-change: transform;
-}
-    text-align: center;
-    color: var(--text-tertiary);
-    font-size: 48px;
 }
 
 /* Clickable preview hint */
