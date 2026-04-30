@@ -65,8 +65,9 @@ function cvThumbUrl(i) {
 }
 
 async function openMediaViewer(path, startPage = 0) {
-    // Detecteer zip-entry (virtueel pad met '::'), anders gewone afbeelding
-    if (typeof path === 'string' && path.includes('::')) {
+    // Detecteer archiefbestand (.cbz/.zip) of zip-entry (virtueel pad met '::')
+    const isArchive = (typeof path === 'string' && (path.includes('::') || path.match(/\.(cbz|zip)$/i)));
+    if (isArchive) {
         const overlay = document.getElementById('media-viewer');
         overlay.hidden = false;
 
