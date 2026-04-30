@@ -1244,8 +1244,8 @@ function renderFileTagChips(f, covered) {
         // Haal subject dynamisch uit het formulier bij promote, maar geef null door als subject leeg is
         const promoteBtn = tag.name.startsWith('ai/')
             ? `<button class=\"promote\" title=\"${esc(t('detail.promote-title'))}\" onclick=\"(function(){
-                const subjInput = document.getElementById('tag-subject');
-                let subj = subjInput && subjInput.value.trim() ? subjInput.value.trim() : (tag.subject || null);
+                var subjInput = document.getElementById('tag-subject');
+                var subj = subjInput && subjInput.value.trim() ? subjInput.value.trim() : (${subjArg});
                 if (!subj) subj = null;
                 aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}', subj);
             })()\">&uarr;</button>`
