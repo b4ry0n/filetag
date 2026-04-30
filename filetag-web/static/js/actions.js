@@ -1015,7 +1015,9 @@ async function aiPromoteTag(path, tagName, value, subject) {
     try {
         // Add the promoted tag, then remove the ai/ original.
         const tagBody = { path, tags: [newTagStr], dir: currentAbsDir() };
-        if (subject && subject !== 'null') tagBody.subject = subject;
+        if (subject && typeof subject === 'string' && subject !== 'null' && subject.trim() !== '') {
+            tagBody.subject = subject;
+        }
         await apiPost('/api/tag', tagBody);
         const origStr = value ? `${tagName}=${value}` : tagName;
         await apiPost('/api/untag', { path, tags: [origStr], dir: currentAbsDir() });
