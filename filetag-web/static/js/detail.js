@@ -1,70 +1,10 @@
-// Globale functie voor info-overlay
+// Global helper for the image meta-info overlay in the detail panel.
 window.toggleMetaOverlay = function(e) {
     e.stopPropagation();
     const overlay = document.getElementById('meta-overlay');
     if (!overlay) return;
     overlay.style.display = (overlay.style.display === 'none' || !overlay.style.display) ? 'flex' : 'none';
 };
-// ---------------------------------------------------------------------------
-// Zoom & pan functionaliteit voor afbeelding in detail-preview
-// ---------------------------------------------------------------------------
-
-function enableDetailPreviewZoomPan() {
-    const preview = document.querySelector('.detail-preview');
-    if (!preview) return;
-    const img = preview.querySelector('img');
-    if (!img) return;
-    let zoom = 1;
-    let panX = 0, panY = 0;
-    let dragging = false, lastX = 0, lastY = 0;
-
-    function update() {
-        img.style.transform = `scale(${zoom}) translate(${panX/zoom}px,${panY/zoom}px)`;
-        img.style.cursor = zoom > 1 ? 'grab' : 'zoom-in';
-    }
-
-    img.addEventListener('dblclick', e => {
-        if (zoom === 1) {
-            zoom = 2;
-            img.style.cursor = 'grab';
-        } else {
-            zoom = 1; panX = 0; panY = 0;
-        }
-        update();
-    });
-
-    img.addEventListener('mousedown', e => {
-        if (zoom === 1) return;
-        dragging = true;
-        lastX = e.clientX; lastY = e.clientY;
-        img.style.cursor = 'grabbing';
-        e.preventDefault();
-    });
-    window.addEventListener('mousemove', e => {
-        if (!dragging) return;
-        panX += e.clientX - lastX;
-        panY += e.clientY - lastY;
-        lastX = e.clientX; lastY = e.clientY;
-        // Clamp zodat je niet buiten het frame kunt pannen
-        const rect = img.getBoundingClientRect();
-        const pRect = preview.getBoundingClientRect();
-        const maxX = Math.max(0, (rect.width - pRect.width) / 2);
-        const maxY = Math.max(0, (rect.height - pRect.height) / 2);
-        panX = Math.max(-maxX, Math.min(maxX, panX));
-        panY = Math.max(-maxY, Math.min(maxY, panY));
-        update();
-    });
-    window.addEventListener('mouseup', () => {
-        if (dragging) img.style.cursor = 'grab';
-        dragging = false;
-    });
-    // Reset bij nieuwe afbeelding
-    img.addEventListener('load', () => { zoom = 1; panX = 0; panY = 0; update(); });
-    update();
-}
-
-// Activeer na elke render
-setTimeout(enableDetailPreviewZoomPan, 0);
 // ---------------------------------------------------------------------------
 // Zip directory: open, refresh, helper, grid + list render
 // ---------------------------------------------------------------------------
@@ -741,10 +681,13 @@ function _thumbInit() {
     _thumbRun();
 }
 
-function _thumbReplace(el, blobUrl) {
+function _thumbReplace(el, blobUrl, revokeOnLoad = false) {
     // Directory preview: inline sprite cycling (no floating popup).
     if (el.dataset.dirPath) {
         _dirPreviewReplace(el, blobUrl);
+        // Sprite BlobURL is transferred to a CSS background-image; revoke after
+        // a short delay so the browser has time to decode it.
+        if (revokeOnLoad) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         return;
     }
     const img = document.createElement('img');
@@ -752,6 +695,10 @@ function _thumbReplace(el, blobUrl) {
     if (el.dataset.cls) img.className = el.dataset.cls;
     img.alt = '';
     img.dataset.name = el.dataset.name || '';
+    if (revokeOnLoad) {
+        img.addEventListener('load',  () => URL.revokeObjectURL(blobUrl), { once: true });
+        img.addEventListener('error', () => URL.revokeObjectURL(blobUrl), { once: true });
+    }
     el.replaceWith(img);
 
     // Attach trickplay for video cards.
@@ -916,10 +863,11 @@ function renderDetail() {
             <div class="detail-header">
                 <h3>${t('bulk.n-selected', {n: count})}</h3>
                 <div class="detail-header-actions">
-                    <button class="detail-tag-picker-btn${state.tagPickerMode ? ' active' : ''}" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Apply multiple tags to selection">&#x2714; Tag files</button>
-                    <button class="detail-chat-btn" onclick="openChat()" title="Chat about selected files">
-                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
-                        Chat
+                    <button class="detail-icon-btn${state.tagPickerMode ? ' active' : ''}" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Tag files">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                    </button>
+                    <button class="detail-icon-btn" onclick="openChat()" title="Chat">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
                     </button>
                 </div>
             </div>
@@ -933,13 +881,15 @@ function renderDetail() {
                 <div class="bulk-tag-chips" id="bulk-tag-chips">${chipsHtml}</div>` : ''}
                 <p class="bulk-section-label" style="margin-top:12px">${esc(t('bulk.add-label'))}</p>
                 <div class="tag-add-form">
-                    <div class="tag-input-wrap">
-                        <input type="text" id="bulk-tag-input" placeholder="${esc(t('bulk.tag-input'))}">
+                    <div class="tag-input-row">
+                        <div class="tag-input-wrap">
+                            <input type="text" id="bulk-tag-input" placeholder="${esc(t('bulk.tag-input'))}">
+                        </div>
+                        <button onclick="doBulkAddTag()">${esc(t('bulk.add-btn'))}</button>
                     </div>
                     <div class="tag-input-wrap">
                         <input type="text" id="bulk-tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
                     </div>
-                    <button onclick="doBulkAddTag()">${esc(t('bulk.add-btn'))}</button>
                 </div>
                 ${aiAcceptBulkBtn}
                 ${aiClearBulkBtn}
@@ -1050,12 +1000,16 @@ function renderDetail() {
             preview = `<div class="no-preview">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
-        preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(f.path)}')" title="Klik om te openen in viewer">` +
-                  `<img class="detail-img-zoomable" src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}" onerror="_previewImgError(this)"></a>`;
+        preview = `<div class="preview-zoomable" onclick="openMediaViewer('${jesc(f.path)}')">` +
+                  `<img class="detail-img-zoomable" src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}" onerror="_previewImgError(this)">` +
+                  `<div class="preview-viewer-hover-zone"><button class="preview-viewer-overlay-btn" onclick="event.stopPropagation();openMediaViewer('${jesc(f.path)}')" tabindex="-1">Open in viewer</button></div>` +
+                  `</div>`;
     } else if (type_ === 'raw') {
-        preview = `<a class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" title="Click to open in viewer">` +
+        preview = `<div class="preview-zoomable" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')">` +
                   `<img src="${previewUrl}" alt="${esc(name)}" data-name="${esc(name)}"` +
-                  ` onerror="_previewRawError(this)"></a>`;
+                  ` onerror="_previewRawError(this)">` +
+                  `<div class="preview-viewer-hover-zone"><button class="preview-viewer-overlay-btn" onclick="event.stopPropagation();if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);openFileInDirViewer('${jesc(f.path)}')" tabindex="-1">Open in viewer</button></div>` +
+                  `</div>`;
     } else if (type_ === 'audio') {
         preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></audio>`;
     } else if (type_ === 'video') {
@@ -1071,10 +1025,10 @@ function renderDetail() {
         preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${jesc(f.path)}','text')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
-        preview = `<div class="zip-cover-wrap" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);">
+        preview = `<div class="zip-cover-wrap" onclick="openMediaViewer('${jesc(f.path)}')">
             <img src="/thumb/${encodePath(f.path)}${dirParam('?')}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
-            <button class="tag-action-btn" onclick="openMediaViewer('${jesc(f.path)}')">Open in viewer</button>
+            <div class="preview-viewer-hover-zone"><button class="preview-viewer-overlay-btn" onclick="event.stopPropagation();openMediaViewer('${jesc(f.path)}')" tabindex="-1">Open in viewer</button></div>
         </div>`;
     } else {
         preview = `<div class="no-preview">${fileIcon(name)}</div>`;
@@ -1087,13 +1041,15 @@ function renderDetail() {
 
     const tagAddSection = covered
         ? `<div class="tag-add-form">
-                <div class="tag-input-wrap">
-                    <input type="text" id="tag-input" placeholder="${esc(t('detail.tag-add'))}">
+                <div class="tag-input-row">
+                    <div class="tag-input-wrap">
+                        <input type="text" id="tag-input" placeholder="${esc(t('detail.tag-add'))}">
+                    </div>
+                    <button onclick="doAddTag()">${esc(t('detail.tag-add-btn'))}</button>
                 </div>
                 <div class="tag-input-wrap">
                     <input type="text" id="tag-subject" class="tag-subject-input" placeholder="${esc(t('detail.subject-placeholder'))}">
                 </div>
-                <button onclick="doAddTag()">${esc(t('detail.tag-add-btn'))}</button>
             </div>`
         : `<div class="uncovered-notice">${esc(t('detail.uncovered'))}</div>`;
 
@@ -1120,20 +1076,23 @@ function renderDetail() {
            </div>`
         : '';
 
+    const viewerBtnRow = '';
+
     panel.innerHTML = `
         <div class="detail-top">
         <div class="detail-header">
             <h3>${esc(name)}</h3>
             <div class="detail-header-actions">
-                <button class="detail-tag-picker-btn${state.tagPickerMode ? ' active' : ''}" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Apply multiple tags to this file">&#x2714; Tag file</button>
-                <button class="detail-chat-btn" onclick="openChat()" title="Chat about this file">
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
-                    Chat
+                <button class="detail-icon-btn${state.tagPickerMode ? ' active' : ''}" id="tag-picker-toggle" onclick="enterTagPickerMode()" title="Tag file">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                </button>
+                <button class="detail-icon-btn" onclick="openChat()" title="Chat">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10.5A1.5 1.5 0 0 1 12.5 12H4l-3 3V3.5A1.5 1.5 0 0 1 2.5 2h10A1.5 1.5 0 0 1 14 3.5z"/></svg>
                 </button>
             </div>
         </div>
         <div class="detail-preview">
-            <button class="meta-info-btn" title="Toon info" onclick="toggleMetaOverlay(event)">i</button>
+            <button class="meta-info-btn" title="File info" onclick="toggleMetaOverlay(event)">i</button>
             ${preview}
             <div class="meta-overlay" id="meta-overlay" style="display:none;">
                 <div class="meta-overlay-content">

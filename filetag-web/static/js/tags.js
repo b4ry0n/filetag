@@ -1,11 +1,12 @@
-// Globale functie: activeer/deactiveer tag-filter in de sidebar
+// Toggle a tag filter in the sidebar — activates or deactivates a tag in the active-filter set.
 window.toggleTagFilter = async function(tagName) {
     if (state.activeTags.has(tagName)) {
         state.activeTags.delete(tagName);
     } else {
         state.activeTags.add(tagName);
     }
-    // Bouw query uit alle actieve tags
+    closeMobileSidebar(); // auto-close drawer on mobile after tapping a tag
+    // Build a query expression from all active tags.
     const tags = [...state.activeTags];
     if (tags.length === 0) {
         doClearSearch();
@@ -18,7 +19,7 @@ window.toggleTagFilter = async function(tagName) {
     await searchFiles(q);
     renderTags();
 };
-// Alias voor oude code: quoteTag is nu quoteQueryToken
+// Backward-compatibility alias: quoteTag was renamed to quoteQueryToken.
 function quoteTag(value) {
     return quoteQueryToken(value);
 }
@@ -1196,6 +1197,7 @@ async function renderTmDetail(name) {
                     <button class="tm-btn tm-btn-warn" onclick="tmDoMerge('${jesc(name)}')">Merge</button>
                 </div>
                 <div class="tm-op-hint">All files tagged <em>${esc(name)}</em> will also receive the target tag.</div>
+                <label class="tm-merge-alias-label"><input type="checkbox" id="tm-merge-keep-alias" checked> Keep <em>${esc(name)}</em> as an alias of the target tag</label>
             </div>
 
             <div class="tm-op-row">
@@ -1273,10 +1275,19 @@ async function tmDoMerge(sourceName) {
     const input = document.getElementById('tm-merge-input');
     const targetName = input ? input.value.trim() : '';
     if (!targetName || targetName === sourceName) return;
+    const keepAlias = document.getElementById('tm-merge-keep-alias')?.checked ?? true;
     const srcTag = state.tags.find(t => t.name === sourceName);
-    if (!confirm(`Merge "${sourceName}" into "${targetName}"?\nThis will retag all ${srcTag?.count || 0} file(s) and remove "${sourceName}".`)) return;
+    const aliasNote = keepAlias ? `\n"${sourceName}" will be kept as an alias.` : '';
+    if (!confirm(`Merge "${sourceName}" into "${targetName}"?\nThis will retag all ${srcTag?.count || 0} file(s) and remove "${sourceName}".${aliasNote}`)) return;
     const res = await apiPost('/api/rename-tag', { name: sourceName, new_name: targetName, dir: currentAbsDir() });
-    if (res && res.merged) showToast(`Merged "${sourceName}" into "${targetName}".`);
+    if (keepAlias) {
+        try {
+            await apiPost('/api/synonym/add', { alias: sourceName, canonical: targetName, dir: currentAbsDir() });
+        } catch (e) {
+            showToast(`Merged, but could not create alias: ${e.message || e}`);
+        }
+    }
+    if (res && res.merged) showToast(`Merged "${sourceName}" into "${targetName}"${keepAlias ? ` — "${sourceName}" kept as alias` : ''}.`);
     else showToast(`Renamed and merged.`);
     await loadTags();
     _tmSelectedTag = targetName;

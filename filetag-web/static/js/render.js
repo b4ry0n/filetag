@@ -112,7 +112,7 @@ function startRootRename(rootPath, el) {
 
 function renderGrid(items) {
     let html = '';
-    // Render eerst alle directories, daarna alle files (DOM-volgorde = previewqueue-volgorde)
+    // Render directories first, then files (DOM order = preview-queue order).
     const files = items.filter(e => !e.is_dir);
     const dirs  = items.filter(e =>  e.is_dir);
     for (const entry of [...dirs, ...files]) {
@@ -129,8 +129,7 @@ function renderGrid(items) {
             const dirPath = entry.root_path == null ? fullPath(entry) : null;
             if (dirPath) {
                 const dts = `/api/dir-thumbs?${new URLSearchParams({path: dirPath}).toString()}${dirParam('&')}`;
-                // LOG frontend fetch naar dir-thumbs
-                preview = `<div class="card-icon" data-thumb-src="${esc(dts)}" data-dir-path="${esc(dirPath)}" data-name="${esc(name)}">${ICONS.folder}</div>`;
+                        preview = `<div class="card-icon" data-thumb-src="${esc(dts)}" data-dir-path="${esc(dirPath)}" data-name="${esc(name)}">${ICONS.folder}</div>`;
             } else {
                 preview = `<div class="card-icon">${ICONS.folder}</div>`;
             }
@@ -205,38 +204,58 @@ function renderGrid(items) {
     return html;
 }
 
-// Poll voor ontbrekende directory previews en update de kaarten zodra de preview beschikbaar is
+// ---------------------------------------------------------------------------
+// Directory thumbnail polling
+//
+// Each call to render() cancels any previous polling chain via a generation
+// counter, preventing multiple concurrent chains from accumulating.
+// Blob object-URLs are revoked after the image element has loaded to avoid
+// memory leaks during long browsing sessions.
+// ---------------------------------------------------------------------------
+
+let _pollGeneration = 0; // incremented on each render() to cancel previous chains
+
 function pollDirPreviews() {
+    const gen = _pollGeneration; // capture current generation at call time
+
     const dirCards = document.querySelectorAll('.card.folder .card-icon[data-thumb-src]');
     let anyPending = false;
     dirCards.forEach(cardIcon => {
         const thumbUrl = cardIcon.getAttribute('data-thumb-src');
         if (!thumbUrl) return;
-        // Alleen pollen als er nog geen sprite aanwezig is
+        // Skip cards that already have a sprite loaded.
         if (cardIcon.querySelector('.card-dir-sprite')) return;
         anyPending = true;
         fetch(thumbUrl)
             .then(resp => {
+                // Abort if a newer render has started.
+                if (gen !== _pollGeneration) return;
                 if (resp.ok && resp.headers.get('content-type')?.startsWith('image/')) {
                     resp.blob().then(blob => {
+                        if (gen !== _pollGeneration) return;
                         const blobUrl = URL.createObjectURL(blob);
-                        // Gebruik de bestaande thumbReplace logica voor correcte animatie/hover
                         if (typeof window._thumbReplace === 'function') {
-                            window._thumbReplace(cardIcon, blobUrl);
+                            window._thumbReplace(cardIcon, blobUrl, /* revoke */ true);
+                        } else {
+                            // Fallback: revoke immediately after scheduling
+                            URL.revokeObjectURL(blobUrl);
                         }
                     });
                 }
-            });
+            })
+            .catch(() => { /* network error — silently ignore */ });
     });
-    // Blijf pollen zolang er kaarten zonder img zijn, of als er nieuwe kaarten verschijnen
-    if (anyPending) {
-        setTimeout(pollDirPreviews, 1200);
+    // Continue polling only if there are still pending cards and this is the
+    // latest generation.
+    if (anyPending && gen === _pollGeneration) {
+        setTimeout(() => { if (gen === _pollGeneration) pollDirPreviews(); }, 1200);
     }
 }
 
-// Start polling na elke render
+// Wrap render() to increment the generation counter and start a fresh poll.
 const origRender = window.render;
 window.render = function(...args) {
+    _pollGeneration++;
     const result = origRender.apply(this, args);
     setTimeout(pollDirPreviews, 200);
     return result;
@@ -342,6 +361,7 @@ function cardDragStart(event, path) {
 let _rootDragPath = null;
 
 function _rootDragStart(ev, rootPath) {
+    _rootDragPath = rootPath;          // fix: was missing — reorder never worked before
     ev.dataTransfer.effectAllowed = 'move';
 }
 

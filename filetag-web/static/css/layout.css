@@ -1103,6 +1103,20 @@ mark.tag-filter-match {
     border-radius: 3px;
 }
 
+/* Alias checkbox below the merge hint */
+.tm-merge-alias-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+.tm-merge-alias-label em { font-style: normal; font-weight: 500; color: var(--text); }
+.tm-merge-alias-label input[type=checkbox] { cursor: pointer; }
+
 /* Shared input and button styles */
 
 .tm-input {

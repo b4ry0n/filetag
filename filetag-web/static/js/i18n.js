@@ -35,6 +35,10 @@ const TRANSLATIONS = {
         'toolbar.settings':   'Settings',
         'toolbar.signout':    'Sign out',
 
+        // Settings modal — feature warnings
+        'settings.ffmpeg-missing':      'ffmpeg not found — install ffmpeg to enable this feature.',
+        'settings.imagemagick-missing': 'ImageMagick not found — install ImageMagick to enable this feature.',
+
         // Detail panel (no selection)
         'detail.empty': 'Select a file or folder to see details',
 

@@ -205,7 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.key === 'Escape') {
             if (state.tagPickerMode)           { cancelTagPickerMode(); return; }
             if (state.selectedPaths.size > 1)  { clearSelection(); return; }
-            // detail-pane mag niet meer sluiten via Escape
+            // The detail pane is no longer closed via Escape.
             if (state.mode === 'search')       { doClearSearch(); return; }
             if (_kbCursor >= 0)                { _kbClearCursor(); return; }
             return;
@@ -294,15 +294,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Attempt to restore the last-visited path. If that fails (e.g. because new
     // databases changed the root index mapping, or the directory was removed),
     // fall back to the root of the selected database so the page is never blank.
-    // Controleer of initialPath geldig is binnen de huidige root(s)
+    // Check whether initialPath is valid within the current roots.
     let validInitial = false;
     if (initialPath) {
-        // Vind de root waar initialPath onder valt
         validInitial = state.roots.some(r => initialPath === '' || initialPath === r.path || initialPath.startsWith(r.path + '/'));
     }
     try {
         if (validInitial) {
-            // Strip root-prefix uit initialPath indien nodig, zodat currentPath relatief blijft
+            // Strip the root prefix from initialPath so that currentPath stays relative.
             let relPath = initialPath;
             const root = state.currentBasePath;
             if (root && relPath && relPath.startsWith(root + '/')) {
@@ -313,9 +312,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await loadFiles(relPath);
         } else {
             sessionStorage.removeItem('ft_path');
-            // Start altijd in de eerste entry_point root als initialPath ongeldig is
-            const entry = state.roots.find(r => r.entry_point) || state.roots[0];
-            // Bij fallback: currentPath moet leeg zijn (root zelf)
+            // Fall back to the first entry-point root when initialPath is invalid.
             await loadFiles('');
         }
     } catch (e) {
@@ -325,6 +322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await loadFiles('');
         } catch (e2) { console.error('loadFiles fallback also failed:', e2); }
     }
+    _navPush(); // seed the history with the initial location so back-button works after first navigation
     render();
 
     // Build language selector and apply i18n translations to all data-i18n elements.

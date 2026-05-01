@@ -1,0 +1,288 @@
+/* ------------------------------------------------------------------ */
+/* Responsive layout — tablet and mobile                              */
+/*                                                                    */
+/* Breakpoints:                                                       */
+/*   < 640px   — mobile phones (portrait and landscape)              */
+/*   640–1024px — tablets / small laptops                            */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Shared: hamburger / sidebar toggle button                          */
+/* ------------------------------------------------------------------ */
+
+.sidebar-toggle {
+    display: none;           /* hidden on desktop */
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    background: none;
+    border: 1px solid transparent;
+    line-height: 0;
+    flex-shrink: 0;
+}
+.sidebar-toggle:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-toggle svg { display: block; }
+
+/* Overlay backdrop behind the sidebar drawer on small screens */
+.sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 199;
+}
+.sidebar-backdrop.visible { display: block; }
+
+/* ------------------------------------------------------------------ */
+/* Tablet: 640 px – 1024 px                                           */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 1024px) {
+    :root {
+        --sidebar-width: 200px;
+        --detail-width:  320px;
+    }
+
+    /* Hide the detail panel by default on tablet; user can open it via the toggle. */
+    .layout:not(.detail-force-open) {
+        grid-template-columns: var(--sidebar-width) 6px 1fr;
+    }
+    .layout:not(.detail-force-open) .detail,
+    .layout:not(.detail-force-open) #resize-detail {
+        display: none;
+    }
+
+    /* Detail panel when forced open floats as an overlay */
+    .layout.detail-force-open {
+        grid-template-columns: var(--sidebar-width) 6px 1fr;
+    }
+    .layout.detail-force-open .detail {
+        display: flex;
+        position: fixed;
+        right: 0;
+        top: var(--header-height);
+        bottom: 0;
+        width: var(--detail-width);
+        z-index: 150;
+        box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+        background: var(--bg-surface);
+        overflow-y: auto;
+    }
+    .layout.detail-force-open #resize-detail { display: none; }
+
+    /* Shrink the zoom slider slightly */
+    .zoom-slider { width: 64px; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Mobile: < 640 px                                                   */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 639px) {
+    :root {
+        --header-height: 48px;
+        --sidebar-width: 280px; /* full-width drawer on very small screens */
+    }
+
+    /* ---- Header ---- */
+    .header { gap: 8px; padding: 0 10px; }
+
+    /* Show the hamburger, hide the logo text on narrow screens */
+    .sidebar-toggle { display: flex; align-items: center; }
+    .header-title   { display: none; }
+    .header-logo    { display: none; }
+
+    /* Search bar takes all remaining space */
+    .header-search { max-width: none; }
+    .header-right .db-info { display: none; }
+
+    /* ---- Layout: sidebar as slide-in drawer ---- */
+    .layout {
+        grid-template-columns: 1fr !important;
+        position: relative;
+    }
+
+    /* All resize handles hidden on mobile */
+    .resize-handle { display: none !important; }
+
+    /* Sidebar: off-screen by default; slides in when .sidebar-open is set */
+    .sidebar {
+        position: fixed;
+        top: var(--header-height);
+        left: 0;
+        bottom: 0;
+        width: var(--sidebar-width);
+        max-width: 85vw;
+        z-index: 200;
+        transform: translateX(-100%);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: none;
+    }
+    .layout.sidebar-open .sidebar {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Detail panel: hidden, overlays from the right when open */
+    .detail,
+    #resize-detail {
+        display: none !important;
+    }
+    .layout.detail-force-open .detail {
+        display: flex !important;
+        position: fixed;
+        inset: var(--header-height) 0 0 0;
+        width: 100%;
+        z-index: 210;
+        box-shadow: none;
+        overflow-y: auto;
+    }
+
+    /* ---- Toolbar ---- */
+    .toolbar { padding: 6px 10px; gap: 6px; min-height: 36px; }
+
+    /* Compact breadcrumb: truncate from the left */
+    .breadcrumb {
+        flex-direction: row;
+        overflow: hidden;
+        max-width: calc(100vw - 180px);
+        flex-wrap: nowrap;
+    }
+    .breadcrumb-item { padding: 2px 4px; font-size: 12px; }
+
+    /* Hide the zoom slider; card size is set via a pinch gesture or the settings
+       modal. The more-menu still exposes an explicit size option. */
+    .zoom-slider    { display: none; }
+
+    /* Hide back/forward nav buttons (swipe gestures serve this purpose) */
+    .nav-buttons    { display: none; }
+
+    /* Compact view-toggle */
+    .view-toggle    { border: none; }
+    .view-btn       { padding: 6px; }
+
+    /* Entry count badge: hide on narrow screens to save space */
+    .entry-count { display: none; }
+
+    /* ---- Grid view: 2 columns on phone ---- */
+    .file-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+        padding: 10px;
+    }
+
+    /* Cards: full-width minimum size */
+    .card {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 1;
+    }
+
+    /* ---- List view: hide size + date columns on small screens ---- */
+    .list-header,
+    .list-row {
+        grid-template-columns: 28px 1fr 80px;
+    }
+    .list-header > *:nth-child(4),
+    .list-header > *:nth-child(5),
+    .list-row    > *:nth-child(4),
+    .list-row    > *:nth-child(5) {
+        display: none;
+    }
+
+    /* ---- Touch targets: minimum 44 px ---- */
+    .tag-item,
+    .tag-group-label,
+    .list-row {
+        min-height: 44px;
+    }
+
+    /* Tag items need slightly larger padding for touch */
+    .tag-item    { padding: 10px 16px 10px 22px; }
+    .tag-group-label .tag-group-name { padding: 10px 16px 10px 2px; }
+
+    /* ---- Sidebar tag search ---- */
+    .sidebar-tag-search { padding: 8px 12px; }
+    .sidebar-tag-search input { padding: 6px 10px; font-size: 13px; }
+
+    /* ---- Detail panel close button ---- */
+    .detail-close-mobile {
+        display: flex;
+    }
+
+    /* ---- Modals: full-screen on phone ---- */
+    .modal {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        min-height: 100dvh;
+    }
+    .modal-overlay {
+        align-items: flex-start;
+    }
+
+    /* ---- Lightbox / media viewer: full screen ---- */
+    .cv-toolbar {
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 4px 6px;
+    }
+
+    /* ---- Settings modal: tabs wrap ---- */
+    .modal-tabs { flex-wrap: wrap; }
+    .modal-tab-btn { font-size: 12px; padding: 6px 10px; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Touch: make drag handles invisible on touch-only devices           */
+/* (no hover available, and touch-resize is not implemented)          */
+/* ------------------------------------------------------------------ */
+
+@media (hover: none) and (pointer: coarse) {
+    .resize-handle { display: none !important; }
+
+    /* Wider tap areas for sidebar items */
+    .tag-item,
+    .tag-group-name { min-height: 40px; }
+
+    /* Disable hover-only animations that feel broken on touch */
+    .card:hover { background: unset; border-color: transparent; }
+    .card:hover .card-goto { opacity: 0; }
+    .list-row:hover { background: unset; }
+
+    /* Cards: explicit selected state is the primary visual feedback */
+    .card { -webkit-tap-highlight-color: transparent; }
+    .list-row { -webkit-tap-highlight-color: transparent; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Landscape phone: slightly larger content area                      */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 639px) and (orientation: landscape) {
+    :root { --header-height: 40px; }
+    .header-logo   { display: none; }
+    .header-title  { display: none; }
+    .sidebar { top: var(--header-height); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Hidden utility class for desktop-only elements                     */
+/* ------------------------------------------------------------------ */
+
+.detail-close-mobile {
+    display: none;           /* shown only in mobile detail overlay */
+    align-items: center;
+    justify-content: flex-end;
+    padding: 8px 12px 0;
+    flex-shrink: 0;
+}
+.detail-close-mobile button {
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    color: var(--text);
+    border: 1px solid var(--border);
+}

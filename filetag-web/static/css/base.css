@@ -29,8 +29,12 @@
     /* Semantic aliases used in UI components */
     --fg: #212529;          /* foreground / inverse-bg for toasts */
     --fg-dim: #868e96;      /* dimmed foreground (labels, hints) */
+    --fg-muted: #6c757d;    /* muted foreground (promote btn, minor hints) */
     --bg-panel: #ffffff;    /* floating panel background (dropdowns, etc.) */
     --bg-card: #f8f9fa;     /* card / input background */
+    --bg-input: #ffffff;    /* input field background */
+    --border-focus: var(--accent); /* input focus border colour */
+    --accent-dark: #0ca678; /* accent hover / darker tint */
 
     /* Syntax highlighting — light mode (GitHub-inspired) */
     --hl-comment:  #6a737d;
@@ -73,8 +77,13 @@
         /* Semantic aliases — dark mode */
         --fg: #c1c2c5;
         --fg-dim: #909296;
+        --fg-muted: #6e7680;
         --bg-panel: #25262b;
         --bg-card: #2c2e33;
+        --bg-input: #2c2e33;
+        --border-focus: var(--accent);
+        --accent: #20c997;
+        --accent-dark: #12b886;
 
         /* Syntax highlighting — dark mode */
         --hl-comment:  #8b949e;
@@ -135,6 +144,7 @@ body {
     background: var(--bg);
     overflow: hidden;
     height: 100vh;
+    height: 100dvh; /* dynamic viewport height — prevents address-bar overlap on iOS */
 }
 
 button {

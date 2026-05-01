@@ -1,4 +1,4 @@
-/* Zorg dat detail-img-zoomable altijd schaalt als preview image */
+/* Detail preview image — always scale to fit */
 .detail-img-zoomable {
     max-width: 100%;
     max-height: 100%;
@@ -6,48 +6,33 @@
     display: block;
     margin: 0 auto;
     transition: transform 0.2s;
-    cursor: zoom-in;
+    cursor: pointer;
     user-select: none;
     will-change: transform;
 }
 .meta-info-btn {
     position: absolute;
-    left: 10px;
-    top: 10px;
+    left: 8px;
+    top: 8px;
     z-index: 40;
-    width: 36px;
-    height: 36px;
+    width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(30,30,30,0.82);
-    color: #fff;
+    background: rgba(0,0,0,0.45);
+    color: rgba(255,255,255,0.88);
     border-radius: 50%;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
     cursor: pointer;
     border: none;
     outline: none;
+    font-size: 12px;
+    font-style: italic;
+    font-weight: 700;
+    line-height: 1;
     transition: background 0.15s;
 }
-.meta-info-btn {
-    position: absolute;
-    left: 10px;
-    top: 10px;
-    z-index: 40;
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(30,30,30,0.82);
-    color: #fff;
-    border-radius: 50%;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-    cursor: pointer;
-    border: none;
-    outline: none;
-    transition: background 0.15s;
-}
+.meta-info-btn:hover { background: rgba(0,0,0,0.65); }
 @keyframes metaOverlayIn {
     from { transform: translateY(40px); opacity: 0; }
     to   { transform: translateY(0); opacity: 1; }
@@ -167,6 +152,30 @@
     flex-shrink: 0;
 }
 
+/* Icon-only action buttons in the detail header */
+.detail-icon-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-secondary);
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+.detail-icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+}
+.detail-icon-btn.active {
+    color: var(--primary);
+    background: var(--primary-light);
+}
+
 .detail-chat-btn {
     display: flex;
     align-items: center;
@@ -189,11 +198,24 @@
 }
 
 .detail-header h3 {
-    font-size: 14px;
+    font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+    flex: 1;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.detail-header {
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    min-height: 38px;
+    flex-shrink: 0;
 }
 
 .detail-close {
@@ -215,7 +237,7 @@
     align-items: center;
     justify-content: center;
     min-height: 60px;
-    max-height: 70vh;
+    max-height: 55vh;
     flex: 1 1 auto;
     overflow: hidden;
     position: relative;
@@ -231,15 +253,18 @@
     display: block;
     margin: 0 auto;
     transition: transform 0.2s;
-    cursor: zoom-in;
+    cursor: pointer;
     user-select: none;
     will-change: transform;
 }
 
 /* Clickable preview hint */
 .detail-preview .preview-zoomable {
-    cursor: zoom-in;
+    cursor: pointer;
     display: block;
+    width: 100%;
+    height: 100%;
+    position: relative;
 }
 
 /* Text / code preview */
@@ -296,7 +321,7 @@
     max-height: 320px;
     overflow-y: auto;
     color: var(--text);
-    cursor: zoom-in;
+    cursor: pointer;
     width: 100%;
     box-sizing: border-box;
 }
@@ -511,16 +536,26 @@
 }
 
 .tag-add-form {
-    display: grid;
-    grid-template-columns: 1fr auto;
+    display: flex;
+    flex-direction: column;
     gap: 6px;
     position: relative;
     z-index: 2;
+    margin-top: 4px;
 }
 
-/* Main tag input spans both columns */
+/* Row containing the main tag input and Add button side by side */
+.tag-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+}
+.tag-input-row .tag-input-wrap { flex: 1; min-width: 0; }
+.tag-input-row > .tag-input-wrap { flex: 1; min-width: 0; }
+
+/* Main tag input spans both columns — no longer needed, kept for compat */
 .tag-add-form #tag-input {
-    grid-column: 1 / -1;
+    width: 100%;
 }
 
 .tag-autocomplete {
@@ -809,16 +844,59 @@
 /* Zip cover */
 .zip-cover-wrap {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 10px;
-    padding: 8px 0;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    position: relative;
 }
 .zip-cover {
-    max-width: 100%;
-    max-height: 260px;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
-    border-radius: 4px;
+    display: block;
+}
+
+/* Overlay "Open in viewer" button — appears at the bottom of the preview image on hover */
+.preview-viewer-hover-zone {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 10px;
+    pointer-events: all;
+    z-index: 4;
+}
+.preview-viewer-overlay-btn {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+    padding: 6px 18px;
+    border: 1.5px solid rgba(255, 255, 255, 0.55);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    white-space: nowrap;
+}
+.preview-viewer-hover-zone:hover .preview-viewer-overlay-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
+.preview-viewer-overlay-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.75);
 }
 
 /* Generic action button inside detail */

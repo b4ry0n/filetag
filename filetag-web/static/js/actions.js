@@ -1,8 +1,93 @@
 // ---------------------------------------------------------------------------
+// Navigation history  (Alt+Left / Alt+Right, and zip sub-directory traversal)
+// ---------------------------------------------------------------------------
+
+let _navHistory   = [];   // array of state snapshots
+let _navHistoryIdx = -1;  // current position
+let _navRestoring  = false; // suppresses recursive pushes during restore
+
+/** Update the enabled/disabled state of the nav-back and nav-forward buttons. */
+function _navUpdateButtons() {
+    const back    = document.getElementById('nav-back');
+    const forward = document.getElementById('nav-forward');
+    if (back)    back.disabled    = (_navHistoryIdx <= 0);
+    if (forward) forward.disabled = (_navHistoryIdx >= _navHistory.length - 1);
+}
+
+/** Capture the current navigation state and push it onto the history stack. */
+function _navPush() {
+    if (_navRestoring) return;
+    const snap = {
+        mode:            state.mode,
+        currentPath:     state.currentPath,
+        currentBasePath: state.currentBasePath,
+        zipPath:         state.zipPath,
+        zipSubdir:       state.zipSubdir,
+        searchQuery:     state.searchQuery,
+    };
+    // Discard any forward history beyond the current position.
+    _navHistory = _navHistory.slice(0, _navHistoryIdx + 1);
+    _navHistory.push(snap);
+    if (_navHistory.length > 50) { _navHistory.shift(); } // cap size
+    _navHistoryIdx = _navHistory.length - 1;
+    _navUpdateButtons();
+}
+
+/** Restore a previously saved snapshot without recording a new push. */
+async function _navRestore(snap) {
+    _navRestoring = true;
+    try {
+        _thumbClearCache();
+        _kbCursor = -1;
+        state.selectedFile = null;
+        state.selectedDir  = null;
+        state.selectedPaths.clear();
+        state.selectedFilesData.clear();
+        state.activeTags.clear();
+        _lastClickedPath = null;
+        _armedBulkTag    = null;
+        if (snap.mode === 'zip') {
+            state.currentBasePath = snap.currentBasePath;
+            state.currentPath     = snap.currentPath;
+            state.zipPath         = snap.zipPath;
+            state.zipSubdir       = snap.zipSubdir || '';
+            state.mode            = 'zip';
+            const data = await api('/api/zip/entries?' + new URLSearchParams({ path: snap.zipPath }));
+            state.zipEntries = data.entries || [];
+        } else if (snap.mode === 'search') {
+            await searchFiles(snap.searchQuery);
+        } else {
+            await loadFiles(snap.currentPath);
+            await loadSettings();
+        }
+    } finally {
+        _navRestoring = false;
+    }
+    render();
+}
+
+/** Go back one step in the navigation history (Alt+Left). */
+async function navBack() {
+    if (_navHistoryIdx <= 0) return;
+    _navHistoryIdx--;
+    await _navRestore(_navHistory[_navHistoryIdx]);
+    _navUpdateButtons();
+}
+
+/** Go forward one step in the navigation history (Alt+Right). */
+async function navForward() {
+    if (_navHistoryIdx >= _navHistory.length - 1) return;
+    _navHistoryIdx++;
+    await _navRestore(_navHistory[_navHistoryIdx]);
+    _navUpdateButtons();
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
 async function navigateTo(path) {
+    closeMobileSidebar(); // auto-close the mobile drawer when navigating
     _thumbClearCache();
     _kbCursor = -1;
     state.selectedFile = null;
@@ -14,6 +99,7 @@ async function navigateTo(path) {
     _lastClickedPath = null;
     _armedBulkTag = null;
     await loadFiles(path);
+    _navPush(); // record this directory in the navigation history
     await loadSettings();
     if (typeof loadFaceConfig === 'function') {
         Promise.all([loadFaceConfig(), loadPeople()]).then(() => renderTags()).catch(() => {});
@@ -108,15 +194,14 @@ function navigateToParent(filePath) {
 
 /// Quote a tag name for the query language if it contains special characters.
 function openSettings(tab = 'video') {
-    console.log('[DEBUG] state.settings:', state.settings);
     const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
-    // Video settings from per-root state
+    // Video settings from per-root state.
     document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
     document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
-    // PDF (altijd invullen, want veld bestaat altijd)
+    // PDF field is always present — populate regardless of active tab.
     document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
-    // Features-tab initialisatie uitgesteld tot tab zichtbaar wordt
+    // Features tab initialisation is deferred until the tab is visible.
 
     // AI settings from server
     fetch('/api/ai/config?' + new URLSearchParams({ dir: currentAbsDir() || '' }))
@@ -180,7 +265,7 @@ function openSettings(tab = 'video') {
     switchSettingsTab(tab);
     document.getElementById('settings-modal').hidden = false;
 
-    // Als het features-tabblad direct geopend wordt, initialiseer toggles/waarschuwingen
+    // If the features tab is opened directly, initialise its toggles and warnings.
     if (tab === 'features') updateFeaturesTab();
 }
 
@@ -750,11 +835,11 @@ function switchSettingsTab(tab) {
     document.querySelectorAll('.modal-tab-panel').forEach(p => {
         p.hidden = (p.id !== `settings-tab-${tab}`);
     });
-    // Features-tab: toggles/waarschuwingen bijwerken zodra tab zichtbaar wordt
+    // Update feature toggles and warnings whenever the features tab becomes visible.
     if (tab === 'features') updateFeaturesTab();
 }
 
-// Nieuwe functie: vult toggles en waarschuwingen in features-tab
+// Populates the toggles and tool-availability warnings in the features tab.
 function updateFeaturesTab() {
     // Video/ffmpeg
     const ffmpegInstalled = state.settings.ffmpeg_installed === true;
@@ -784,27 +869,6 @@ function updateFeaturesTab() {
         else magickWarn.style.display = 'block';
     }
 }
-
-async function openSettings(tab = 'video') {
-    console.log('[DEBUG] state.settings:', state.settings);
-    const menu = document.getElementById('more-menu');
-    if (menu) menu.hidden = true;
-    // Video settings from per-root state
-    document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
-    document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
-    // PDF (altijd invullen, want veld bestaat altijd)
-    document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
-    // Features-tab initialisatie uitgesteld tot tab zichtbaar wordt
-
-    switchSettingsTab(tab);
-    document.getElementById('settings-modal').hidden = false;
-
-    // Als het features-tabblad direct geopend wordt, initialiseer toggles/waarschuwingen
-    if (tab === 'features') updateFeaturesTab();
-}
-    // AI settings from server
-// ... oude try/await/fetch-blok verwijderd ...
-// ... einde openSettings ...
 
 function closeSettings() {
     document.getElementById('settings-modal').hidden = true;
@@ -1366,11 +1430,52 @@ function toggleDetailPanel() {
     const activePath = state.selectedFile?.path || state.selectedDir?.path || null;
     const anchor = saveScrollAnchor(activePath);
     const layout = document.querySelector('.layout');
+
+    // On mobile: toggle overlay detail panel.
+    if (window.matchMedia('(max-width: 639px)').matches) {
+        layout.classList.toggle('detail-force-open');
+        restoreScrollAnchor(anchor);
+        return;
+    }
+
+    // On tablet: toggle overlay detail panel.
+    if (window.matchMedia('(max-width: 1024px)').matches) {
+        layout.classList.toggle('detail-force-open');
+        restoreScrollAnchor(anchor);
+        return;
+    }
+
     const collapsed = layout.classList.toggle('detail-collapsed');
     state.detailOpen = !collapsed;
     document.getElementById('detail-toggle').classList.toggle('active', !collapsed);
     _syncChatRight();
     restoreScrollAnchor(anchor);
+}
+
+/**
+ * Toggle the sidebar drawer on mobile (< 640 px).
+ * On larger screens this is a no-op — the sidebar is always visible.
+ */
+function toggleMobileSidebar() {
+    const layout = document.querySelector('.layout');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const isOpen = layout.classList.toggle('sidebar-open');
+    if (backdrop) backdrop.classList.toggle('visible', isOpen);
+    // Prevent body scrolling while the sidebar drawer is open.
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+}
+
+/**
+ * Close the mobile sidebar drawer if a tag or navigation item is tapped.
+ * Call this from any handler that should implicitly close the drawer.
+ */
+function closeMobileSidebar() {
+    const layout = document.querySelector('.layout');
+    if (!layout.classList.contains('sidebar-open')) return;
+    const backdrop = document.getElementById('sidebar-backdrop');
+    layout.classList.remove('sidebar-open');
+    if (backdrop) backdrop.classList.remove('visible');
+    document.body.style.overflow = '';
 }
 
 // ---------------------------------------------------------------------------

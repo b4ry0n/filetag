@@ -76,7 +76,7 @@ async function apiPost(url, body) {
 function currentAbsDir() {
     if (state.currentBasePath == null) return null;
     if (!state.currentPath) return state.currentBasePath;
-    // voorkom dubbele prefix: als currentPath al met currentBasePath begint, plak niet nogmaals
+    // Avoid duplicate prefix: if currentPath already starts with currentBasePath, do not prepend again.
     if (state.currentPath.startsWith(state.currentBasePath + '/')) return state.currentPath;
     return state.currentBasePath + '/' + state.currentPath;
 }

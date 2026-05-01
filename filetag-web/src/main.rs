@@ -262,6 +262,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/js/chat.js", get(api::js_chat))
         .route("/js/face.js", get(api::js_face))
         .route("/css/face.css", get(api::css_face))
+        .route("/css/mobile.css", get(api::css_mobile))
         .route("/favicon.svg", get(api::favicon))
         .route("/api/roots", get(api::api_roots))
         .route("/api/auth/status", get(api::api_auth_status))
