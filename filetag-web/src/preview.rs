@@ -1556,8 +1556,12 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path) -> bool {
     let mut canvas = image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
     for (input, (x, y)) in inputs.iter().take(n).zip(slots.iter()) {
         // Read by content (not extension) so WebP bytes in a .jpg temp file work.
-        let Ok(data) = std::fs::read(input) else { continue };
-        let Ok(img) = image::load_from_memory(&data) else { continue };
+        let Ok(data) = std::fs::read(input) else {
+            continue;
+        };
+        let Ok(img) = image::load_from_memory(&data) else {
+            continue;
+        };
         let tile = img
             .resize_to_fill(100, 100, image::imageops::FilterType::Lanczos3)
             .to_rgba8();
@@ -1827,7 +1831,11 @@ pub async fn api_dir_thumbs(
                     let item_path = &files[idx];
                     if let Some(data) = dir_item_jpeg(item_path, &cache_root, features_bg).await {
                         // Use the correct extension so ImageMagick gets the right format hint.
-                        let ext = if data.starts_with(b"RIFF") { "webp" } else { "jpg" };
+                        let ext = if data.starts_with(b"RIFF") {
+                            "webp"
+                        } else {
+                            "jpg"
+                        };
                         let tp = tmp_dir.join(format!("item{}.{ext}", item_thumb_paths.len()));
                         if tokio::fs::write(&tp, &data).await.is_ok() {
                             item_thumb_paths.push(tp);
