@@ -300,7 +300,7 @@ pub fn raw_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
 /// Return the cache path for a file thumbnail, keyed by mtime + size.
 /// Stored in `<root>/.filetag/cache/thumbs/`.
 pub fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
-    file_cache_path(abs, root, "thumbs", "thumb.jpg")
+    file_cache_path(abs, root, "thumbs", "thumb.webp")
 }
 
 /// RAW extensions for which pure-Rust embedded JPEG extraction is attempted.
@@ -337,16 +337,10 @@ async fn raw_thumb_rust(path: &Path) -> Option<Vec<u8>> {
         let img = apply_exif_orientation(img, orient);
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
 
-        let rgb = img.to_rgb8();
-        let mut out = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
-            .encode_image(&rgb)
-            .ok()?;
-        if out.starts_with(&[0xFF, 0xD8]) {
-            Some(out)
-        } else {
-            None
-        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
+        let bytes = out.into_inner();
+        bytes.starts_with(b"RIFF").then_some(bytes)
     })
     .await
     .ok()?
@@ -675,18 +669,11 @@ async fn image_thumb_rust(path: &Path) -> Option<Vec<u8>> {
         // Resize: fit within 400×400 preserving aspect ratio
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
 
-        // Encode as JPEG quality 80
-        let rgb = img.to_rgb8();
-        let mut out = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
-            .encode_image(&rgb)
-            .ok()?;
-
-        if out.starts_with(&[0xFF, 0xD8]) {
-            Some(out)
-        } else {
-            None
-        }
+        // Encode as WebP
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
+        let bytes = out.into_inner();
+        bytes.starts_with(b"RIFF").then_some(bytes)
     })
     .await
     .ok()?
@@ -725,15 +712,10 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
         let resized = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
             let img = image::load_from_memory(&jpeg).ok()?;
             let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-            let mut out = Vec::new();
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
-                .encode_image(&img.to_rgb8())
-                .ok()?;
-            if out.starts_with(&[0xFF, 0xD8]) {
-                Some(out)
-            } else {
-                None
-            }
+            let mut out = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
+            let bytes = out.into_inner();
+            bytes.starts_with(b"RIFF").then_some(bytes)
         })
         .await
         .ok()
@@ -755,14 +737,14 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
                     "400x400>",
                     "-quality",
                     "80",
-                    "jpg:-",
+                    "webp:-",
                 ])
                 .stderr(std::process::Stdio::null())
                 .kill_on_drop(true)
                 .output()
                 .await
                 && out.status.success()
-                && out.stdout.starts_with(&[0xFF, 0xD8])
+                && out.stdout.starts_with(b"RIFF")
             {
                 return Some(out.stdout);
             }
@@ -810,7 +792,21 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
             && out.status.success()
             && out.stdout.starts_with(&[0xFF, 0xD8])
         {
-            return Some(out.stdout);
+            // Re-encode the JPEG from ffmpeg as WebP.
+            let jpeg = out.stdout;
+            let webp = tokio::task::spawn_blocking(move || {
+                let img = image::load_from_memory(&jpeg).ok()?;
+                let mut buf = std::io::Cursor::new(Vec::new());
+                img.write_to(&mut buf, image::ImageFormat::WebP).ok()?;
+                let bytes = buf.into_inner();
+                bytes.starts_with(b"RIFF").then_some(bytes)
+            })
+            .await
+            .ok()
+            .flatten();
+            if webp.is_some() {
+                return webp;
+            }
         }
     }
 
@@ -832,9 +828,9 @@ pub async fn sips_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tmp = tmp_dir.join(format!("sips_{stem}.jpg"));
+    let tmp = tmp_dir.join(format!("sips_{stem}.webp"));
     let status = tokio::process::Command::new("sips")
-        .args(["-s", "format", "jpeg", "-Z", "400"])
+        .args(["-s", "format", "webp", "-Z", "400"])
         .arg(path)
         .args(["--out"])
         .arg(&tmp)
@@ -849,7 +845,7 @@ pub async fn sips_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
     }
     let data = tokio::fs::read(&tmp).await.ok()?;
     let _ = tokio::fs::remove_file(&tmp).await;
-    if data.starts_with(&[0xFF, 0xD8]) {
+    if data.starts_with(b"RIFF") {
         Some(data)
     } else {
         None
@@ -880,11 +876,11 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let tmp_prefix = tmp_dir.join(format!("pdft_{}", stem));
-    let expected = tmp_dir.join(format!("pdft_{}.jpg", stem));
+    let expected = tmp_dir.join(format!("pdft_{}.png", stem));
 
     let status = tokio::process::Command::new("pdftoppm")
         .args([
-            "-jpeg",
+            "-png",
             "-singlefile",
             "-f",
             "1",
@@ -901,11 +897,21 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
         .await;
 
     if status.map(|s| s.success()).unwrap_or(false)
-        && let Ok(data) = tokio::fs::read(&expected).await
+        && let Ok(png_data) = tokio::fs::read(&expected).await
     {
         let _ = tokio::fs::remove_file(&expected).await;
-        if data.starts_with(&[0xFF, 0xD8]) {
-            return Some(data);
+        let webp = tokio::task::spawn_blocking(move || {
+            let img = image::load_from_memory(&png_data).ok()?;
+            let mut out = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
+            let bytes = out.into_inner();
+            bytes.starts_with(b"RIFF").then_some(bytes)
+        })
+        .await
+        .ok()
+        .flatten();
+        if webp.is_some() {
+            return webp;
         }
     }
     let _ = tokio::fs::remove_file(&expected).await;
@@ -923,7 +929,7 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
 /// Cache key is derived from the zip file's mtime + size + entry name so
 /// thumbnails are invalidated automatically when the archive changes.
 async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> Response {
-    // Build a stable cache path: <root>/.filetag/cache/thumbs/<mtime>_<size>_<entry_slug>.thumb.jpg
+    // Build a stable cache path: <root>/.filetag/cache/thumbs/<mtime>_<size>_<entry_slug>.thumb.webp
     let cache_path: Option<PathBuf> = (|| {
         let meta = std::fs::metadata(zip_abs).ok()?;
         let mtime = meta
@@ -935,7 +941,7 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
         let size = meta.len();
         // Sanitise entry name for use as a filename: replace path separators.
         let slug = entry_name.replace(['/', '\\', ':'], "_");
-        let key = format!("{mtime}_{size}_{slug}.thumb.jpg");
+        let key = format!("{mtime}_{size}_{slug}.thumb.webp");
         let dir = root.join(".filetag").join("cache").join("thumbs");
         std::fs::create_dir_all(&dir).ok()?;
         Some(dir.join(key))
@@ -945,7 +951,7 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
     if let Some(ref p) = cache_path
         && let Ok(data) = tokio::fs::read(p).await
     {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
     }
 
     let _permit = match THUMB_LIMITER.try_acquire() {
@@ -971,15 +977,10 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
         };
         let img = apply_exif_orientation(img, orient);
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-        let mut out = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80)
-            .encode_image(&img.to_rgb8())
-            .ok()?;
-        if out.starts_with(&[0xFF, 0xD8]) {
-            Some(out)
-        } else {
-            None
-        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
+        let bytes = out.into_inner();
+        bytes.starts_with(b"RIFF").then_some(bytes)
     })
     .await
     .ok()
@@ -990,7 +991,7 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
             if let Some(ref p) = cache_path {
                 let _ = tokio::fs::write(p, &data).await;
             }
-            ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response()
+            ([(header::CONTENT_TYPE, "image/webp")], data).into_response()
         }
         None => StatusCode::NO_CONTENT.into_response(),
     }
@@ -1125,7 +1126,7 @@ pub async fn thumb_handler(
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" => {
             if let Some(cache) = thumb_cache_path(&abs, &cache_root) {
                 if let Ok(data) = tokio::fs::read(&cache).await {
-                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                    return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
                 }
                 let _permit = match THUMB_LIMITER.try_acquire() {
                     Ok(p) => p,
@@ -1136,7 +1137,7 @@ pub async fn thumb_handler(
                 };
                 if let Some(data) = image_thumb_jpeg(&abs, features).await {
                     let _ = tokio::fs::write(&cache, &data).await;
-                    return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+                    return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
                 }
             }
             // Cache unavailable or tool missing: serve the original
@@ -1164,14 +1165,14 @@ use std::future::Future;
 use std::pin::Pin;
 
 /// General-purpose cached thumbnail: check cache, acquire permit, run `generate`
-/// callback, write cache, serve JPEG.
+/// callback, write cache, serve WebP.
 async fn thumb_cached<F>(abs: &Path, root: &Path, generate: F) -> Response
 where
     F: FnOnce(&Path) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + Send + '_>>,
 {
     if let Some(cache) = thumb_cache_path(abs, root) {
         if let Ok(data) = tokio::fs::read(&cache).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
         let _permit = match THUMB_LIMITER.try_acquire() {
             Ok(p) => p,
@@ -1181,7 +1182,7 @@ where
         };
         if let Some(data) = generate(abs).await {
             let _ = tokio::fs::write(&cache, &data).await;
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
     }
     StatusCode::NO_CONTENT.into_response()

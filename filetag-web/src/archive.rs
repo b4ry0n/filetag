@@ -548,7 +548,7 @@ fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<Pat
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.jpg");
+    let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.webp");
     let dir = root.join(".filetag").join("cache").join("zip-pages");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(key))
@@ -583,7 +583,7 @@ pub async fn api_zip_thumb(
 
     if let Some(cache) = zip_page_thumb_cache_path(&abs, &cache_root, page_idx) {
         if let Ok(data) = tokio::fs::read(&cache).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
         let _permit = match THUMB_LIMITER.acquire().await {
@@ -607,7 +607,7 @@ pub async fn api_zip_thumb(
         })
         .await;
 
-        if let Ok(Ok((img_bytes, _mime))) = result {
+        if let Ok(Ok((img_bytes, mime))) = result {
             let tmp = cache_root
                 .join(".filetag")
                 .join("tmp")
@@ -617,11 +617,11 @@ pub async fn api_zip_thumb(
                 if let Some(small) = image_thumb_jpeg(&tmp, features).await {
                     let _ = tokio::fs::remove_file(&tmp).await;
                     let _ = tokio::fs::write(&cache, &small).await;
-                    return ([(header::CONTENT_TYPE, "image/jpeg")], small).into_response();
+                    return ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
                 }
                 let _ = tokio::fs::remove_file(&tmp).await;
             }
-            return ([(header::CONTENT_TYPE, "image/jpeg")], img_bytes).into_response();
+            return ([(header::CONTENT_TYPE, mime)], img_bytes).into_response();
         }
         return (StatusCode::NOT_FOUND, "Page not found").into_response();
     }
