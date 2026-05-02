@@ -131,6 +131,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    z-index: 10; /* keep above popover shadow */
+    overflow: visible; /* allow popover to overflow */
 }
 
 .sidebar-header h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
@@ -188,6 +190,40 @@ mark.tag-filter-match {
 
 .sidebar-content {
     padding: 4px 0;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Each section is its own independent pane */
+.section-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 0 0 auto;  /* collapsed: natural height */
+}
+.section-panel.section-panel-expanded {
+    flex: 1 1 0;     /* expanded: share remaining space equally */
+    min-height: 80px;
+}
+/* Section body areas scroll independently */
+.section-panel .tags-section-body,
+.section-panel .subjects-section-body,
+.section-panel .people-section-body,
+.section-panel .ai-section-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+/* Distribution panel: fixed height with scroll when tall */
+.section-panel .dist-panel {
+    max-height: 220px;
+    overflow-y: auto;
+}
+/* Picker mode: single scrollable wrapper */
+.picker-scroll-wrap {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -277,33 +313,68 @@ mark.tag-filter-match {
 }
 
 /* Active filter bar \u2014 compact single line at top of scrollable list */
-.active-filters-bar {
-    display: flex;
-    align-items: center;
-    padding: 3px 8px 3px 16px;
+/* Active filter chips — sticky zone at the top of the scrollable tag list */
+.active-filters-chips {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
     border-bottom: 1px solid var(--border);
-    gap: 6px;
+    padding: 6px 8px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
-.active-filters-count {
-    font-size: 11px;
-    color: var(--primary);
+.active-filters-chips-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.active-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--primary-light, #dbeafe);
+    color: var(--primary, #2563eb);
+    border-radius: 12px;
+    padding: 2px 8px 2px 10px;
+    font-size: 12px;
     font-weight: 500;
-    flex: 1;
+    cursor: pointer;
+    border: 1px solid transparent;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
 }
 
-.active-filters-clear {
+.active-filter-chip:hover {
+    background: var(--primary, #2563eb);
+    color: #fff;
+}
+
+.active-filter-chip-x {
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.65;
+    flex-shrink: 0;
+}
+
+.active-filters-clear-all {
     font-size: 11px;
     color: var(--text-secondary);
-    padding: 1px 6px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    cursor: pointer;
     background: none;
     border: none;
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 3px;
+    align-self: flex-end;
 }
 
-.active-filters-clear:hover { background: var(--bg-hover); color: var(--text); }
+.active-filters-clear-all:hover { background: var(--bg-hover); color: var(--text); }
 
 /* Tag picker bar — sticky footer inside #tag-list while picker mode is active */
 .tag-picker-bar {
@@ -582,6 +653,29 @@ mark.tag-filter-match {
     margin-left: 4px;
     vertical-align: middle;
     opacity: 0.75;
+}
+
+/* Inline k=v toggle button inside a group header row */
+.tag-kv-inline-btn {
+    padding: 0 2px;
+    margin-left: 2px;
+    border-radius: 3px;
+    vertical-align: middle;
+    opacity: 0.65;
+    transition: opacity 0.15s;
+}
+.tag-kv-inline-btn:hover { opacity: 1; background: transparent; }
+.tag-kv-inline-btn.active { opacity: 1; }
+.tag-kv-inline-btn.active .tag-kv-badge {
+    background: var(--primary);
+    color: #fff;
+}
+
+/* Indented values list that appears between header and children */
+.tag-kv-inline-values {
+    margin-left: 24px;
+    border-left: 2px solid var(--primary-light);
+    margin-bottom: 2px;
 }
 
 .tag-kv-eq {
@@ -1326,6 +1420,248 @@ mark.tag-filter-match {
     border-top: 1px solid var(--border);
     margin-top: 4px;
     user-select: none;
+}
+
+/* AI tags section — collapsible, same visual language as subjects divider */
+.ai-section-divider {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    background: var(--bg-surface);
+}
+
+/* No border-top on the first section panel */
+.section-panel:first-child > .ai-section-divider,
+.active-filters-chips + .section-panel > .ai-section-divider {
+    border-top: none;
+}
+
+.ai-section-divider:hover { background: var(--bg-hover); color: var(--text-secondary); }
+
+.ai-section-divider.active { color: var(--primary); }
+
+/* Drag handle inside section headers */
+.section-drag-handle {
+    display: flex;
+    align-items: center;
+    color: var(--text-tertiary);
+    opacity: 0;
+    transition: opacity 0.12s;
+    cursor: grab;
+    flex-shrink: 0;
+    margin-right: -2px;
+}
+.ai-section-divider:hover .section-drag-handle { opacity: 0.7; }
+.ai-section-divider.section-dragging { opacity: 0.45; }
+.ai-section-divider.section-drag-over-before { box-shadow: inset 0 2px 0 var(--primary); }
+.ai-section-divider.section-drag-over-after  { box-shadow: inset 0 -2px 0 var(--primary); }
+
+/* Chevron button inside section header — resets button chrome */
+.section-chevron-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+    flex-shrink: 0;
+    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    margin-right: -2px;
+}
+.section-chevron-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+/* Resize handle between expanded section panels */
+.section-resize-handle {
+    flex-shrink: 0;
+    height: 5px;
+    cursor: ns-resize;
+    background: transparent;
+    position: relative;
+    z-index: 5;
+    transition: background 0.12s;
+}
+.section-resize-handle::after {
+    content: '';
+    position: absolute;
+    left: 20%;
+    right: 20%;
+    top: 2px;
+    height: 1px;
+    background: var(--border);
+    border-radius: 1px;
+    transition: background 0.12s, top 0.1s, height 0.1s;
+}
+.section-resize-handle:hover::after,
+.section-resize-handle.section-resize-active::after {
+    top: 1px;
+    height: 3px;
+    background: var(--primary);
+}
+
+.ai-section-divider .chevron-icon {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+    transition: transform 0.18s;
+    transform: rotate(0deg); /* expanded = pointing down */
+}
+
+.ai-section-divider .chevron-icon.chevron-collapsed { transform: rotate(-90deg); }
+
+.ai-section-divider .count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.ai-section-divider.active .count { color: var(--primary); }
+
+/* ------------------------------------------------------------------ */
+/* Bottom stack — sections below the fold, mirrored at the bottom      */
+/* ------------------------------------------------------------------ */
+
+/* Bottom stack is superseded by independent section scrolling. */
+.sidebar-bottom-stack { display: none; }
+
+/* ------------------------------------------------------------------ */
+/* Sidebar sections gear button                                         */
+/* ------------------------------------------------------------------ */
+
+.sidebar-sections-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 4px;
+    color: var(--text-tertiary);
+    transition: color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+
+.sidebar-sections-btn:hover { color: var(--text); background: var(--bg-hover); }
+
+/* Dot badge when any section is hidden */
+.sidebar-sections-btn.has-hidden { color: var(--primary); }
+.sidebar-sections-btn.has-hidden::after {
+    content: '';
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 5px;
+    height: 5px;
+    background: var(--primary);
+    border-radius: 50%;
+}
+.sidebar-sections-btn { position: relative; }
+
+/* Sections popover panel */
+.sidebar-sections-popover {
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 8px;
+    z-index: 200;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    padding: 8px 4px 6px;
+    min-width: 170px;
+}
+
+.sections-pop-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    padding: 0 10px 6px;
+}
+
+.sections-pop-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    user-select: none;
+}
+.sections-pop-row:hover { background: var(--bg-hover); }
+.sections-pop-row input[type="checkbox"] { accent-color: var(--primary); cursor: pointer; }
+
+/* ------------------------------------------------------------------ */
+/* Tag distribution panel (horizontal bar chart)                        */
+/* ------------------------------------------------------------------ */
+
+.dist-panel {
+    padding: 6px 10px 10px;
+}
+
+.dist-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 2px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    min-height: 22px;
+}
+.dist-row:hover { background: var(--bg-hover); }
+
+.dist-label {
+    width: 72px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+}
+
+.dist-bar-wrap {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-hover);
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 30px;
+}
+
+.dist-bar {
+    height: 100%;
+    background: var(--primary);
+    opacity: 0.5;
+    border-radius: 4px;
+    transition: width 0.25s ease;
+    min-width: 2px;
+}
+
+.dist-count {
+    flex-shrink: 0;
+    width: 28px;
+    text-align: right;
+    font-size: 11px;
+    color: var(--text-tertiary);
 }
 
 /* Subject leaf items: padding-left is set inline per depth (base 22px + 12px per level). */

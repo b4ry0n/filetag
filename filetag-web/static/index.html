@@ -50,12 +50,20 @@
                     <span class="sort-label">Groups first</span>
                 </button>
                 <button class="sidebar-manage-btn" onclick="showTagManager()" title="Open Tag Manager" data-i18n="sidebar.manage">Manage</button>
+                <button class="sidebar-sections-btn" id="sidebar-sections-btn" onclick="toggleSectionsPopover(event)" title="Toggle sidebar sections">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.42 1.42M11.53 11.53l1.42 1.42M3.05 12.95l1.42-1.42M11.53 4.47l1.42-1.42"/>
+                    </svg>
+                </button>
+                <!-- Sections popover (visibility toggles) — inside header so top:100% anchors to header -->
+                <div id="sidebar-sections-popover" class="sidebar-sections-popover" hidden></div>
             </div>
             <div class="sidebar-tag-search">
                 <input type="text" id="tag-search-input" placeholder="Filter tags…" autocomplete="off" oninput="handleTagSearch(this.value)" onkeydown="if(event.key==='Escape'){handleTagSearch('');this.value='';}">
                 <button id="tag-search-clear" hidden onclick="handleTagSearch('');document.getElementById('tag-search-input').value='';">&#x2715;</button>
             </div>
             <div class="sidebar-content" id="tag-list"></div>
+            <div id="sidebar-bottom-stack" class="sidebar-bottom-stack"></div>
             <div class="sidebar-subject-divider" id="sidebar-subject-divider" title="Drag to resize" hidden></div>
             <div class="sidebar-subject-section" id="subject-list"></div>
         </aside>
@@ -448,9 +456,9 @@
                     </div>
                 </div>
                 <div id="settings-tab-prompts" class="modal-tab-panel" hidden>
-                    <label>Collection description
-                        <small class="settings-desc-inline">Describe what this collection contains. The AI uses this as context for every analysis.</small>
-                        <textarea id="ai-subject" rows="5" placeholder="e.g. 'Family photos and videos, 2010–present. Include names of people, places, and occasions.' or 'Bird photography collection. Include species names, behaviour, and habitat.'"></textarea>
+                    <label>Extra instructions for the AI <small class="settings-label-optional">(optional)</small>
+                        <small class="settings-desc-inline">Describe your collection or specify what you want to tag. Leave empty for general-purpose prompts. Used as context for every analysis and by <strong>Optimise with AI</strong>.</small>
+                        <textarea id="ai-subject" rows="5" placeholder="e.g. 'Family photos and holiday videos. Tag people (person=name), locations, occasions, and seasons. Short, specific English tags.' or 'Bird photography. Include species names, behaviour, and habitat.'&#10;Leave empty to generate general-purpose optimised prompts."></textarea>
                     </label>
                     <details class="prompt-type-details">
                         <summary>Type instructions <small>(leave empty to use built-in defaults)</small></summary>
@@ -476,6 +484,7 @@
                     </details>
                     <div class="modal-actions">
                         <button onclick="aiSaveSettings()">Save</button>
+                        <button type="button" class="btn-secondary" onclick="openPromptWizard()">&#x2728; Optimise with AI…</button>
                         <button onclick="closeSettings()">Cancel</button>
                     </div>
                 </div>
@@ -496,6 +505,56 @@
     <script src="/js/main.js"></script>
     <script src="/js/chat.js"></script>
     <script src="/js/face.js"></script>
+    <script src="/js/prompt-wizard.js"></script>
+
+    <!-- Prompt Optimisation Wizard -->
+    <div id="prompt-wizard-modal" class="pw-overlay" hidden aria-modal="true" role="dialog">
+        <div class="pw-dialog">
+            <div class="pw-header">
+                <span id="pw-title">&#x2728; Optimising prompts…</span>
+                <button class="pw-close-btn" id="pw-close-btn" onclick="closePromptWizard()" title="Close" disabled>
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                        <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="pw-body">
+                <div id="pw-progress-area">
+                    <div class="pw-step" id="pw-step-1">
+                        <span class="pw-step-icon"></span>
+                        <span class="pw-step-label">Generating optimised prompts…</span>
+                    </div>
+                    <div class="pw-step pw-step-pending" id="pw-step-2">
+                        <span class="pw-step-icon"></span>
+                        <span class="pw-step-label">Reviewing and refining…</span>
+                    </div>
+                </div>
+                <div id="pw-result-area" class="pw-result-area" hidden>
+                    <p class="pw-result-title">Review and apply to settings:</p>
+                    <label class="pw-label">Collection description
+                        <textarea id="pw-result-subject" class="pw-result-field" rows="3"></textarea>
+                    </label>
+                    <label class="pw-label">Image prompt
+                        <textarea id="pw-result-image" class="pw-result-field" rows="3"></textarea>
+                    </label>
+                    <label class="pw-label">Video prompt
+                        <textarea id="pw-result-video" class="pw-result-field" rows="3"></textarea>
+                    </label>
+                    <label class="pw-label">Archive prompt
+                        <textarea id="pw-result-archive" class="pw-result-field" rows="3"></textarea>
+                    </label>
+                    <label class="pw-label">Output format <small>(how the AI should format its response)</small>
+                        <textarea id="pw-result-output-format" class="pw-result-field" rows="4"></textarea>
+                    </label>
+                    <div class="pw-result-actions">
+                        <button class="pw-btn-primary" onclick="pwApplyToSettings()">Apply to settings</button>
+                        <button class="pw-btn-ghost" onclick="closePromptWizard()">Discard</button>
+                    </div>
+                </div>
+                <div id="pw-error-area" class="pw-error-msg" hidden></div>
+            </div>
+        </div>
+    </div>
 
     <!-- Chat panel -->
     <div id="chat-panel" class="chat-panel" hidden>

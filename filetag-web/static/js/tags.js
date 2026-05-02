@@ -17,8 +17,487 @@ window.toggleTagFilter = async function(tagName) {
     document.getElementById('search-input').value = q;
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
+    render();
+};
+/** Clear all active tag filters and reset search. */
+window.clearTagFilters = async function() {
+    state.activeTags.clear();
+    doClearSearch();
     renderTags();
 };
+
+/** Toggle the main Tags section open/closed. */
+window.toggleTagsSection = function() {
+    const key = '\x01section:tags:hide';
+    if (state.expandedGroups.has(key)) {
+        state.expandedGroups.delete(key);
+    } else {
+        state.expandedGroups.add(key);
+        _clearSectionHeight('tags');
+    }
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+/** Toggle the AI-tags section open/closed. */
+window.toggleAiSection = function() {
+    const key = '\x01section:ai';
+    if (state.expandedGroups.has(key)) {
+        state.expandedGroups.delete(key);
+    } else {
+        state.expandedGroups.add(key);
+    }
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+/** Toggle the Subjects section open/closed (default: open). */
+window.toggleSubjectsSection = function() {
+    const key = '\x01section:subjects:hide';
+    if (state.expandedGroups.has(key)) {
+        state.expandedGroups.delete(key);
+    } else {
+        state.expandedGroups.add(key);
+    }
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+/** Toggle the People section open/closed (default: open). */
+window.togglePeopleSection = function() {
+    const key = '\x01section:people:hide';
+    if (state.expandedGroups.has(key)) {
+        state.expandedGroups.delete(key);
+    } else {
+        state.expandedGroups.add(key);
+    }
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+/** Clear all saved section heights so the layout rebalances after toggling. */
+function _clearSectionHeightsAll() {
+    state.sectionHeights = {};
+    saveSectionHeights();
+}
+function _clearSectionHeight(key) {
+    delete state.sectionHeights[key];
+    saveSectionHeights();
+}
+
+// ---------------------------------------------------------------------------
+// Section open/close — two modes
+// ---------------------------------------------------------------------------
+
+// Map from section key → { hideKey, openFn, closeFn }
+const _SECTION_TOGGLE_MAP = {
+    tags:         { hideKey: '\x01section:tags:hide',         open: () => state.expandedGroups.delete('\x01section:tags:hide'),         close: () => state.expandedGroups.add('\x01section:tags:hide') },
+    subjects:     { hideKey: '\x01section:subjects:hide',     open: () => state.expandedGroups.delete('\x01section:subjects:hide'),     close: () => state.expandedGroups.add('\x01section:subjects:hide') },
+    people:       { hideKey: '\x01section:people:hide',       open: () => state.expandedGroups.delete('\x01section:people:hide'),       close: () => state.expandedGroups.add('\x01section:people:hide') },
+    ai:           { hideKey: '\x01section:ai',                open: () => state.expandedGroups.add('\x01section:ai'),                   close: () => state.expandedGroups.delete('\x01section:ai') },
+    distribution: { hideKey: '\x01section:distribution:hide', open: () => state.expandedGroups.delete('\x01section:distribution:hide'), close: () => state.expandedGroups.add('\x01section:distribution:hide') },
+};
+
+function _isSectionOpen(key) {
+    if (key === 'ai') return state.expandedGroups.has('\x01section:ai');
+    return !state.expandedGroups.has(_SECTION_TOGGLE_MAP[key]?.hideKey);
+}
+
+/**
+ * Header click (non-chevron area): exclusive open.
+ * Opens this section; closes all others that are currently open.
+ */
+window.openSectionExclusive = function(key, e) {
+    if (e) e.stopPropagation();
+    // Always open the clicked section; close all others.
+    for (const [k, t] of Object.entries(_SECTION_TOGGLE_MAP)) {
+        if (k !== key) t.close();
+    }
+    _SECTION_TOGGLE_MAP[key].open();
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+/**
+ * Chevron click: additive toggle — only this section changes, others unaffected.
+ */
+window.sectionChevronClick = function(key, e) {
+    e.stopPropagation();
+    if (_isSectionOpen(key)) {
+        _SECTION_TOGGLE_MAP[key].close();
+    } else {
+        _SECTION_TOGGLE_MAP[key].open();
+    }
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+// ---------------------------------------------------------------------------
+// Section visibility (gear popover)
+// ---------------------------------------------------------------------------
+
+const _SECTIONS = [
+    { key: 'tags',         label: 'Tags' },
+    { key: 'subjects',     label: 'Subjects' },
+    { key: 'people',       label: 'People' },
+    { key: 'ai',           label: 'AI Tags' },
+    { key: 'distribution', label: 'Distribution' },
+];
+
+window.toggleSectionsPopover = function(e) {
+    const pop = document.getElementById('sidebar-sections-popover');
+    if (!pop) return;
+    if (!pop.hidden) {
+        pop.hidden = true;
+        return;
+    }
+    // Build popover content
+    const rows = _SECTIONS.map(s => {
+        const on = state.sectionVisibility[s.key] !== false;
+        return `<label class="sections-pop-row">
+            <input type="checkbox" ${on ? 'checked' : ''} onchange="setSectionVisible('${s.key}', this.checked)">
+            <span>${esc(s.label)}</span>
+        </label>`;
+    }).join('');
+    pop.innerHTML = `<div class="sections-pop-title">Sidebar sections</div>${rows}`;
+    pop.hidden = false;
+    e.stopPropagation();
+};
+
+window.setSectionVisible = function(key, visible) {
+    state.sectionVisibility[key] = visible;
+    saveSectionVisibility();
+    renderTags();
+};
+
+// Close gear popover when clicking outside it
+document.addEventListener('click', function(e) {
+    const pop = document.getElementById('sidebar-sections-popover');
+    const btn = document.getElementById('sidebar-sections-btn');
+    if (pop && !pop.hidden && !pop.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+        pop.hidden = true;
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Tag distribution panel
+// ---------------------------------------------------------------------------
+
+/** Render a horizontal bar chart of tag group counts. */
+function _renderDistributionPanel() {
+    if (!state.tags.length) return '';
+
+    const sectionKey = '\x01section:distribution:hide';
+    const collapsed = state.expandedGroups.has(sectionKey);
+    const chevronCls = collapsed ? ' chevron-collapsed' : '';
+
+    if (collapsed) {
+        return `<div class="ai-section-divider" data-section-key="distribution" data-section-label="Distribution"
+            onclick="openSectionExclusive('distribution', event)"
+            ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'distribution')">
+            ${_sectionDragHandle('distribution')}
+            <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+            Distribution
+        </div>`;
+    }
+
+    // Group tags by top-level prefix; tags without '/' are their own group.
+    const groups = new Map(); // prefix → { total, color }
+    for (const tag of state.tags) {
+        const prefix = tag.name.includes('/') ? tag.name.split('/')[0] : tag.name;
+        const existing = groups.get(prefix);
+        if (existing) {
+            existing.total += tag.count;
+        } else {
+            groups.set(prefix, { total: tag.count, color: tag.color || null });
+        }
+    }
+    // Sort by total descending, cap at 20 entries.
+    const sorted = [...groups.entries()]
+        .sort((a, b) => b[1].total - a[1].total)
+        .slice(0, 20);
+    if (!sorted.length) return '';
+
+    const maxVal = sorted[0][1].total;
+    const bars = sorted.map(([prefix, data]) => {
+        const pct = maxVal > 0 ? Math.round((data.total / maxVal) * 100) : 0;
+        const barStyle = `width:${pct}%${data.color ? `;background:${data.color};opacity:0.8` : ''}`;
+        return `<div class="dist-row" onclick="doTagGroupSearch('${jesc(prefix)}')" title="${esc(prefix)}: ${data.total}">
+            <span class="dist-label">${esc(prefix)}</span>
+            <div class="dist-bar-wrap">
+                <div class="dist-bar" style="${barStyle}"></div>
+            </div>
+            <span class="dist-count">${data.total}</span>
+        </div>`;
+    }).join('');
+
+    return `<div class="ai-section-divider" data-section-key="distribution" data-section-label="Distribution"
+        onclick="openSectionExclusive('distribution', event)"
+        ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'distribution')">
+        ${_sectionDragHandle('distribution')}
+        <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+        Distribution
+    </div><div class="dist-panel">${bars}</div>`;
+}
+
+window.toggleDistributionSection = function() {
+    const key = '\x01section:distribution:hide';
+    if (state.expandedGroups.has(key)) {
+        state.expandedGroups.delete(key);
+    } else {
+        state.expandedGroups.add(key);
+    }
+    _clearSectionHeightsAll();
+    renderTags();
+};
+
+// ---------------------------------------------------------------------------
+// Section resize handles (drag divider between expanded sections to resize)
+// ---------------------------------------------------------------------------
+
+/**
+ * After renderTags() builds the DOM, inject a resize handle between every
+ * pair of consecutive .section-panel-expanded elements and restore saved sizes.
+ */
+function _initSectionResize() {
+    const container = document.getElementById('tag-list');
+    if (!container) return;
+
+    // Remove old handles first.
+    container.querySelectorAll('.section-resize-handle').forEach(h => h.remove());
+
+    const panels = [...container.querySelectorAll('.section-panel-expanded')];
+    if (panels.length < 2) {
+        // Nothing to resize — clear saved heights for collapsed panels.
+        return;
+    }
+
+    // Restore saved heights (flex-basis).
+    panels.forEach(panel => {
+        const key = panel.dataset.sectionKey;
+        const saved = key && state.sectionHeights[key];
+        if (saved) {
+            panel.style.flexBasis = saved + 'px';
+            panel.style.flexGrow = '0';
+            panel.style.flexShrink = '1';
+        }
+    });
+
+    // Inject a handle after every panel except the last one.
+    for (let i = 0; i < panels.length - 1; i++) {
+        const handle = document.createElement('div');
+        handle.className = 'section-resize-handle';
+        handle.title = 'Drag to resize';
+        const above = panels[i];
+        const below = panels[i + 1];
+        // Insert after above panel.
+        above.after(handle);
+
+        handle.addEventListener('mousedown', e => {
+            e.preventDefault();
+            const startY    = e.clientY;
+            const startAbove = above.getBoundingClientRect().height;
+            const startBelow = below.getBoundingClientRect().height;
+            const total      = startAbove + startBelow; // constant during drag
+
+            handle.classList.add('section-resize-active');
+
+            function onMove(e) {
+                const delta    = e.clientY - startY;
+                const minH     = 60; // minimum section height in px
+                const newAbove = Math.max(minH, Math.min(total - minH, startAbove + delta));
+                const newBelow = total - newAbove;
+                above.style.flexBasis  = newAbove + 'px';
+                above.style.flexGrow   = '0';
+                above.style.flexShrink = '1';
+                below.style.flexBasis  = newBelow + 'px';
+                below.style.flexGrow   = '0';
+                below.style.flexShrink = '1';
+            }
+
+            function onUp() {
+                handle.classList.remove('section-resize-active');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                // Persist.
+                const aboveKey = above.dataset.sectionKey;
+                const belowKey = below.dataset.sectionKey;
+                if (aboveKey) state.sectionHeights[aboveKey] = Math.round(above.getBoundingClientRect().height);
+                if (belowKey) state.sectionHeights[belowKey] = Math.round(below.getBoundingClientRect().height);
+                saveSectionHeights();
+            }
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Section drag-and-drop reordering
+// ---------------------------------------------------------------------------
+
+/** Returns the drag handle SVG icon embedded in each section header. */
+function _sectionDragHandle(key) {
+    return `<span class="section-drag-handle" draggable="true"
+        ondragstart="_sectionDragStart(event,'${key}')"
+        ondragend="_sectionDragEnd(event)"
+        title="Drag to reorder">
+        <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+            <circle cx="3" cy="3" r="1.3"/><circle cx="7" cy="3" r="1.3"/>
+            <circle cx="3" cy="7" r="1.3"/><circle cx="7" cy="7" r="1.3"/>
+            <circle cx="3" cy="11" r="1.3"/><circle cx="7" cy="11" r="1.3"/>
+        </svg>
+    </span>`;
+}
+
+let _sectionDragKey = null;
+
+function _sectionDragStart(e, key) {
+    // Prevent the click-to-collapse from firing during a drag.
+    _sectionDragKey = key;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', key);
+    e.currentTarget.classList.add('section-dragging');
+    // Use the parent section header as drag image so the full row is shown.
+    e.dataTransfer.setDragImage(e.currentTarget.closest('.ai-section-divider') || e.currentTarget, 12, 12);
+}
+
+function _sectionDragEnd(e) {
+    _sectionDragKey = null;
+    document.querySelectorAll('.ai-section-divider').forEach(d => {
+        d.classList.remove('section-dragging', 'section-drag-over-before', 'section-drag-over-after');
+    });
+}
+
+function _sectionDragOver(e) {
+    if (!_sectionDragKey) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const target = e.currentTarget;
+    const srcKey = _sectionDragKey;
+    const tgtKey = target.dataset.sectionKey;
+    if (!tgtKey || tgtKey === srcKey) { target.classList.remove('section-drag-over-before', 'section-drag-over-after'); return; }
+    // Determine whether to show indicator above or below based on pointer position.
+    const rect = target.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    target.classList.toggle('section-drag-over-before', before);
+    target.classList.toggle('section-drag-over-after', !before);
+}
+
+function _sectionDragLeave(e) {
+    e.currentTarget.classList.remove('section-drag-over-before', 'section-drag-over-after');
+}
+
+function _sectionDrop(e, tgtKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget;
+    target.classList.remove('section-drag-over-before', 'section-drag-over-after');
+    const srcKey = e.dataTransfer.getData('text/plain') || _sectionDragKey;
+    if (!srcKey || srcKey === tgtKey) return;
+
+    const rect = target.getBoundingClientRect();
+    const insertBefore = e.clientY < rect.top + rect.height / 2;
+
+    const order = [...state.sectionOrder];
+    const srcIdx = order.indexOf(srcKey);
+    const tgtIdx = order.indexOf(tgtKey);
+    if (srcIdx === -1 || tgtIdx === -1) return;
+
+    order.splice(srcIdx, 1);
+    // After removing src, recalculate tgt position.
+    const newTgtIdx = order.indexOf(tgtKey);
+    order.splice(insertBefore ? newTgtIdx : newTgtIdx + 1, 0, srcKey);
+    state.sectionOrder = order;
+    saveSectionOrder();
+    renderTags();
+}
+
+/**
+ * After each render, set sticky `top` offsets on all section headers so they
+ * stack neatly beneath each other (and beneath the active-filter chips if shown).
+ * Also initialises the bottom stack scroll listener.
+ */
+function updateStickyDividers() {
+    const container = document.getElementById('tag-list');
+    if (!container) return;
+    // Active-filter chips are sticky at top:0; account for their height.
+    const chipsEl = container.querySelector('.active-filters-chips');
+    let offset = chipsEl ? chipsEl.offsetHeight : 0;
+    const dividers = [...container.querySelectorAll('.ai-section-divider')];
+    dividers.forEach((div, i) => {
+        div.style.top = offset + 'px';
+        // Descending z-index: earlier headers always paint on top of later ones
+        // during scroll transitions (same-z-index uses DOM order, later = on top,
+        // which is the wrong direction — so we assign explicitly).
+        div.style.zIndex = 10 + dividers.length - i;
+        offset += div.offsetHeight;
+    });
+    _initBottomStack();
+    _updateBottomStack();
+}
+
+/** Wire up the scroll listener for the bottom stack (once per container lifetime). */
+function _initBottomStack() {
+    const tagList = document.getElementById('tag-list');
+    if (!tagList || tagList._bottomStackInit) return;
+    tagList._bottomStackInit = true;
+    tagList.addEventListener('scroll', _updateBottomStack, { passive: true });
+}
+
+/** Build/refresh the ghost headers shown at the bottom for off-screen sections. */
+function _updateBottomStack() {
+    const container = document.getElementById('tag-list');
+    const bottomStack = document.getElementById('sidebar-bottom-stack');
+    if (!container || !bottomStack) return;
+
+    const containerBottom = container.getBoundingClientRect().bottom;
+    const dividers = [...container.querySelectorAll('.ai-section-divider')];
+
+    // Reset visibility on all dividers first.
+    dividers.forEach(div => { div.style.visibility = ''; });
+
+    // A header belongs in the bottom stack if it is NOT fully visible:
+    // i.e. its bottom edge exceeds the container bottom (partially or fully off-screen).
+    const below = dividers.filter(div =>
+        div.getBoundingClientRect().bottom > containerBottom + 0.5
+    );
+
+    // Hide those headers in the scroll area (visibility:hidden preserves layout/offsetTop).
+    below.forEach(div => { div.style.visibility = 'hidden'; });
+
+    if (!below.length) {
+        bottomStack.innerHTML = '';
+        return;
+    }
+
+    const html = below.map(div => {
+        const clone = div.cloneNode(true);
+        clone.style.top = '';
+        clone.style.position = '';
+        clone.style.zIndex = '';
+        clone.style.visibility = '';
+        return clone.outerHTML;
+    }).join('');
+
+    bottomStack.innerHTML = html;
+}
+
+/** Scroll the named section header into view, accounting for stacked top headers. */
+window._scrollToSection = function(label) {
+    const container = document.getElementById('tag-list');
+    if (!container) return;
+    const target = container.querySelector(`.ai-section-divider[data-section-label="${CSS.escape(label)}"]`);
+    if (!target) return;
+    // Determine how many headers are currently stacked at the top (above fold).
+    const containerTop = container.getBoundingClientRect().top;
+    const stackedHeight = [...container.querySelectorAll('.ai-section-divider')].reduce((h, d) => {
+        return d.getBoundingClientRect().top < containerTop + 5 ? h + d.offsetHeight : h;
+    }, 0);
+    container.scrollTo({ top: target.offsetTop - stackedHeight, behavior: 'smooth' });
+};
+
 // Backward-compatibility alias: quoteTag was renamed to quoteQueryToken.
 function quoteTag(value) {
     return quoteQueryToken(value);
@@ -179,13 +658,43 @@ function renderTagTreeNode(node, depth) {
         : `doTagGroupSearch('${jesc(fullPath)}')`;
     const groupPickedCls = state.tagPickerMode && _anyDescendantPicked(children) ? ' picker-checked' : '';
     const groupDrag = tag ? ` draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')"` : '';
+
+    // k=v values inline (for group nodes that also carry values)
+    const hasValues = !!(tag && tag.has_values);
+    const kvKey = '\x01kv:' + fullPath;
+    const kvExpanded = hasValues && state.expandedGroups.has(kvKey);
+    const kvBadge = hasValues
+        ? ` <button class="tag-kv-inline-btn${kvExpanded ? ' active' : ''}" onclick="event.stopPropagation();toggleKvExpand('${jesc(fullPath)}')" title="Show values"><span class="tag-kv-badge">k=v</span></button>`
+        : '';
+    let kvValuesHtml = '';
+    if (kvExpanded) {
+        const values = state.kvValueCache[fullPath] || [];
+        kvValuesHtml = `<div class="tag-group-items open tag-kv-inline-values">`;
+        if (values.length) {
+            for (const v of values) {
+                const valFilter = `${fullPath}=${v.value}`;
+                const valActive = state.activeTags.has(valFilter) ? ' active' : '';
+                kvValuesHtml += `<button class="tag-item tag-kv-value${valActive}"
+                    onclick="toggleTagFilter('${jesc(valFilter)}')"
+                    oncontextmenu="showKvValueMenu(event,'${jesc(fullPath)}','${jesc(v.value)}')"
+                    title="${esc(fullPath)}=${esc(v.value)}">
+                    <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
+                </button>`;
+            }
+        } else {
+            kvValuesHtml += `<div class="tag-item-loading">Loading\u2026</div>`;
+        }
+        kvValuesHtml += `</div>`;
+    }
+
     return `<div class="tag-group"${marginStyle}>
         <div class="tag-group-label${groupActiveClass}${expandedClass}">
             <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name${groupPickedCls}" onclick="${groupNameClick}"${rootContextMenu}${groupDrag} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name${groupPickedCls}" onclick="${groupNameClick}"${rootContextMenu}${groupDrag} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge}${kvBadge} <span class="count">${totalCount}</span></button>
         </div>
+        ${kvValuesHtml}
         <div class="tag-group-items${showOpen ? ' open' : ''}">
             ${showOpen ? renderTagTreeNodes(children, depth + 1) : ''}
         </div>
@@ -245,7 +754,14 @@ function renderTags() {
     if (tagSearchClear) tagSearchClear.hidden = !state.tagFilter;
 
     const tree = buildTagTree(state.tags);
-    const listHtml = state.tags.length ? renderTagTreeNodes(tree, 0) : '';
+    const f = state.tagFilter.toLowerCase();
+
+    // Separate AI tags (ai/* namespace) into their own collapsible section (normal mode only).
+    const aiNode = tree.get('ai');
+    const aiHasFilterMatch = !!(aiNode && f && [...aiNode.children.values()].some(n => _nodeMatchesFilter(n, f)));
+    if (aiNode && !state.tagPickerMode) tree.delete('ai');
+
+    const listHtml = tree.size ? renderTagTreeNodes(tree, 0) : '';
     const subjectsHtml = _renderSubjectsInline();
 
     if (state.tagPickerMode) {
@@ -268,17 +784,111 @@ function renderTags() {
             <button class="tag-picker-apply"${applyDisabled} onclick="applyTagPicker()">${applyLabel}</button>
             <button class="tag-picker-cancel" onclick="cancelTagPickerMode()">Cancel</button>
         </div>`;
-        el.innerHTML = (listHtml || `<div class="empty-state"><span class="empty-state-text">No tags match</span></div>`)
-            + subjectsHtml + pickerBar;
+        el.innerHTML = `<div class="picker-scroll-wrap">${listHtml || '<div class="empty-state"><span class="empty-state-text">No tags match</span></div>'}${subjectsHtml}</div>${pickerBar}`;
     } else {
-        // Normal mode: compact "Clear filters" bar
-        const clearBar = state.activeTags.size > 0
-            ? `<div class="active-filters-bar"><span class="active-filters-count">${state.activeTags.size} active</span><button class="active-filters-clear" onclick="clearTagFilters()">Clear</button></div>`
-            : '';
-        const peopleHtml = typeof renderPeopleSection === 'function' ? renderPeopleSection() : '';
-        el.innerHTML = clearBar + (listHtml || (state.tagFilter
-            ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
-            : '')) + subjectsHtml + peopleHtml;
+        // Normal mode: sticky active-filter chips + collapsible AI section.
+        let activeChipsHtml = '';
+        if (state.activeTags.size > 0) {
+            const chips = [...state.activeTags].map(tag =>
+                `<button class="active-filter-chip" onclick="toggleTagFilter('${jesc(tag)}')" title="Remove filter: ${esc(tag)}">${esc(tag)}<span class="active-filter-chip-x">\u00d7</span></button>`
+            ).join('');
+            activeChipsHtml = `<div class="active-filters-chips">
+                <div class="active-filters-chips-list">${chips}</div>
+                <button class="active-filters-clear-all" onclick="clearTagFilters()">Clear all</button>
+            </div>`;
+        }
+
+        // AI section (collapsed by default, auto-expands when filter matches AI tags).
+        let aiSectionHtml = '';
+        if (state.sectionVisibility.ai !== false && aiNode) {
+            const aiSectionKey = '\x01section:ai';
+            const aiExpanded = state.expandedGroups.has(aiSectionKey) || aiHasFilterMatch;
+            const aiTotal = _nodeCount(aiNode);
+            const activeInAi = _anyDescendantActive(aiNode.children)
+                || (aiNode.tag && state.activeTags.has('ai'));
+            const aiActiveClass = activeInAi ? ' active' : '';
+            const aiBodyHtml = aiExpanded ? renderTagTreeNodes(aiNode.children, 0) : '';
+            const chevronCls = aiExpanded ? '' : ' chevron-collapsed';
+            aiSectionHtml = `<div class="ai-section-divider${aiActiveClass}" data-section-key="ai" data-section-label="AI Tags"
+                onclick="openSectionExclusive('ai', event)"
+                ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'ai')">
+                ${_sectionDragHandle('ai')}
+                <button class="section-chevron-btn" onclick="sectionChevronClick('ai',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+                AI Tags<span class="count">${aiTotal}</span>
+            </div>${aiExpanded ? `<div class="ai-section-body">${aiBodyHtml}</div>` : ''}`;
+        }
+
+        // People section (collapsible, default open).
+        let peopleHtml = '';
+        if (state.sectionVisibility.people !== false && typeof renderPeopleSection === 'function' && state.faceConfig) {
+            const peopleSectionKey = '\x01section:people:hide';
+            const peopleCollapsed = state.expandedGroups.has(peopleSectionKey);
+            const namedCount = (state.people || []).filter(p =>
+                typeof _faceIsUnknown === 'function' ? !_faceIsUnknown(p.name) : !!(p.name)
+            ).length;
+            const activePerson = state.faceActivePerson ? ' active' : '';
+            const peopleCls = peopleCollapsed ? ' chevron-collapsed' : '';
+            const peopleBodyHtml = peopleCollapsed ? '' : renderPeopleSection();
+            peopleHtml = `<div class="ai-section-divider${activePerson}" data-section-key="people" data-section-label="People"
+                onclick="openSectionExclusive('people', event)"
+                ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'people')">
+                ${_sectionDragHandle('people')}
+                <button class="section-chevron-btn" onclick="sectionChevronClick('people',event)" title="Toggle independently"><svg class="chevron-icon${peopleCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+                People<span class="count">${namedCount}</span>
+            </div>${peopleCollapsed ? '' : `<div class="people-section-body">${peopleBodyHtml}</div>`}`;
+        }
+
+        // Tags section — wrap in a collapsible header like the other sections.
+        let mainListHtml = '';
+        if (state.sectionVisibility.tags !== false) {
+            const tagsHidden = state.expandedGroups.has('\x01section:tags:hide');
+            const tagsChevronCls = tagsHidden ? ' chevron-collapsed' : '';
+            const tagCount = state.tags.filter(t => !t.name.startsWith('ai/')).length;
+            const tagsBody = tagsHidden ? '' : (listHtml || (state.tagFilter && !aiHasFilterMatch
+                ? `<div class="empty-state"><span class="empty-state-text">No tags match \u201c${esc(state.tagFilter)}\u201d</span></div>`
+                : ''));
+            mainListHtml = `<div class="ai-section-divider" data-section-key="tags" data-section-label="Tags"
+                onclick="openSectionExclusive('tags', event)"
+                ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'tags')">
+                ${_sectionDragHandle('tags')}
+                <button class="section-chevron-btn" onclick="sectionChevronClick('tags',event)" title="Toggle independently"><svg class="chevron-icon${tagsChevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+                Tags<span class="count">${tagCount}</span>
+            </div>${tagsBody ? `<div class="tags-section-body">${tagsBody}</div>` : ''}`;
+        }
+
+        const visSubjectsHtml = state.sectionVisibility.subjects !== false ? subjectsHtml : '';
+        const visPeopleHtml   = peopleHtml; // already guarded above
+        const visAiHtml       = aiSectionHtml; // already guarded above
+        const distHtml        = state.sectionVisibility.distribution !== false ? _renderDistributionPanel() : '';
+
+        // Determine which sections are expanded (have a body) for flex sizing.
+        const _tagsExpanded     = state.sectionVisibility.tags !== false && !state.expandedGroups.has('\x01section:tags:hide');
+        const _subjectsExpanded = !!(visSubjectsHtml) && !state.expandedGroups.has('\x01section:subjects:hide');
+        const _peopleExpanded   = !!(visPeopleHtml) && !state.expandedGroups.has('\x01section:people:hide');
+        const _aiExpanded       = !!(visAiHtml) && (state.expandedGroups.has('\x01section:ai') || aiHasFilterMatch);
+        // Wrap HTML in a section-panel div; expanded sections get flex:1 to share space.
+        function _sp(key, html, expanded) {
+            if (!html) return '';
+            return `<div class="section-panel${expanded ? ' section-panel-expanded' : ''}" data-section-key="${key}">${html}</div>`;
+        }
+
+        // Update gear button badge (show indicator when any section is hidden).
+        const anyHidden = Object.values(state.sectionVisibility).some(v => !v);
+        const sectionsBtn = document.getElementById('sidebar-sections-btn');
+        if (sectionsBtn) sectionsBtn.classList.toggle('has-hidden', anyHidden);
+
+        // Compose sections in user-defined order.
+        const sectionMap = {
+            tags:         _sp('tags',         mainListHtml,    _tagsExpanded),
+            subjects:     _sp('subjects',     visSubjectsHtml, _subjectsExpanded),
+            people:       _sp('people',       visPeopleHtml,   _peopleExpanded),
+            ai:           _sp('ai',           visAiHtml,       _aiExpanded),
+            distribution: _sp('distribution', distHtml,        false), // fixed height, no flex grow
+        };
+        const orderedHtml = state.sectionOrder.map(k => sectionMap[k] || '').join('');
+        el.innerHTML = activeChipsHtml + orderedHtml;
+        requestAnimationFrame(_initSectionResize);
+
     }
     // Clear the old separate subject container (no longer used for content).
     const subjEl = document.getElementById('subject-list');
@@ -297,9 +907,29 @@ function _renderSubjectsInline() {
     const subjectTags = visible.map(s => ({
         name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
     }));
+    const totalCount = visible.reduce((acc, s) => acc + (s.count || 0), 0);
     const tree = buildTagTree(subjectTags);
-    return `<div class="subjects-section-divider">Subjects</div>`
-        + renderSubjectTreeNodes(tree, 0);
+
+    // In picker mode: always show expanded (user needs to pick a subject).
+    if (state.tagPickerMode) {
+        return `<div class="subjects-section-divider">Subjects</div>`
+            + renderSubjectTreeNodes(tree, 0);
+    }
+
+    const sectionKey = '\x01section:subjects:hide';
+    const collapsed = state.expandedGroups.has(sectionKey);
+    const chevronCls = collapsed ? ' chevron-collapsed' : '';
+    const activeSubject = state.mode === 'search' && state.searchQuery
+        && state.searchQuery.startsWith('subject:');
+    const activeClass = activeSubject ? ' active' : '';
+    const bodyHtml = collapsed ? '' : renderSubjectTreeNodes(tree, 0);
+    return `<div class="ai-section-divider${activeClass}" data-section-key="subjects" data-section-label="Subjects"
+        onclick="openSectionExclusive('subjects', event)"
+        ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'subjects')">
+        ${_sectionDragHandle('subjects')}
+        <button class="section-chevron-btn" onclick="sectionChevronClick('subjects',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+        Subjects<span class="count">${totalCount}</span>
+    </div>${collapsed ? '' : `<div class="subjects-section-body">${bodyHtml}</div>`}`;
 }
 
 /**

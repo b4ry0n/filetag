@@ -21,7 +21,13 @@ const state = {
     selectedFilesData: new Map(), // path → file detail (for tag aggregation)
     info: null,
     detailOpen: true,
-    expandedGroups: new Set(), // tag group full paths that are expanded
+    expandedGroups: new Set([
+        // Sections collapsed by default; only Tags starts open.
+        '\x01section:subjects:hide',
+        '\x01section:people:hide',
+        '\x01section:distribution:hide',
+        // '\x01section:ai' is absent → AI section also starts collapsed (needs key to open).
+    ]), // tag group full paths that are expanded
     tagSortMode: 'groups-first', // 'groups-first' | 'alpha' | 'count'
     tagFilter: '',             // sidebar tag search filter string
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
@@ -35,7 +41,62 @@ const state = {
     aiVideoFrames: 12,         // preferred frame count for single-video AI analysis
     aiVideoFramesAuto: false,  // true => let backend choose frame count by duration
     settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false }, // per-root settings (loaded from DB)
+    sectionVisibility: _loadSectionVisibility(), // { tags, subjects, people, ai, distribution }
+    sectionOrder: _loadSectionOrder(),            // ['tags','subjects','people','ai','distribution']
+    sectionHeights: _loadSectionHeights(),        // { tags: px, subjects: px, ... } or null = auto
 };
+
+/** Load section visibility from localStorage, with defaults all-on. */
+function _loadSectionVisibility() {
+    const defaults = { tags: true, subjects: true, people: true, ai: true, distribution: false };
+    try {
+        const saved = JSON.parse(localStorage.getItem('ft-section-visibility') || 'null');
+        if (saved && typeof saved === 'object') {
+            return { ...defaults, ...saved };
+        }
+    } catch (_) { /* ignore */ }
+    return defaults;
+}
+
+function saveSectionVisibility() {
+    try {
+        localStorage.setItem('ft-section-visibility', JSON.stringify(state.sectionVisibility));
+    } catch (_) { /* ignore */ }
+}
+
+/** Load section order from localStorage. */
+function _loadSectionOrder() {
+    const defaults = ['tags', 'subjects', 'people', 'ai', 'distribution'];
+    try {
+        const saved = JSON.parse(localStorage.getItem('ft-section-order') || 'null');
+        if (Array.isArray(saved) && saved.length === defaults.length
+            && defaults.every(k => saved.includes(k))) {
+            return saved;
+        }
+    } catch (_) { /* ignore */ }
+    return defaults;
+}
+
+function saveSectionOrder() {
+    try {
+        localStorage.setItem('ft-section-order', JSON.stringify(state.sectionOrder));
+    } catch (_) { /* ignore */ }
+}
+
+/** Load saved section heights (px) from localStorage. */
+function _loadSectionHeights() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('ft-section-heights') || 'null');
+        if (saved && typeof saved === 'object') return saved;
+    } catch (_) { /* ignore */ }
+    return {};
+}
+
+function saveSectionHeights() {
+    try {
+        localStorage.setItem('ft-section-heights', JSON.stringify(state.sectionHeights));
+    } catch (_) { /* ignore */ }
+}
 
 let _lastClickedPath = null; // for shift-range selection
 let _armedBulkTag = null;    // two-step delete: which tag is armed

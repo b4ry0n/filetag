@@ -13,6 +13,7 @@ function _initFaceState() {
         state.faceDetections = [];           // ApiFaceDetection[] for the detail panel
         state.faceDetectionsPath = null;     // path for which detections were loaded
         state.faceDetecting = false;         // single-file detection in progress
+        state.faceBoxesVisible = true;       // whether face boxes are shown on the preview
         state.people = [];                   // [{name, count, det_id}] for sidebar
         state.faceProgressTimer = null;      // setInterval handle for batch polling
         state.faceActivePerson = null;       // selected person name for sidebar highlight
@@ -271,12 +272,32 @@ function faceDetailToolbar(path) {
         ? `<span class="face-count-badge${dets.length === 0 ? ' face-count-none' : ''}">${dets.length}</span>`
         : '';
 
+    const toggleBtn = analysed && dets.length > 0
+        ? `<button class="face-toggle-boxes-btn${state.faceBoxesVisible ? ' active' : ''}"
+               onclick="faceToggleBoxes('${jesc(path)}')"
+               title="${esc(t('face.toggle-boxes'))}">
+               <svg width="14" height="14" viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                   <ellipse cx="10" cy="7" rx="9" ry="6"/>
+                   <circle cx="10" cy="7" r="2.8" fill="currentColor" stroke="none"/>
+               </svg>
+           </button>`
+        : '';
+
     return `<div class="face-toolbar">
         <button class="face-detect-btn" id="face-detect-single-btn"
             onclick="faceDetectSingle('${jesc(path)}')"
             ${isDetecting ? 'disabled' : ''}>${isDetecting ? esc(t('face.detecting')) : esc(t('face.detect-btn'))}</button>
-        ${countBadge}
+        ${countBadge}${toggleBtn}
     </div>`;
+}
+
+/** Toggle visibility of face bounding boxes on the detail preview. */
+function faceToggleBoxes(path) {
+    state.faceBoxesVisible = !state.faceBoxesVisible;
+    _faceRefreshDetailControls(path);
+    document.querySelectorAll('.face-preview-wrap .face-box').forEach(b => {
+        b.style.display = state.faceBoxesVisible ? '' : 'none';
+    });
 }
 
 /** Detect faces for a single file and update the detail panel. */
@@ -323,6 +344,7 @@ async function faceClusters() {
         const r = await apiPost('/api/face/cluster', { dir: currentAbsDir() });
         showToast(t('face.cluster-done', { n: r.clusters }), 4000);
         await loadPeople();
+        await loadSubjects();
         // Re-load detections for current file so labels update
         if (state.faceDetectionsPath) {
             state.faceDetectionsPath = null;
@@ -445,6 +467,7 @@ function _faceRenderOverlays(path) {
             : t('face.unknown');
         label.textContent = name;
         box.appendChild(label);
+        if (!state.faceBoxesVisible) box.style.display = 'none';
         wrap.appendChild(box);
     }
 }
@@ -603,6 +626,7 @@ async function _faceDoAssign(detId) {
         const det = state.faceDetections.find(d => d.id === detId);
         if (det) det.subject_name = subjectName;
         await loadPeople();
+        await loadSubjects();
         renderTags();
         if (state.faceDetectionsPath) _faceRenderOverlays(state.faceDetectionsPath);
         // Also refresh viewer overlay if active

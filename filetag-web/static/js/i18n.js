@@ -137,6 +137,7 @@ const TRANSLATIONS = {
         'face.suggestions': 'Suggestions',
         'face.unassigned': 'Unassigned',
         'face.no-faces-found': 'No faces detected in this image.',
+        'face.toggle-boxes': 'Show/hide face boxes',
         'face.detect-error': 'Face detection failed',
 
         // Chat panel
@@ -395,6 +396,7 @@ const TRANSLATIONS = {
         'face.suggestions': 'Suggesties',
         'face.unassigned': 'Niet toegewezen',
         'face.no-faces-found': 'Geen gezichten gevonden in dit beeld.',
+        'face.toggle-boxes': 'Gezichtskaders tonen/verbergen',
         'face.detect-error': 'Gezichtsdetectie mislukt',
 
         // Chat panel

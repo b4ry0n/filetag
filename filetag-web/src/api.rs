@@ -108,6 +108,7 @@ js_handler!(js_viewer, "../static/js/viewer.js");
 js_handler!(js_main, "../static/js/main.js");
 js_handler!(js_chat, "../static/js/chat.js");
 js_handler!(js_face, "../static/js/face.js");
+js_handler!(js_prompt_wizard, "../static/js/prompt-wizard.js");
 js_handler!(js_select, "../static/js/select.js");
 css_handler!(css_face, "../static/css/face.css");
 css_handler!(css_mobile, "../static/css/mobile.css");

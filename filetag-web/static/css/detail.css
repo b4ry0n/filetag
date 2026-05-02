@@ -759,10 +759,10 @@
     gap: 6px;
 }
 
-.ai-frames-row {
+.ai-analyse-btn-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
     flex-wrap: wrap;
 }
 

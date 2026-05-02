@@ -22,9 +22,16 @@
     max-height: 100%;
 }
 
+/* In the viewer, restore the cv-page height constraint so the image
+   does not grow to its natural resolution when wrapped for overlays. */
+.face-viewer-wrap img.cv-page {
+    max-height: calc(100vh - 54px);
+}
+
 /* Individual face bounding box */
 .face-box {
     position: absolute;
+    z-index: 2;
     border: 2px solid var(--accent, #4a9eff);
     border-radius: 3px;
     cursor: pointer;
@@ -145,6 +152,25 @@
     background: var(--border, #888);
     opacity: .7;
 }
+
+/* Show/hide face boxes toggle button */
+.face-toggle-boxes-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    cursor: pointer;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.face-toggle-boxes-btn:hover { background: var(--bg-active); }
+.face-toggle-boxes-btn.active { background: var(--bg-active); color: var(--accent, #4a9eff); border-color: var(--accent, #4a9eff); }
 
 /* Face assign dialog */
 .face-assign-dialog {
@@ -270,6 +296,11 @@
     text-transform: uppercase;
     color: var(--text-secondary, #888);
 }
+
+/* When wrapped in a collapsible section body, the label is redundant — the
+   section header already shows "People". Only the action buttons remain. */
+.people-section-body .people-section-label { display: none; }
+.people-section-body .people-section-header { justify-content: flex-end; padding-top: 4px; }
 
 .people-detect-all-btn {
     font-size: 10px;

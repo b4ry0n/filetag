@@ -34,27 +34,111 @@ static AI_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1)
 /// Type-specific introductions — tell the model what it is looking at.
 /// Users can override these per-type via `ai.prompt_image`, `ai.prompt_video`,
 /// and `ai.prompt_archive` in the settings.
-pub const AI_IMAGE_INTRO: &str = "Look at this image.";
-pub const AI_VIDEO_INTRO: &str = "These are sampled frames from a video. \
-Identify the most meaningful content: the genre, main subject, key visual themes, and recognisable elements. \
-Focus on WHAT is in the video, not HOW it was shot or framed. \
-Do NOT read or tag credits, title cards, text overlays, or on-screen captions. \
-Do NOT output people's names or character names unless they are the clear central subject of the entire video. \
-Do NOT output generic scene-setting words (interior, exterior, lighting, camera, crew, dining, sitting, walking). \
-Do NOT tag the image format: no contact_sheet, movie_still, film_frame, screenshot, collage, or similar.";
-pub const AI_VIDEO_FULL_INTRO: &str = "Look at this video.";
-pub const AI_ARCHIVE_INTRO: &str = "Look at this archive's file listing and sample images.";
+pub const AI_IMAGE_INTRO: &str = "\
+Analyse this image in detail. Observe and tag the following aspects where present:\
+\n- KNOWLEDGE: if you recognise a specific artwork, artist, person, location, cultural period, \
+art movement, or technique, include it \u{2014} this is the most valuable category. \
+Do not suppress recognition. \
+Examples: artist/vermeer, artwork/girl-with-pearl-earring, \
+period/dutch-golden-age, technique/chiaroscuro, movement/baroque, location/mauritshuis\
+\n- ACTIONS: what is happening? What activities, gestures, or events are taking place?\
+\n- SUBJECTS: who or what is performing the action? (people, animals, characters, objects as agents)\
+\n- OBJECTS: what is being acted upon, held, used, or prominently shown?\
+\n- PEOPLE/CHARACTERS: for each person or character, emit attribute tags as objects \
+{\"tag\": \"hair/color=black\", \"subject\": \"soldier\"} so each trait is linked to its owner. \
+Observable traits: hair/color, hair/style, clothing/type, clothing/color, age, gender. \
+Never merge subject identity and attribute into a single tag string.\
+\n- ENVIRONMENT: setting or location (indoors/outdoors, urban/rural, specific place type), \
+architecture, furniture, vegetation\
+\n- ATMOSPHERE & MOOD: tension, calm, joy, danger, melancholy, romance, humour\
+\n- WEATHER & LIGHTING: time of day, weather conditions, light quality\
+\n- COLOURS: dominant or distinctive colour palette\
+\n- STYLE & MEDIUM: art style (photo, illustration, manga, render, painting), genre\
+\nTag everything you can identify. Do not limit yourself to surface observations.";
+
+pub const AI_VIDEO_INTRO: &str = "\
+These are sampled frames from a video. Analyse the content across all frames. \
+Observe and tag the following aspects where present:\
+\n- KNOWLEDGE: if you recognise a specific film, series, director, actor, location, cultural period, \
+or technique, include it \u{2014} this is the most valuable category. \
+Do not suppress recognition. \
+Examples: film/blade-runner, director/ridley-scott, period/1980s, technique/dutch-angle\
+\n- ACTIONS: what activities, events, or sequences are happening across the frames?\
+\n- SUBJECTS: who or what is the agent? (people, characters, animals, vehicles)\
+\n- OBJECTS: what is being acted upon, used, carried, or featured prominently?\
+\n- PEOPLE/CHARACTERS: for each person or character, emit attribute tags as objects \
+{\"tag\": \"hair/color=black\", \"subject\": \"soldier\"} so each trait is linked to its owner. \
+Observable traits: hair/color, hair/style, clothing/type, clothing/color, age, gender. \
+Never merge subject identity and attribute into a single tag string.\
+\n- ENVIRONMENT: location type, setting, architecture, landscape\
+\n- ATMOSPHERE & MOOD: tone of the content (tense, playful, dramatic, calm, action-packed)\
+\n- WEATHER & TIME OF DAY: if determinable from the frames\
+\n- COLOURS: dominant or striking colour palette\
+\n- STYLE & GENRE: animation, live-action, documentary, fiction, genre\
+\nTag everything you can identify. \
+Do NOT tag credits, title cards, captions, or on-screen text. \
+Do NOT tag the contact-sheet format itself (no contact_sheet, movie_still, filmstrip, screenshot, collage).";
+
+pub const AI_VIDEO_FULL_INTRO: &str = "\
+Analyse this video. Observe and tag: actions and events, subjects performing them, \
+objects being used or featured, visible traits of people or characters (hair, clothing, age), \
+setting and environment, mood and atmosphere, dominant colours, and genre or style.";
+
+pub const AI_ARCHIVE_INTRO: &str = "\
+Analyse this archive's file listing and any sample images. \
+Determine: the primary content type and genre, the main subjects (characters, people, topics), \
+recurring visual themes, actions or events depicted, art style or medium, \
+and any structural patterns in the filenames that reveal series, volumes, or authors.";
 
 /// Default output-format instruction appended to every prompt.
 /// Users can override this via `ai.output_format` in the settings.
 pub const AI_OUTPUT_FORMAT: &str = "\
 Output ONLY a JSON array of short descriptive tags (English). \
-Return at most 10 tags; include only the most relevant and specific ones. \
-Prefer tags that describe the main subject, genre, mood, or defining visual elements. \
-Avoid vague, generic, or overly broad tags. \
-Tags can be plain strings or key=value pairs when a specific attribute value matters.\n\n\
-Good: [\"alien\", \"sci-fi\", \"space\", \"horror\", \"year=1979\"]\n\
-Bad: any text outside the JSON array\n\n\
+Return at most 25 tags. Use the tag types below \u{2014} always as SEPARATE entries in the array.\
+\n\
+Array elements are either a plain string (tag without subject) or an object \
+{\"tag\": \"...\", \"subject\": \"...\"} (tag linked to a specific person/entity in the file). \
+Use the object form ONLY when a tag describes a specific individual, not the file as a whole.\
+\n\
+TAG TYPES:\
+\n\
+1. Knowledge & context \u{2014} HIGHEST PRIORITY. Tag anything you can identify from world knowledge: \
+specific artworks, artists, films, books, people, locations, cultural periods, art movements, \
+techniques, styles. Use a hierarchical path or key=value.\
+   \"artist/vermeer\", \"artwork/girl-with-pearl-earring\", \"period/dutch-golden-age\", \
+\"technique/chiaroscuro\", \"movement/baroque\", \"location/mauritshuis\", \
+\"film/blade-runner\", \"country=netherlands\", \"year=1665\"\
+\n\
+2. Action tags \u{2014} what is happening. Use a hierarchical path, no value.\
+   \"action/fighting\", \"action/running\", \"action/cooking\"\
+\n\
+3. Physical attribute tags \u{2014} observable traits of a SPECIFIC person/entity. \
+   Use a {\"tag\", \"subject\"} object so the attribute is linked to the right subject.\
+   {\"tag\": \"hair/color=blue\", \"subject\": \"soldier\"}, {\"tag\": \"clothing/type=uniform\", \"subject\": \"soldier\"}\
+   RULE: one entry per attribute per subject. Never merge subject and attribute into one tag.\
+\n\
+4. Object tags \u{2014} prominent objects being used, held, or featured.\
+   \"object/sword\", \"object/pearl-earring\", \"object/book\"\
+\n\
+5. Environment tags \u{2014} setting or location.\
+   \"environment/urban\", \"environment/forest\", \"environment/interior/studio\"\
+\n\
+6. Mood / atmosphere.\
+   \"mood/tense\", \"mood/calm\", \"mood/intimate\"\
+\n\
+7. Genre / style / medium.\
+   \"genre/portrait\", \"genre/manga\", \"style/oil-painting\", \"style/photograph\"\
+\n\
+8. Typed metadata \u{2014} use key=value string.\
+   \"year=1665\", \"country=netherlands\", \"lang=en\"\
+\n\
+Avoid vague or overly broad tags. Do not repeat the filename.\n\n\
+Good (Girl with a Pearl Earring by Vermeer): \
+[\"artist/vermeer\", \"artwork/girl-with-pearl-earring\", \"period/dutch-golden-age\", \
+\"technique/chiaroscuro\", \"movement/baroque\", \"style/oil-painting\", \"genre/portrait\", \
+\"mood/intimate\", \"year=1665\", \"country=netherlands\", \
+{\"tag\": \"clothing/type=turban\", \"subject\": \"girl\"}, {\"tag\": \"object/pearl-earring\", \"subject\": \"girl\"}]\n\
+Bad: [\"subject=soldier\", \"blue-haired-soldier\", \"subject/soldier\"] \u{2014} wrong format or merged\n\n\
 /no_think";
 
 /// File extensions recognised as still images for AI analysis.
@@ -506,17 +590,17 @@ async fn vlm_call_multi(
 /// Remove any tags that are bare kv keys (i.e. equal to a known key without a
 /// `=value` part).  Models sometimes emit just `name` instead of `name=alice`
 /// even when instructed otherwise; this is a safety net.
-fn filter_bare_kv_keys(tags: Vec<String>, kv_keys: &[String], prefix: &str) -> Vec<String> {
+fn filter_bare_kv_keys(tags: Vec<AiTagEntry>, kv_keys: &[String], prefix: &str) -> Vec<AiTagEntry> {
     if kv_keys.is_empty() {
         return tags;
     }
     tags.into_iter()
-        .filter(|t| {
+        .filter(|entry| {
             // Strip prefix to get the raw tag part.
             let raw = if prefix.is_empty() {
-                t.as_str()
+                entry.raw.as_str()
             } else {
-                t.strip_prefix(prefix).unwrap_or(t.as_str())
+                entry.raw.strip_prefix(prefix).unwrap_or(entry.raw.as_str())
             };
             // A bare kv key has no `=` and matches a known key name.
             if raw.contains('=') {
@@ -607,7 +691,7 @@ async fn analyse_image(
     jpeg_bytes: &[u8],
     existing_tags: &[String],
     kv_keys: &[String],
-) -> anyhow::Result<(String, Vec<String>)> {
+) -> anyhow::Result<(String, Vec<AiTagEntry>)> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
     let intro = config.prompt_image.as_deref().unwrap_or(AI_IMAGE_INTRO);
     let prompt = build_full_prompt(
@@ -637,7 +721,7 @@ async fn analyse_video_sprite(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
-) -> anyhow::Result<(String, Vec<String>)> {
+) -> anyhow::Result<(String, Vec<AiTagEntry>)> {
     let info = video_info(abs)
         .await
         .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
@@ -684,7 +768,7 @@ async fn analyse_video_full(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
-) -> anyhow::Result<(String, Vec<String>)> {
+) -> anyhow::Result<(String, Vec<AiTagEntry>)> {
     let info = video_info(abs)
         .await
         .ok_or_else(|| anyhow::anyhow!("cannot read video metadata"))?;
@@ -727,7 +811,7 @@ async fn analyse_video(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
-) -> anyhow::Result<(String, Vec<String>, Option<String>)> {
+) -> anyhow::Result<(String, Vec<AiTagEntry>, Option<String>)> {
     if config.video_mode == "full" {
         let max_bytes = config.video_max_mb.saturating_mul(1024 * 1024);
         if let Ok(meta) = std::fs::metadata(abs)
@@ -769,7 +853,7 @@ async fn analyse_archive(
     archive_abs: &Path,
     existing_tags: &[String],
     kv_keys: &[String],
-) -> anyhow::Result<(String, Vec<String>)> {
+) -> anyhow::Result<(String, Vec<AiTagEntry>)> {
     let arc = archive_abs.to_path_buf();
 
     // Gather entry listing and image entries in a blocking task.
@@ -916,61 +1000,111 @@ const SPRITE_META_BLOCKLIST: &[&str] = &[
     "subtitles",
 ];
 
-fn parse_ai_tags(text: &str, _prefix: &str) -> anyhow::Result<Vec<String>> {
+/// A single AI-generated tag, optionally linked to a subject within the file.
+///
+/// The `raw` field is the full prefixed tag string (e.g. `"ai/hair/color=blue"`).
+/// The `subject` field identifies which entity in the file this tag describes
+/// (e.g. `Some("soldier")`); `None` means the tag applies to the file as a whole.
+#[derive(Debug, Clone)]
+pub struct AiTagEntry {
+    /// Full prefixed tag string, e.g. `"ai/hair/color=blue"`.
+    pub raw: String,
+    /// Subject this tag applies to within the file, e.g. `"soldier"`.
+    pub subject: Option<String>,
+}
+
+impl AiTagEntry {
+    /// Serialise to a human-readable string for API responses and logging.
+    pub fn display(&self) -> String {
+        match &self.subject {
+            Some(s) if !s.is_empty() => format!("{} [{}]", self.raw, s),
+            _ => self.raw.clone(),
+        }
+    }
+}
+
+fn parse_ai_tags(text: &str, _prefix: &str) -> anyhow::Result<Vec<AiTagEntry>> {
     let trimmed = text.trim();
 
-    let mut raw_tags: Option<Vec<String>> = None;
-    let bytes = trimmed.as_bytes();
+    // Try to find the last valid JSON array in the response, which may contain
+    // either plain strings or {"tag": "...", "subject": "..."} objects.
+    let mut json_array: Option<Vec<serde_json::Value>> = None;
     let mut search_from = trimmed.len();
-    while let Some(end_off) = trimmed[..search_from].rfind(']') {
-        if let Some(start_off) = trimmed[..end_off].rfind('[') {
-            let candidate = &trimmed[start_off..=end_off];
-            if let Ok(arr) = serde_json::from_str::<Vec<String>>(candidate)
-                && !arr.is_empty()
-            {
-                raw_tags = Some(arr);
-                break;
+    while search_from > 0 {
+        if let Some(end_off) = trimmed[..search_from].rfind(']') {
+            if let Some(start_off) = trimmed[..end_off].rfind('[') {
+                let candidate = &trimmed[start_off..=end_off];
+                if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(candidate)
+                    && !arr.is_empty()
+                {
+                    json_array = Some(arr);
+                    break;
+                }
             }
-        }
-        if end_off == 0 {
+            search_from = end_off;
+        } else {
             break;
         }
-        search_from = end_off;
     }
-    let _ = bytes;
 
-    let raw_tags: Vec<String> = raw_tags.unwrap_or_else(|| {
+    // Build raw (tag_str, subject) pairs from the parsed array.
+    let raw_pairs: Vec<(String, Option<String>)> = if let Some(arr) = json_array {
+        arr.into_iter()
+            .filter_map(|v| match v {
+                serde_json::Value::String(s) => Some((s, None)),
+                serde_json::Value::Object(obj) => {
+                    let tag = obj
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())?;
+                    let subject = obj
+                        .get("subject")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+                    Some((tag, subject))
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        // Fallback: plain text line/comma splitting (no subject info).
         trimmed
             .replace(['[', ']', '"'], "")
             .split([',', '\n'])
             .map(|s| {
-                s.trim()
-                    .trim_start_matches(['-', '*', '•'])
-                    .trim()
-                    .to_string()
+                (
+                    s.trim()
+                        .trim_start_matches(['-', '*', '\u{2022}'])
+                        .trim()
+                        .to_string(),
+                    None,
+                )
             })
-            .filter(|s| tag_candidate_ok(s))
+            .filter(|(s, _)| tag_candidate_ok(s))
             .collect()
-    });
+    };
 
     let mut seen = std::collections::HashSet::new();
-    let tags: Vec<String> = raw_tags
+    let tags: Vec<AiTagEntry> = raw_pairs
         .into_iter()
-        .map(|t| {
-            // Strip leading/trailing punctuation that the model sometimes appends
+        .filter_map(|(t, subject)| {
             let clean = t
                 .trim()
                 .trim_matches(|c: char| {
                     c.is_ascii_punctuation() && c != '/' && c != '=' && c != '-' && c != '_'
                 })
                 .to_string();
-            format!("ai/{clean}")
-        })
-        .filter(|t| {
-            let tag_part = &t[3..]; // altijd na ai/
-            tag_candidate_ok(tag_part)
+            let raw = format!("ai/{clean}");
+            let tag_part = &raw[3..]; // skip "ai/"
+            if tag_candidate_ok(tag_part)
                 && !SPRITE_META_BLOCKLIST.contains(&tag_part)
-                && seen.insert(t.clone())
+                && seen.insert(raw.clone())
+            {
+                Some(AiTagEntry { raw, subject })
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -1010,7 +1144,7 @@ fn apply_ai_tags(
     conn: &Connection,
     root: &Path,
     rel_path: &str,
-    tags: &[String],
+    tags: &[AiTagEntry],
     _prefix: &str,
 ) -> anyhow::Result<()> {
     let file_rec = if rel_path.contains("::") {
@@ -1027,7 +1161,7 @@ fn apply_ai_tags(
         .map(|(name, _)| name.to_lowercase())
         .collect();
 
-    // Verwijder oude AI-tags (altijd ai/-prefix)
+    // Remove old AI tags (always ai/ prefix).
     for (name, value) in &existing {
         if name.starts_with(ai_prefix)
             && let Ok(tag_id) = db::get_or_create_tag(conn, name)
@@ -1036,7 +1170,8 @@ fn apply_ai_tags(
         }
     }
 
-    for tag_str in tags {
+    for entry in tags {
+        let tag_str = &entry.raw;
         let (name, value) = if let Some(eq) = tag_str.find('=') {
             (
                 tag_str[..eq].to_string(),
@@ -1054,7 +1189,13 @@ fn apply_ai_tags(
             continue;
         }
         let tag_id = db::get_or_create_tag(conn, &name)?;
-        db::apply_tag(conn, file_rec.id, tag_id, value.as_deref(), None)?;
+        db::apply_tag(
+            conn,
+            file_rec.id,
+            tag_id,
+            value.as_deref(),
+            entry.subject.as_deref(),
+        )?;
     }
 
     Ok(())
@@ -1103,13 +1244,20 @@ fn fetch_existing_tags(
         db::get_or_index_file(conn, rel, root)
     };
     let existing_tags: Vec<String> = if let Ok(rec) = rec_result {
-        db::tags_for_file(conn, rec.id)
+        db::tags_for_file_with_subject(conn, rec.id)
             .unwrap_or_default()
             .into_iter()
-            .filter(|(name, _)| !name.starts_with(tag_prefix))
-            .map(|(name, value)| match value.as_deref().unwrap_or("") {
-                "" => name,
-                v => format!("{name}={v}"),
+            .filter(|(name, _, _)| !name.starts_with(tag_prefix))
+            .map(|(name, value, subject)| {
+                let tag_str = match value.as_deref().unwrap_or("") {
+                    "" => name,
+                    v => format!("{name}={v}"),
+                };
+                if subject.is_empty() {
+                    tag_str
+                } else {
+                    format!("{tag_str} @{subject}")
+                }
             })
             .collect()
     } else {
@@ -1166,7 +1314,7 @@ async fn analyse_one_path(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
-) -> anyhow::Result<(String, Vec<String>, Option<String>)> {
+) -> anyhow::Result<(String, Vec<AiTagEntry>, Option<String>)> {
     let ext = rel.rsplit('.').next().unwrap_or("").to_lowercase();
     let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
     let is_video = AI_VIDEO_EXTS.contains(&ext.as_str());
@@ -1307,7 +1455,7 @@ pub async fn api_ai_analyse(
     };
 
     Ok(Json(serde_json::json!({
-        "tags": tags,
+        "tags": tags.iter().map(|e| e.display()).collect::<Vec<_>>(),
         "applied": applied,
         "raw": if body.dry_run { raw_response } else { String::new() },
         "warning": warning,
@@ -1816,7 +1964,7 @@ every single image. Ignore features unique to any individual image."
     }
 
     Ok(Json(serde_json::json!({
-        "tags": tags,
+        "tags": tags.iter().map(|e| e.display()).collect::<Vec<_>>(),
         "applied_count": applied_count,
         "raw": if body.dry_run { raw } else { String::new() },
     })))
@@ -2335,4 +2483,212 @@ pub async fn api_ai_chat(
         .map_err(AppError)?;
 
     Ok(Json(AiChatResponse { reply }))
+}
+
+// ---------------------------------------------------------------------------
+// Prompt Wizard — fully automatic, two-pass optimisation
+// ---------------------------------------------------------------------------
+
+/// Request for `POST /api/ai/prompt-wizard`.
+#[derive(serde::Deserialize)]
+pub struct PromptWizardRequest {
+    pub dir: Option<String>,
+    /// The user's collection description and tagging goals (from settings).
+    pub goals: String,
+    /// Pass 2 only: draft prompts to review and improve.
+    pub draft: Option<WizardPrompts>,
+}
+
+/// Response for `POST /api/ai/prompt-wizard`.
+#[derive(serde::Serialize)]
+pub struct PromptWizardResponse {
+    pub prompts: WizardPrompts,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub struct WizardPrompts {
+    pub prompt_image: String,
+    pub prompt_video: String,
+    pub prompt_archive: String,
+    pub subject: String,
+    /// Optimised output-format instruction produced by the wizard.
+    #[serde(default)]
+    pub output_format: String,
+}
+
+/// Extract a JSON object from a model reply, stripping markdown code fences.
+fn extract_json_object(text: &str) -> String {
+    // Strip markdown code fences (```json ... ``` or ``` ... ```)
+    let inner = if let Some(start) = text.find("```json") {
+        let after = &text[start + 7..];
+        after.find("```").map(|e| &after[..e]).unwrap_or(after)
+    } else if let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        after.find("```").map(|e| &after[..e]).unwrap_or(after)
+    } else {
+        text
+    };
+    // Find outermost { … }
+    let start = inner.find('{').unwrap_or(0);
+    let end = inner.rfind('}').map(|i| i + 1).unwrap_or(inner.len());
+    inner[start..end].to_string()
+}
+
+const WIZARD_PASS1: &str = r#"You are an expert at writing prompts for filetag, an AI-powered file tagging system.
+
+## filetag's tag system
+
+filetag supports three tag styles:
+1. Hierarchical paths — "/" separates levels (e.g. genre/rock, topic/nature/birds, hair/color=black)
+2. Key=value pairs — typed attributes (e.g. year=1979, rating=5, country=japan, person=alice)
+3. Plain tags — simple descriptors (e.g. black-and-white, documentary, illustrated)
+
+All AI-generated tags are automatically prefixed with "<TAG_PREFIX>".
+Write tags WITHOUT the prefix (e.g. "genre/rock" not "<TAG_PREFIX>genre/rock").
+
+## How the full analysis prompt is assembled (at file analysis time)
+
+The system builds a full prompt from these layers, in order:
+  1. Type-specific intro   ← what you write as prompt_image / prompt_video / prompt_archive
+  2. Collection context    ← the subject description
+  3. Filename hint         ← added automatically
+  4. Output format         ← what you write as output_format
+  5. Existing tags         ← "The file already has these tags: [tag1, tag2, ...]" (auto-appended)
+  6. KV-keys in use        ← "The following key=value keys are in use: [key1, key2]" (auto-appended)
+
+Layers 5 and 6 are DYNAMIC: they reflect the actual tags on the specific file being analysed,
+and the kv-keys that have been used across the collection at that point in time.
+
+## Consistency requirement
+
+Your output_format must explicitly instruct the model to:
+- Follow the EXACT same hierarchical path structure as shown in layer 6 (kv-keys)
+- Use the EXACT same key names already in use (e.g. if "hair/color" is listed, use "hair/color=brown",
+  not "hair-color=brown" or "brown-hair")
+- Only suggest tags that ADD to layer 5 (existing tags); never repeat them
+- If a kv-key is listed but the value cannot be determined, omit that key entirely
+
+## User's collection description and goals
+
+"<GOALS>"
+
+## Your task
+
+Write collection-specific prompts for each file type. Each prompt (layers 1) should:
+1. Describe what the model is looking at (image / sampled video frames / archive listing)
+2. Mention the hierarchical path conventions for this collection (e.g. "genre/X, topic/X")
+3. Name the key=value fields most relevant for this collection type
+4. Be specific and concise — it is prepended to media before the model sees it
+
+The output_format (layer 4) should:
+- List the key=value fields the user cares about
+- Explicitly reference layers 5 and 6: tell the model to follow existing tag structure
+- Keep the JSON array format and /no_think directive
+- Cap at 10 tags
+
+Respond with ONLY valid JSON (no markdown fences, no explanation):
+{
+  "subject": "<1-3 sentence collection description>",
+  "prompt_image": "<image intro instruction>",
+  "prompt_video": "<video intro instruction>",
+  "prompt_archive": "<archive intro instruction>",
+  "output_format": "<full output format instruction, referencing consistency with existing tags/kv-keys>"
+}"#;
+
+const WIZARD_PASS2: &str = r#"You are reviewing AI tagging prompts for the filetag system. Critically improve them.
+
+## filetag tag system
+
+- Hierarchical paths with "/" (genre/rock, topic/nature/birds, hair/color=black)
+- Key=value pairs for typed attributes (year=2024, rating=5, country=japan, person=alice)
+- Plain tags for non-hierarchical descriptors
+- AI prefix "<TAG_PREFIX>" is added automatically — write tags WITHOUT the prefix
+
+## Dynamic context at analysis time
+
+At analysis time the system automatically appends to every prompt:
+- Layer 5: "The file already has these tags: [...]" — skip these in output
+- Layer 6: "The following key=value keys are in use: [key1, key2, ...]" — use EXACT same key names
+
+The output_format must explicitly tell the model:
+- Use the exact key names shown in layer 6 (e.g. "hair/color=brown" when "hair/color" is listed)
+- Suggest only tags not already in layer 5
+- Omit a kv-key entirely if its value cannot be determined
+
+Collection goals: "<GOALS>"
+
+## Draft prompts to review
+
+subject:        "<SUBJECT>"
+prompt_image:   "<IMAGE>"
+prompt_video:   "<VIDEO>"
+prompt_archive: "<ARCHIVE>"
+output_format:  "<OUTPUT_FORMAT>"
+
+## Review checklist
+
+1. Does each type prompt guide the model to use hierarchical paths (genre/X, topic/X)?
+2. Does it name the specific kv-fields relevant for this collection?
+3. Is it concrete about this collection's subjects/genres/attributes?
+4. Does output_format explicitly reference consistency with layers 5 and 6?
+5. Does output_format include JSON array, /no_think, 10-tag cap?
+6. Is anything vague, redundant, or missing?
+
+Produce a refined final version. Respond with ONLY valid JSON (no markdown):
+{
+  "subject": "...",
+  "prompt_image": "...",
+  "prompt_video": "...",
+  "prompt_archive": "...",
+  "output_format": "..."
+}"#;
+
+/// `POST /api/ai/prompt-wizard` — one automated pass of prompt optimisation.
+/// Call twice: first without `draft` (pass 1), then with the result as `draft` (pass 2).
+pub async fn api_ai_prompt_wizard(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PromptWizardRequest>,
+) -> Result<Json<PromptWizardResponse>, AppError> {
+    let dir = req.dir.as_deref().unwrap_or("");
+    let root = root_for_dir(&state, std::path::Path::new(dir))
+        .ok_or_else(|| AppError(anyhow::anyhow!("no database found for directory")))?;
+    let conn = open_conn(root)?;
+    let mut config =
+        load_ai_config(&conn).ok_or_else(|| AppError(anyhow::anyhow!("AI is not configured")))?;
+    // Wizard outputs structured JSON prompts that are much longer than tag arrays.
+    // Ensure a generous token budget regardless of the per-analysis setting.
+    config.max_tokens = config.max_tokens.max(4096);
+
+    let tag_prefix = config.tag_prefix.clone();
+    let goals = req.goals.trim().to_string();
+    let goals_section = if goals.is_empty() {
+        "No specific instructions provided — write general-purpose prompts suitable for a mixed file collection.".to_string()
+    } else {
+        goals.clone()
+    };
+
+    let prompt = match &req.draft {
+        None => WIZARD_PASS1
+            .replace("<TAG_PREFIX>", &tag_prefix)
+            .replace("<GOALS>", &goals_section),
+        Some(d) => WIZARD_PASS2
+            .replace("<TAG_PREFIX>", &tag_prefix)
+            .replace("<GOALS>", &goals_section)
+            .replace("<SUBJECT>", &d.subject)
+            .replace("<IMAGE>", &d.prompt_image)
+            .replace("<VIDEO>", &d.prompt_video)
+            .replace("<ARCHIVE>", &d.prompt_archive)
+            .replace("<OUTPUT_FORMAT>", &d.output_format),
+    };
+
+    let raw = vlm_call(&config, &prompt, None).await.map_err(AppError)?;
+
+    let json_str = extract_json_object(&raw);
+    let prompts: WizardPrompts = serde_json::from_str(&json_str).map_err(|e| {
+        AppError(anyhow::anyhow!(
+            "AI did not return valid JSON: {e}\nResponse was: {raw}"
+        ))
+    })?;
+
+    Ok(Json(PromptWizardResponse { prompts }))
 }
