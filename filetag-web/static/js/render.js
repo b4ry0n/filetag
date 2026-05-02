@@ -214,42 +214,79 @@ function renderGrid(items) {
 // ---------------------------------------------------------------------------
 
 let _pollGeneration = 0; // incremented on each render() to cancel previous chains
+let _pollAbortController = null; // AbortController for in-flight dir-thumb requests
+
+// Maximum simultaneous dir-thumb fetches. Keeping this low leaves HTTP
+// connections free for navigation and API calls.
+const DIR_THUMB_CONCURRENCY = 3;
 
 function pollDirPreviews() {
-    const gen = _pollGeneration; // capture current generation at call time
+    const gen = _pollGeneration;
 
-    const dirCards = document.querySelectorAll('.card.folder .card-icon[data-thumb-src]');
-    let anyPending = false;
-    dirCards.forEach(cardIcon => {
-        const thumbUrl = cardIcon.getAttribute('data-thumb-src');
-        if (!thumbUrl) return;
-        // Skip cards that already have a sprite loaded.
-        if (cardIcon.querySelector('.card-dir-sprite')) return;
-        anyPending = true;
-        fetch(thumbUrl)
-            .then(resp => {
-                // Abort if a newer render has started.
-                if (gen !== _pollGeneration) return;
-                if (resp.ok && resp.headers.get('content-type')?.startsWith('image/')) {
-                    resp.blob().then(blob => {
-                        if (gen !== _pollGeneration) return;
-                        const blobUrl = URL.createObjectURL(blob);
-                        if (typeof window._thumbReplace === 'function') {
-                            window._thumbReplace(cardIcon, blobUrl, /* revoke */ true);
-                        } else {
-                            // Fallback: revoke immediately after scheduling
-                            URL.revokeObjectURL(blobUrl);
-                        }
-                    });
-                }
-            })
-            .catch(() => { /* network error — silently ignore */ });
-    });
-    // Continue polling only if there are still pending cards and this is the
-    // latest generation.
-    if (anyPending && gen === _pollGeneration) {
-        setTimeout(() => { if (gen === _pollGeneration) pollDirPreviews(); }, 1200);
+    // Abort any previously in-flight requests from the last poll cycle.
+    if (_pollAbortController) {
+        _pollAbortController.abort();
     }
+    _pollAbortController = new AbortController();
+    const signal = _pollAbortController.signal;
+
+    // Collect all directory cards that still need a thumbnail.
+    const pending = Array.from(
+        document.querySelectorAll('.card.folder .card-icon[data-thumb-src]')
+    ).filter(el => !el.querySelector('.card-dir-sprite'));
+
+    if (!pending.length || gen !== _pollGeneration) return;
+
+    let idx = 0;
+    let active = 0;
+
+    function fetchNext() {
+        if (gen !== _pollGeneration) return;
+
+        // Fill up to the concurrency limit.
+        while (active < DIR_THUMB_CONCURRENCY && idx < pending.length) {
+            const cardIcon = pending[idx++];
+            if (cardIcon.querySelector('.card-dir-sprite')) continue; // already loaded
+            const thumbUrl = cardIcon.getAttribute('data-thumb-src');
+            if (!thumbUrl) continue;
+
+            active++;
+            fetch(thumbUrl, { signal })
+                .then(resp => {
+                    if (gen !== _pollGeneration) return;
+                    if (resp.ok && resp.headers.get('content-type')?.startsWith('image/')) {
+                        return resp.blob().then(blob => {
+                            if (gen !== _pollGeneration) return;
+                            const blobUrl = URL.createObjectURL(blob);
+                            if (typeof window._thumbReplace === 'function') {
+                                window._thumbReplace(cardIcon, blobUrl, /* revoke */ true);
+                            } else {
+                                URL.revokeObjectURL(blobUrl);
+                            }
+                        });
+                    }
+                })
+                .catch(() => { /* network error or abort — silently ignore */ })
+                .finally(() => {
+                    active--;
+                    fetchNext(); // start next request when a slot opens
+                });
+        }
+
+        // All requests started and all have finished: check if any cards are
+        // still waiting (backend was still generating — 204 responses).
+        if (active === 0 && idx >= pending.length) {
+            const stillPending = Array.from(
+                document.querySelectorAll('.card.folder .card-icon[data-thumb-src]')
+            ).filter(el => !el.querySelector('.card-dir-sprite')).length;
+
+            if (stillPending > 0 && gen === _pollGeneration) {
+                setTimeout(() => { if (gen === _pollGeneration) pollDirPreviews(); }, 1500);
+            }
+        }
+    }
+
+    fetchNext();
 }
 
 // Wrap render() to increment the generation counter and start a fresh poll.
