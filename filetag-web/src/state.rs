@@ -272,16 +272,19 @@ pub fn open_for_file_op_under(
 /// this function. No other root-resolution functions exist.
 pub fn root_for_dir<'a>(state: &'a AppState, abs: &Path) -> Option<&'a TagRoot> {
     let abs_path = abs.canonicalize().unwrap_or_else(|_| abs.to_path_buf());
-    let abs_vol = db::volume_id(&abs_path);
+    // Containment check (pure path operation) is performed before any
+    // filesystem access so that volume_id() is never called on an
+    // unvalidated user-supplied path (CWE-022 / path injection).
     state
         .roots
         .iter()
         .filter(|r| {
-            let vol_match = match (abs_vol, r.dev) {
-                (Some(av), Some(rv)) => av == rv,
-                _ => true,
-            };
-            vol_match && abs_path.starts_with(&r.root)
+            abs_path.starts_with(&r.root) && {
+                match (db::volume_id(&abs_path), r.dev) {
+                    (Some(av), Some(rv)) => av == rv,
+                    _ => true,
+                }
+            }
         })
         .max_by_key(|r| r.root.as_os_str().len())
 }
