@@ -17,6 +17,17 @@ jobs:
     runs-on: codeberg-small
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v3
+      - name: Cache cargo registry & build artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-check-
       - name: Install Rust stable + clippy
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component clippy
@@ -27,8 +38,20 @@ jobs:
   test:
     name: Test
     runs-on: codeberg-small
+    timeout-minutes: 15
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v3
+      - name: Cache cargo registry & build artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
       - name: Install Rust stable
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
