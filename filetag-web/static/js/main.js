@@ -287,8 +287,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const rootMeta = state.roots.find(r => r.path === baseToRestore || baseToRestore.startsWith(r.path + '/'));
         if (rootMeta) state.currentBasePath = baseToRestore;
     }
-    try { await Promise.all([loadInfo(), loadTags(), loadSettings(), loadAuthStatus()]); } catch (e) { console.error('loadInfo/loadTags failed:', e); }
-    if (typeof loadFaceConfig === 'function') {
+    // Only load database-specific data when we already know which root to
+    // target.  When currentBasePath is null (first visit with multiple roots,
+    // no session) the backend requires a `dir` parameter and will return 400.
+    // These calls will be retried below once loadFiles() has resolved the root.
+    const _hadContext = currentAbsDir() != null;
+    await Promise.all([
+        _hadContext ? loadInfo().catch(e => console.error('loadInfo failed:', e)) : Promise.resolve(),
+        _hadContext ? loadTags().catch(e => console.error('loadTags failed:', e)) : Promise.resolve(),
+        _hadContext ? loadSettings().catch(() => {}) : Promise.resolve(),
+        loadAuthStatus(),
+    ]);
+    if (_hadContext && typeof loadFaceConfig === 'function') {
         Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
     }
     // Attempt to restore the last-visited path. If that fails (e.g. because new
@@ -321,6 +331,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await loadFiles('');
         } catch (e2) { console.error('loadFiles fallback also failed:', e2); }
+    }
+    // If db-specific data was not loaded before loadFiles (no context at startup),
+    // load it now that currentBasePath has been resolved from the server response.
+    if (!_hadContext && currentAbsDir() != null) {
+        await Promise.all([
+            loadInfo().catch(e => console.error('loadInfo failed:', e)),
+            loadTags().catch(e => console.error('loadTags failed:', e)),
+            loadSettings().catch(() => {}),
+        ]);
+        if (typeof loadFaceConfig === 'function') {
+            Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
+        }
     }
     _navPush(); // seed the history with the initial location so back-button works after first navigation
     render();
