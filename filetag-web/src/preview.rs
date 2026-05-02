@@ -21,6 +21,19 @@ use crate::types::DirParam;
 use crate::video::{orient_to_vf_prefix, serve_transcoded_mp4, video_thumb_strip};
 
 // ---------------------------------------------------------------------------
+// Lossy WebP encoding helper
+// ---------------------------------------------------------------------------
+
+/// Encode a `DynamicImage` as lossy WebP at the given quality (0–100).
+/// Uses libwebp via the `webp` crate. Returns `None` on encoding failure.
+fn encode_lossy_webp(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>> {
+    let rgb = img.to_rgb8();
+    let mem = webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height()).encode(quality);
+    let bytes: Vec<u8> = mem.to_vec();
+    bytes.starts_with(b"RIFF").then_some(bytes)
+}
+
+// ---------------------------------------------------------------------------
 // File preview handler
 // ---------------------------------------------------------------------------
 
@@ -337,10 +350,7 @@ async fn raw_thumb_rust(path: &Path) -> Option<Vec<u8>> {
         let img = apply_exif_orientation(img, orient);
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
 
-        let mut out = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
-        let bytes = out.into_inner();
-        bytes.starts_with(b"RIFF").then_some(bytes)
+        encode_lossy_webp(&img, 80.0)
     })
     .await
     .ok()?
@@ -669,17 +679,14 @@ async fn image_thumb_rust(path: &Path) -> Option<Vec<u8>> {
         // Resize: fit within 400×400 preserving aspect ratio
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
 
-        // Encode as WebP
-        let mut out = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
-        let bytes = out.into_inner();
-        bytes.starts_with(b"RIFF").then_some(bytes)
+        // Encode as lossy WebP
+        encode_lossy_webp(&img, 80.0)
     })
     .await
     .ok()?
 }
 
-/// Generate a small JPEG thumbnail for any image file.
+/// Generate a small WebP thumbnail for any image file.
 /// Target: max 400 px on the longest side, quality 80.
 ///
 /// Priority:
@@ -712,10 +719,7 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
         let resized = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
             let img = image::load_from_memory(&jpeg).ok()?;
             let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-            let mut out = std::io::Cursor::new(Vec::new());
-            img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
-            let bytes = out.into_inner();
-            bytes.starts_with(b"RIFF").then_some(bytes)
+            encode_lossy_webp(&img, 80.0)
         })
         .await
         .ok()
@@ -792,20 +796,17 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
             && out.status.success()
             && out.stdout.starts_with(&[0xFF, 0xD8])
         {
-            // Re-encode the JPEG from ffmpeg as WebP.
+            // Re-encode ffmpeg JPEG as lossy WebP.
             let jpeg = out.stdout;
-            let webp = tokio::task::spawn_blocking(move || {
+            if let Some(webp) = tokio::task::spawn_blocking(move || {
                 let img = image::load_from_memory(&jpeg).ok()?;
-                let mut buf = std::io::Cursor::new(Vec::new());
-                img.write_to(&mut buf, image::ImageFormat::WebP).ok()?;
-                let bytes = buf.into_inner();
-                bytes.starts_with(b"RIFF").then_some(bytes)
+                encode_lossy_webp(&img, 80.0)
             })
             .await
             .ok()
-            .flatten();
-            if webp.is_some() {
-                return webp;
+            .flatten()
+            {
+                return Some(webp);
             }
         }
     }
@@ -828,9 +829,9 @@ pub async fn sips_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tmp = tmp_dir.join(format!("sips_{stem}.webp"));
+    let tmp = tmp_dir.join(format!("sips_{stem}.jpg"));
     let status = tokio::process::Command::new("sips")
-        .args(["-s", "format", "webp", "-Z", "400"])
+        .args(["-s", "format", "jpeg", "-Z", "400"])
         .arg(path)
         .args(["--out"])
         .arg(&tmp)
@@ -845,11 +846,17 @@ pub async fn sips_thumb_jpeg(path: &Path, root: &Path) -> Option<Vec<u8>> {
     }
     let data = tokio::fs::read(&tmp).await.ok()?;
     let _ = tokio::fs::remove_file(&tmp).await;
-    if data.starts_with(b"RIFF") {
-        Some(data)
-    } else {
-        None
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
     }
+    // Re-encode JPEG from sips as lossy WebP.
+    tokio::task::spawn_blocking(move || {
+        let img = image::load_from_memory(&data).ok()?;
+        encode_lossy_webp(&img, 80.0)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -876,11 +883,11 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let tmp_prefix = tmp_dir.join(format!("pdft_{}", stem));
-    let expected = tmp_dir.join(format!("pdft_{}.png", stem));
+    let expected = tmp_dir.join(format!("pdft_{}.jpg", stem));
 
     let status = tokio::process::Command::new("pdftoppm")
         .args([
-            "-png",
+            "-jpeg",
             "-singlefile",
             "-f",
             "1",
@@ -897,21 +904,21 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
         .await;
 
     if status.map(|s| s.success()).unwrap_or(false)
-        && let Ok(png_data) = tokio::fs::read(&expected).await
+        && let Ok(data) = tokio::fs::read(&expected).await
     {
         let _ = tokio::fs::remove_file(&expected).await;
-        let webp = tokio::task::spawn_blocking(move || {
-            let img = image::load_from_memory(&png_data).ok()?;
-            let mut out = std::io::Cursor::new(Vec::new());
-            img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
-            let bytes = out.into_inner();
-            bytes.starts_with(b"RIFF").then_some(bytes)
-        })
-        .await
-        .ok()
-        .flatten();
-        if webp.is_some() {
-            return webp;
+        if data.starts_with(&[0xFF, 0xD8]) {
+            // Re-encode pdftoppm JPEG as lossy WebP.
+            if let Some(webp) = tokio::task::spawn_blocking(move || {
+                let img = image::load_from_memory(&data).ok()?;
+                encode_lossy_webp(&img, 80.0)
+            })
+            .await
+            .ok()
+            .flatten()
+            {
+                return Some(webp);
+            }
         }
     }
     let _ = tokio::fs::remove_file(&expected).await;
@@ -977,10 +984,7 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
         };
         let img = apply_exif_orientation(img, orient);
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-        let mut out = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut out, image::ImageFormat::WebP).ok()?;
-        let bytes = out.into_inner();
-        bytes.starts_with(b"RIFF").then_some(bytes)
+        encode_lossy_webp(&img, 80.0)
     })
     .await
     .ok()
@@ -1551,9 +1555,9 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path) -> bool {
     };
     let mut canvas = image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
     for (input, (x, y)) in inputs.iter().take(n).zip(slots.iter()) {
-        let Ok(img) = image::open(input) else {
-            continue;
-        };
+        // Read by content (not extension) so WebP bytes in a .jpg temp file work.
+        let Ok(data) = std::fs::read(input) else { continue };
+        let Ok(img) = image::load_from_memory(&data) else { continue };
         let tile = img
             .resize_to_fill(100, 100, image::imageops::FilterType::Lanczos3)
             .to_rgba8();
@@ -1821,9 +1825,11 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &files[idx];
-                    if let Some(jpeg) = dir_item_jpeg(item_path, &cache_root, features_bg).await {
-                        let tp = tmp_dir.join(format!("item{}.jpg", item_thumb_paths.len()));
-                        if tokio::fs::write(&tp, &jpeg).await.is_ok() {
+                    if let Some(data) = dir_item_jpeg(item_path, &cache_root, features_bg).await {
+                        // Use the correct extension so ImageMagick gets the right format hint.
+                        let ext = if data.starts_with(b"RIFF") { "webp" } else { "jpg" };
+                        let tp = tmp_dir.join(format!("item{}.{ext}", item_thumb_paths.len()));
+                        if tokio::fs::write(&tp, &data).await.is_ok() {
                             item_thumb_paths.push(tp);
                         }
                     }
