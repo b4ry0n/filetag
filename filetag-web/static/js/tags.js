@@ -940,7 +940,24 @@ function renderSubjects() {
 }
 
 function renderSubjectTreeNodes(nodeMap, depth) {
-    const nodes = [...nodeMap.values()].sort((a, b) => a.segment.localeCompare(b.segment));
+    const nodes = [...nodeMap.values()];
+    const mode = state.tagSortMode;
+    if (depth === 0) {
+        if (mode === 'count') {
+            nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
+        } else if (mode === 'groups-first') {
+            nodes.sort((a, b) => {
+                const ag = a.children.size > 0 ? 0 : 1;
+                const bg = b.children.size > 0 ? 0 : 1;
+                if (ag !== bg) return ag - bg;
+                return a.segment.localeCompare(b.segment);
+            });
+        } else {
+            nodes.sort((a, b) => a.segment.localeCompare(b.segment));
+        }
+    } else {
+        nodes.sort((a, b) => a.segment.localeCompare(b.segment));
+    }
     return nodes.map(n => renderSubjectTreeNode(n, depth)).join('');
 }
 

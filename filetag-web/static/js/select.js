@@ -43,13 +43,5 @@ async function selectFile(path, event) {
     renderDetail();
 }
 
-// Helper to update card/list selection classes
-function _updateCardSelection() {
-    document.querySelectorAll('#content [data-path]').forEach(el => {
-        const path = el.getAttribute('data-path');
-        el.classList.toggle('selected', state.selectedPaths.has(path));
-    });
-}
-
 // Expose for global use
 window.selectFile = selectFile;

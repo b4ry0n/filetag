@@ -132,7 +132,7 @@ function renderZipGrid(entries) {
 
         const tagBadge = entry.tag_count > 0
             ? `<span class="card-tag-count">${entry.tag_count}</span>` : '';
-        const checkmark = state.selectedPaths.has(dbPath)
+        const checkmark = state.selectedPaths.size > 1 && state.selectedPaths.has(dbPath)
             ? '<span class="card-check">&#10003;</span>' : '';
         const dblAttr = entry.is_image
             ? ` ondblclick="openMediaViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';

@@ -72,7 +72,15 @@ function renderPeopleSection() {
     const named   = all.filter(p => !_faceIsUnknown(p.name));
     const unknown = all.filter(p =>  _faceIsUnknown(p.name));
 
-    const makeItems = (list) => list.map(p => {
+    const makeItems = (list) => {
+        const mode = state.tagSortMode;
+        const sorted = [...list];
+        if (mode === 'count') {
+            sorted.sort((a, b) => b.count - a.count || (a.name || '').localeCompare(b.name || ''));
+        } else {
+            sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        }
+        return sorted.map(p => {
         const isActive = state.faceActivePerson === p.name;
         const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: p.det_id }) + dirParam('&');
         const label = !p.name
@@ -88,7 +96,8 @@ function renderPeopleSection() {
             <span class="person-label">${esc(label)}</span>
             <span class="person-count">${p.count}</span>
         </button>`;
-    }).join('');
+        }).join('');
+    };
 
     // Unknown persons view
     if (state.faceShowUnknown) {

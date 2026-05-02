@@ -135,7 +135,7 @@
     overflow: visible; /* allow popover to overflow */
 }
 
-.sidebar-header h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+.sidebar-header h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); display: none; }
 
 .sidebar-tag-search {
     background: var(--bg-surface);

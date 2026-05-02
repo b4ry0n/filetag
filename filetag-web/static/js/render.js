@@ -177,7 +177,7 @@ function renderGrid(items) {
             }
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
-            const checkmark = state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
+            const checkmark = state.selectedPaths.size > 1 && state.selectedPaths.has(path) ? '<span class="card-check">&#10003;</span>' : '';
             const isArchiveEntry = path.includes('::');
             const gotoDirBtn = state.mode === 'search'
                 ? isArchiveEntry
@@ -440,19 +440,20 @@ async function _rootDrop(ev, targetPath) {
 // Toggle .selected class and checkmark on cards to match state.selectedPaths.
 function _updateCardSelection() {
     const content = document.getElementById('content');
+    const multiSelect = state.selectedPaths.size > 1;
     content.querySelectorAll('.card[data-path]').forEach(card => {
         const p = card.dataset.path;
         const want = state.selectedPaths.has(p);
+        const wantCheck = multiSelect && want;
         const has = card.classList.contains('selected');
-        if (want === has) return;
-        card.classList.toggle('selected', want);
+        if (want !== has) card.classList.toggle('selected', want);
         const existing = card.querySelector('.card-check');
-        if (want && !existing) {
+        if (wantCheck && !existing) {
             const chk = document.createElement('span');
             chk.className = 'card-check';
             chk.innerHTML = '&#10003;';
             card.prepend(chk);
-        } else if (!want && existing) {
+        } else if (!wantCheck && existing) {
             existing.remove();
         }
     });
