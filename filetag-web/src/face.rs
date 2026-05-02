@@ -125,7 +125,7 @@ pub struct FaceConfig {
 impl Default for FaceConfig {
     fn default() -> Self {
         Self {
-            confidence: 0.7,
+            confidence: 0.5,
             cluster_distance: 0.35,
             min_face_px: 40,
             tag_prefix: "person".into(),
@@ -156,7 +156,7 @@ fn load_face_config(conn: &Connection) -> FaceConfig {
             .unwrap_or_else(|| default.to_string())
     };
     FaceConfig {
-        confidence: get_f32("face.confidence", 0.7),
+        confidence: get_f32("face.confidence", 0.5),
         cluster_distance: get_f32("face.cluster_distance", 0.35),
         min_face_px: get_u32("face.min_face_px", 40),
         tag_prefix: get_str("face.tag_prefix", "person"),
@@ -561,11 +561,7 @@ fn det_image_to_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
 /// panics: regardless of whether the model exports [1, N, C] or [N, C],
 /// the in-memory layout is identical (batch=1, so the batch stride is
 /// irrelevant) and `flat[anchor * C + channel]` is always correct.
-fn decode_scrfd(
-    outputs: &[TValue],
-    score_threshold: f32,
-    det_scale: f32,
-) -> Vec<(f32, f32, f32, f32, f32, [f32; 10])> {
+fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec<ScrfdDetection> {
     let strides = [8u32, 16, 32];
     let num_anchors = 2usize;
     // fmc = 3 (number of feature map levels)
@@ -750,31 +746,158 @@ fn warp_face_112(img: &DynamicImage, a: f32, b: f32, tx: f32, ty: f32) -> image:
 // Main detection + embedding function
 // ---------------------------------------------------------------------------
 
+/// Minimum image dimension that triggers tiled detection.
+///
+/// Images wider or taller than this value are processed in overlapping
+/// 640×640 tiles so that faces that would become too small in a single
+/// full-image resize are still captured.
+const TILE_THRESHOLD: u32 = 1280;
+
+/// Overlap between adjacent tiles, as a fraction of DET_SIZE.
+/// 0.25 → 160 px overlap on each edge.
+const TILE_OVERLAP: f32 = 0.25;
+
+/// Run the detector on a single pre-prepared 640×640 padded RGB tile and
+/// return decoded detections in *original image coordinates*.
+///
+/// `offset_x` / `offset_y` — top-left corner of the tile in the original
+/// image (pixels).  `tile_scale` — the scale factor that was applied when
+/// resizing the tile content into 640×640 (output coordinates are divided
+/// by this to obtain original-image coordinates).
+/// A raw SCRFD output tuple: (score, x1, y1, x2, y2, landmarks[10]).
+type ScrfdDetection = (f32, f32, f32, f32, f32, [f32; 10]);
+
+fn detect_tile(
+    padded_rgb: &image::RgbImage,
+    models: &FaceModels,
+    score_threshold: f32,
+    tile_scale: f32,
+    offset_x: f32,
+    offset_y: f32,
+) -> anyhow::Result<Vec<ScrfdDetection>> {
+    let tensor = det_image_to_tensor(padded_rgb)?;
+    let outputs = models.detector.run(tvec![tensor.into()])?;
+    // decode_scrfd returns coordinates in original-image space already
+    // (divided by `tile_scale`). We must still add the tile offset.
+    let decoded = decode_scrfd(&outputs, score_threshold, tile_scale);
+    Ok(decoded
+        .into_iter()
+        .map(|(s, x1, y1, x2, y2, mut lm)| {
+            for k in 0..5 {
+                lm[2 * k] += offset_x;
+                lm[2 * k + 1] += offset_y;
+            }
+            (
+                s,
+                x1 + offset_x,
+                y1 + offset_y,
+                x2 + offset_x,
+                y2 + offset_y,
+                lm,
+            )
+        })
+        .collect())
+}
+
 /// Run the face detector on an image, then compute embeddings for each face.
 ///
-/// Input: any `DynamicImage`.
+/// For images larger than [`TILE_THRESHOLD`] in either dimension the detector
+/// is run on overlapping 640×640 tiles so that faces which would become too
+/// small in a single down-scaled pass are still detected.
+///
 /// Output: one `RawDetection` per face passing confidence, NMS, and size filters.
 pub fn detect_and_embed(
     img: &DynamicImage,
     models: &FaceModels,
     cfg: &FaceConfig,
 ) -> anyhow::Result<Vec<RawDetection>> {
-    // ------------------------------------------------------------------
-    // Step 1: Aspect-ratio-preserving resize + pad to 640×640.
-    // ------------------------------------------------------------------
-    let (padded_rgb, det_scale) = prep_detector_input(img);
-    let tensor = det_image_to_tensor(&padded_rgb)?;
-    let outputs = models.detector.run(tvec![tensor.into()])?;
+    let orig_w = img.width();
+    let orig_h = img.height();
 
     // ------------------------------------------------------------------
-    // Step 2: Decode SCRFD outputs, threshold, NMS.
+    // Step 1: Collect raw detections — single pass or tiled.
     // ------------------------------------------------------------------
-    let mut decoded = decode_scrfd(&outputs, cfg.confidence, det_scale);
+    let mut all_decoded: Vec<ScrfdDetection> = Vec::new();
 
-    // Sort descending by score for NMS.
-    decoded.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if orig_w <= TILE_THRESHOLD && orig_h <= TILE_THRESHOLD {
+        // Small image — single inference pass (original behaviour).
+        let (padded_rgb, det_scale) = prep_detector_input(img);
+        all_decoded.extend(detect_tile(
+            &padded_rgb,
+            models,
+            cfg.confidence,
+            det_scale,
+            0.0,
+            0.0,
+        )?);
+    } else {
+        // Large image — tiled inference.
+        //
+        // Strategy: slide a window of DET_SIZE×DET_SIZE over the image with
+        // a step of (1 - TILE_OVERLAP) × DET_SIZE.  Each tile is extracted
+        // from the original image at full resolution, then resized to
+        // DET_SIZE×DET_SIZE (no extra padding needed because the tile is
+        // square or close to it).  Detections are translated back to
+        // original-image coordinates and merged with global NMS.
+        let step = (DET_SIZE as f32 * (1.0 - TILE_OVERLAP)).round() as u32;
 
-    let candidates_nms: Vec<(f32, f32, f32, f32, f32)> = decoded
+        // Also run a full-image down-scaled pass to catch very large faces
+        // that span more than one tile.
+        let (padded_rgb, det_scale) = prep_detector_input(img);
+        all_decoded.extend(detect_tile(
+            &padded_rgb,
+            models,
+            cfg.confidence,
+            det_scale,
+            0.0,
+            0.0,
+        )?);
+
+        // Tiled passes.
+        let mut ty = 0u32;
+        loop {
+            // Clamp the tile's top edge so we don't go outside the image.
+            let tile_y = ty.min(orig_h.saturating_sub(DET_SIZE));
+            let tile_h = DET_SIZE.min(orig_h - tile_y);
+
+            let mut tx = 0u32;
+            loop {
+                let tile_x = tx.min(orig_w.saturating_sub(DET_SIZE));
+                let tile_w = DET_SIZE.min(orig_w - tile_x);
+
+                // Crop this tile from the original image (full resolution).
+                let tile_img = img.crop_imm(tile_x, tile_y, tile_w, tile_h);
+                // Resize the (possibly non-square) tile to DET_SIZE×DET_SIZE.
+                let (padded, scale) = prep_detector_input(&tile_img);
+                let dets = detect_tile(
+                    &padded,
+                    models,
+                    cfg.confidence,
+                    scale,
+                    tile_x as f32,
+                    tile_y as f32,
+                )?;
+                all_decoded.extend(dets);
+
+                if tile_x + tile_w >= orig_w {
+                    break;
+                }
+                tx += step;
+            }
+
+            if tile_y + tile_h >= orig_h {
+                break;
+            }
+            ty += step;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Step 2: Global NMS across all tiles.
+    // ------------------------------------------------------------------
+    all_decoded.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let candidates_nms: Vec<(f32, f32, f32, f32, f32)> = all_decoded
         .iter()
         .map(|&(s, x1, y1, x2, y2, _)| (s, x1, y1, x2, y2))
         .collect();
@@ -786,7 +909,7 @@ pub fn detect_and_embed(
     let mut detections = Vec::new();
 
     for idx in keep {
-        let (score, x1, y1, x2, y2, lm) = decoded[idx];
+        let (score, x1, y1, x2, y2, lm) = all_decoded[idx];
 
         let w = (x2 - x1).round() as i32;
         let h = (y2 - y1).round() as i32;
