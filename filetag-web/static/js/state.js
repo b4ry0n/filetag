@@ -40,7 +40,7 @@ const state = {
     aiAnalysing: new Set(),    // paths currently being analysed by AI
     aiVideoFrames: 12,         // preferred frame count for single-video AI analysis
     aiVideoFramesAuto: false,  // true => let backend choose frame count by duration
-    settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false }, // per-root settings (loaded from DB)
+    settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false, dir_preview_style: 'crop' }, // per-root settings (loaded from DB)
     sectionVisibility: _loadSectionVisibility(), // { tags, subjects, people, ai, distribution }
     sectionOrder: _loadSectionOrder(),            // ['tags','subjects','people','ai','distribution']
     sectionHeights: _loadSectionHeights(),        // { tags: px, subjects: px, ... } or null = auto

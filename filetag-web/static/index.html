@@ -299,6 +299,13 @@
                         <input type="number" id="sprite-max" value="16" min="2" max="64">
                         <small>Maximum preview frames per video (lower = faster generation).</small>
                     </label>
+                    <label>Directory preview style
+                        <select id="dir-preview-style">
+                            <option value="crop">Crop (square tiles, rotated)</option>
+                            <option value="fit">Fit (full image, area-normalised)</option>
+                        </select>
+                        <small>How thumbnails look for folders. “Fit” shows the full image without cropping, scaled so all images appear roughly the same size.</small>
+                    </label>
                     <div class="modal-actions">
                         <button onclick="saveVideoSettings()">Save</button>
                         <button onclick="closeSettings()">Cancel</button>

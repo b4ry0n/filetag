@@ -1372,16 +1372,16 @@ async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<V
     image_thumb_jpeg(path, features).await
 }
 
-/// Assemble a JPEG collage (240 × 240 px) from 1–4 input images.
+/// Assemble a transparent PNG collage (240 × 240 px) from 1–4 input images.
 ///
-/// The tile layout adapts to the number of inputs:
-/// - 1 image: single large tile, slightly rotated, centred.
-/// - 2 images: two tiles side by side.
-/// - 3 images: two tiles on top, one centred below.
-/// - 4 images: 2 × 2 grid (original layout).
+/// Two layout styles:
+/// - `"crop"` (default): 100×100 tiles, crop-to-fill, slightly rotated.
+/// - `"fit"`: 110×110 area-normalised tiles, no crop, no rotation.
 ///
-/// Tries ImageMagick (`magick` / `convert`) first, then an ffmpeg filter graph.
-async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
+/// Tries ImageMagick (`magick` / `convert`) first, then falls back to the
+/// pure-Rust implementation.  The ffmpeg path is skipped for "fit" because
+/// the ImageMagick area-normalisation geometry is easier to express there.
+async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     let n = inputs.len().min(4);
     if n == 0 {
         return false;
@@ -1392,6 +1392,91 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
         }
     }
 
+    if style == "fit" {
+        // --- "fit" style: area-normalised tiles, no crop, no rotation ---
+        //
+        // Each tile is resized to ~10 000 pixels total area (≈ 100×100 for a
+        // square), capped at 110×110 to avoid extreme aspect-ratios overflowing
+        // the canvas, then centred on a transparent 110×110 canvas.
+        //
+        // Slot positions (NW corner of the 110×110 tile cell) on the 240×240 canvas:
+        //   1:  centre (65, 65)
+        //   2:  side by side  (5, 65)  (125, 65)
+        //   3:  2-top + 1-bottom  (5,5) (125,5) (65,125)
+        //   4:  2×2 grid  (5,5) (125,5) (5,125) (125,125)
+        let fit_slots: &[(i64, i64)] = match n {
+            1 => &[(65, 65)],
+            2 => &[(5, 65), (125, 65)],
+            3 => &[(5, 5), (125, 5), (65, 125)],
+            _ => &[(5, 5), (125, 5), (5, 125), (125, 125)],
+        };
+
+        // --- ImageMagick "fit" path ---
+        for cmd_name in &["magick", "convert"] {
+            let mut cmd = tokio::process::Command::new(cmd_name);
+            cmd.args(["-size", "240x240", "xc:none"]);
+            for (i, (x, y)) in fit_slots.iter().take(n).enumerate() {
+                cmd.arg("(");
+                cmd.arg(&inputs[i]);
+                // Resize to ~10 000-pixel area, then cap at 110×110 (> means
+                // only shrink, never enlarge), then pad to uniform 110×110.
+                cmd.args([
+                    "-resize",
+                    "10000@",
+                    "-resize",
+                    "110x110>",
+                    "-gravity",
+                    "Center",
+                    "-background",
+                    "none",
+                    "-extent",
+                    "110x110",
+                ]);
+                cmd.arg(")");
+                cmd.args([
+                    "-gravity",
+                    "NorthWest",
+                    "-geometry",
+                    &format!("+{}+{}", x, y),
+                    "-composite",
+                ]);
+            }
+            cmd.arg(output);
+            let ok = cmd
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok && output.exists() {
+                match std::fs::read(output) {
+                    Ok(bytes) => {
+                        if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP)
+                            .is_ok()
+                            || bytes.starts_with(b"\x89PNG")
+                        {
+                            return true;
+                        }
+                        let _ = std::fs::remove_file(output);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        // Rust fallback for "fit".
+        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        let output = output.to_path_buf();
+        return tokio::task::spawn_blocking(move || {
+            build_collage_rust(&inputs, &output, "fit")
+        })
+        .await
+        .unwrap_or(false);
+    }
+
+    // --- "crop" style (default) ---
     // All layouts use 100×100 tiles so no layout implies more or less importance.
     // Slots: (rotation_degrees, x_offset, y_offset) — NW corner of each tile on
     // the 240×240 canvas.  Positions are chosen so tiles are nicely centred.
@@ -1532,12 +1617,12 @@ async fn build_collage(inputs: &[PathBuf], output: &Path) -> bool {
 
     let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
     let output = output.to_path_buf();
-    tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output))
+    tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "crop"))
         .await
         .unwrap_or(false)
 }
 
-fn build_collage_rust(inputs: &[PathBuf], output: &Path) -> bool {
+fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     let n = inputs.len().min(4);
     if n == 0 {
         return false;
@@ -1547,6 +1632,68 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path) -> bool {
             // input-bestand ontbreekt
         }
     }
+
+    if style == "fit" {
+        // "fit" style: area-normalised tiles centred on a 110×110 transparent
+        // cell, no crop, no rotation.
+        //
+        // Each tile is scaled so its total pixel area ≈ 10 000 pixels, which
+        // means a square becomes ~100×100 and a 4:3 landscape becomes ~115×86,
+        // making all images look roughly the same visual size regardless of
+        // aspect ratio.  Both dimensions are capped at 110 to prevent extreme
+        // aspect ratios overflowing their cell.
+        const TARGET_AREA: f64 = 10_000.0;
+        const CELL: u32 = 110;
+        let fit_slots: &[(i64, i64)] = match n {
+            1 => &[(65, 65)],
+            2 => &[(5, 65), (125, 65)],
+            3 => &[(5, 5), (125, 5), (65, 125)],
+            _ => &[(5, 5), (125, 5), (5, 125), (125, 125)],
+        };
+        let mut canvas =
+            image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
+        for (input, (cx, cy)) in inputs.iter().take(n).zip(fit_slots.iter()) {
+            let Ok(data) = std::fs::read(input) else {
+                continue;
+            };
+            let Ok(img) = image::load_from_memory(&data) else {
+                continue;
+            };
+            let (w, h) = (img.width() as f64, img.height() as f64);
+            // Area-normalised dimensions.
+            let scale = (TARGET_AREA / (w * h)).sqrt();
+            let mut nw = (w * scale).round() as u32;
+            let mut nh = (h * scale).round() as u32;
+            // Cap each dimension to CELL without upscaling.
+            if nw > CELL {
+                let s = CELL as f64 / nw as f64;
+                nw = CELL;
+                nh = (nh as f64 * s).round().max(1.0) as u32;
+            }
+            if nh > CELL {
+                let s = CELL as f64 / nh as f64;
+                nh = CELL;
+                nw = (nw as f64 * s).round().max(1.0) as u32;
+            }
+            let tile = img
+                .resize_exact(nw, nh, image::imageops::FilterType::Lanczos3)
+                .to_rgba8();
+            // Centre the (possibly non-square) tile within the cell.
+            let ox = cx + ((CELL - nw) / 2) as i64;
+            let oy = cy + ((CELL - nh) / 2) as i64;
+            image::imageops::overlay(&mut canvas, &tile, ox, oy);
+        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        if image::DynamicImage::ImageRgba8(canvas)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .is_err()
+        {
+            return false;
+        }
+        return std::fs::write(output, out.into_inner()).is_ok();
+    }
+
+    // --- "crop" style (default) ---
     let slots: &[(i64, i64)] = match n {
         1 => &[(70, 70)],
         2 => &[(10, 68), (128, 68)],
@@ -1709,12 +1856,14 @@ fn stitch_dir_frames_rust(frames: &[PathBuf]) -> Option<Vec<u8>> {
 ///
 /// Stored under `<root>/.filetag/cache/dir-thumbs/`.  The key includes a path
 /// and metadata hash so nested-file changes invalidate recursive folder
-/// previews.
+/// previews.  `style` is included so changing the collage style invalidates
+/// existing cached sprites.
 fn dir_thumb_cache_path(
     dir_abs: &Path,
     root: &Path,
     files: &[PathBuf],
     features: Features,
+    style: &str,
 ) -> Option<PathBuf> {
     let stem = dir_abs
         .file_name()
@@ -1727,6 +1876,7 @@ fn dir_thumb_cache_path(
         features.video.hash(&mut h);
         features.imagemagick.hash(&mut h);
         features.pdf.hash(&mut h);
+        style.hash(&mut h);
         files.len().hash(&mut h);
         for path in files {
             path.hash(&mut h);
@@ -1792,13 +1942,23 @@ pub async fn api_dir_thumbs(
         .unwrap_or_else(|| db_root.root.clone());
     let features = load_features_for(&state, &cache_root);
 
+    // Read the dir_preview_style setting from the DB (defaults to "crop").
+    let dir_preview_style = state
+        .roots
+        .iter()
+        .find(|r| r.root == cache_root)
+        .and_then(|tag_root| crate::state::open_conn(tag_root).ok())
+        .and_then(|c| filetag_lib::db::get_setting(&c, "dir_preview_style").ok().flatten())
+        .filter(|v| v == "fit" || v == "crop")
+        .unwrap_or_else(|| "crop".to_string());
+
     let files = list_previewable_files(&abs_dir);
     if files.is_empty() {
         return StatusCode::NO_CONTENT.into_response();
     }
 
     // Check cache before starting background generation.
-    if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root, &files, features) {
+    if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root, &files, features, &dir_preview_style) {
         if let Ok(data) = tokio::fs::read(&cache_path).await {
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
@@ -1814,6 +1974,7 @@ pub async fn api_dir_thumbs(
             let files = files.clone();
             let cache_path2 = cache_path.clone();
             let features_bg = features;
+            let style_bg = dir_preview_style.clone();
             tokio::spawn(async move {
                 const IMAGES_PER_FRAME: usize = 4;
                 const MAX_FRAMES: usize = 6;
@@ -1848,7 +2009,7 @@ pub async fn api_dir_thumbs(
                         continue;
                     }
                     let frame_path = tmp_dir.join(format!("frame{frame_idx}.png"));
-                    if build_collage(group, &frame_path).await {
+                    if build_collage(group, &frame_path, &style_bg).await {
                         frame_paths.push(frame_path);
                     }
                 }
@@ -1947,7 +2108,7 @@ mod tests {
             .unwrap();
         std::fs::write(&input, jpeg.into_inner()).unwrap();
 
-        assert!(build_collage_rust(std::slice::from_ref(&input), &frame));
+        assert!(build_collage_rust(std::slice::from_ref(&input), &frame, "crop"));
         let webp = stitch_dir_frames_rust(std::slice::from_ref(&frame)).unwrap();
         assert!(webp.starts_with(b"RIFF"));
 

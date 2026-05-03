@@ -1342,12 +1342,17 @@ pub async fn api_settings_get(
     }
     let imagemagick_installed = tool_installed(&["magick", "convert"]);
     let ffmpeg_installed = tool_installed(&["ffmpeg"]);
+    let dir_preview_style: String = db::get_setting(&conn, "dir_preview_style")
+        .map_err(AppError)?
+        .filter(|v| v == "fit" || v == "crop")
+        .unwrap_or_else(|| "crop".to_string());
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
         "sprite_max": sprite_max,
         "feature_video": bool_setting("feature.video"),
         "feature_imagemagick": bool_setting("feature.imagemagick"),
         "feature_pdf": bool_setting("feature.pdf"),
+        "dir_preview_style": dir_preview_style,
         "imagemagick_installed": imagemagick_installed,
         "ffmpeg_installed": ffmpeg_installed
     })))
@@ -1375,6 +1380,12 @@ pub async fn api_settings_set(
     }
     if let Some(v) = body.feature_pdf {
         db::set_setting(&conn, "feature.pdf", bool_to_str(v)).map_err(AppError)?;
+    }
+    if let Some(v) = body.dir_preview_style {
+        // Whitelist: only persist known values.
+        if v == "crop" || v == "fit" {
+            db::set_setting(&conn, "dir_preview_style", &v).map_err(AppError)?;
+        }
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

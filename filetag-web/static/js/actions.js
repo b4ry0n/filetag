@@ -199,6 +199,8 @@ function openSettings(tab = 'video') {
     // Video settings from per-root state.
     document.getElementById('sprite-min').value = state.settings.sprite_min ?? 8;
     document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
+    const dpsSel = document.getElementById('dir-preview-style');
+    if (dpsSel) dpsSel.value = state.settings.dir_preview_style ?? 'crop';
     // PDF field is always present — populate regardless of active tab.
     document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
     // Features tab initialisation is deferred until the tab is visible.
@@ -882,11 +884,13 @@ async function saveVideoSettings() {
             dir: currentAbsDir(),
             sprite_min: min,
             sprite_max: Math.max(max, min),
+            dir_preview_style: document.getElementById('dir-preview-style')?.value ?? 'crop',
         };
         try {
             await apiPost('/api/settings', body);
             state.settings.sprite_min = body.sprite_min;
             state.settings.sprite_max = body.sprite_max;
+            state.settings.dir_preview_style = body.dir_preview_style;
         } catch (e) {
             showToast('Failed to save settings: ' + e.message);
             return;

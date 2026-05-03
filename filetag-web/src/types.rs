@@ -378,6 +378,8 @@ pub struct SettingsBody {
     pub feature_imagemagick: Option<bool>,
     /// Enable PDF thumbnail generation.
     pub feature_pdf: Option<bool>,
+    /// Directory collage layout style: `"crop"` (default) or `"fit"`.
+    pub dir_preview_style: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
