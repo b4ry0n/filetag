@@ -1344,7 +1344,7 @@ pub async fn api_settings_get(
     let ffmpeg_installed = tool_installed(&["ffmpeg"]);
     let dir_preview_style: String = db::get_setting(&conn, "dir_preview_style")
         .map_err(AppError)?
-        .filter(|v| v == "fit" || v == "crop")
+        .filter(|v| v == "fit" || v == "crop" || v == "scattered")
         .unwrap_or_else(|| "crop".to_string());
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
@@ -1383,7 +1383,7 @@ pub async fn api_settings_set(
     }
     if let Some(v) = body.dir_preview_style {
         // Whitelist: only persist known values.
-        if v == "crop" || v == "fit" {
+        if v == "crop" || v == "fit" || v == "scattered" {
             db::set_setting(&conn, "dir_preview_style", &v).map_err(AppError)?;
         }
     }

@@ -1374,13 +1374,14 @@ async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<V
 
 /// Assemble a transparent PNG collage (240 × 240 px) from 1–4 input images.
 ///
-/// Two layout styles:
+/// Three layout styles:
 /// - `"crop"` (default): 100×100 tiles, crop-to-fill, slightly rotated.
 /// - `"fit"`: 110×110 area-normalised tiles, no crop, no rotation.
+/// - `"scattered"`: 115×115 area-normalised tiles, no crop, moderate rotation
+///   and deliberate overlap — like a physical photo collage.
 ///
 /// Tries ImageMagick (`magick` / `convert`) first, then falls back to the
-/// pure-Rust implementation.  The ffmpeg path is skipped for "fit" because
-/// the ImageMagick area-normalisation geometry is easier to express there.
+/// pure-Rust implementation.
 async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     let n = inputs.len().min(4);
     if n == 0 {
@@ -1450,27 +1451,103 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 .await
                 .map(|s| s.success())
                 .unwrap_or(false);
-            if ok && output.exists() {
-                match std::fs::read(output) {
-                    Ok(bytes) => {
-                        if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP)
-                            .is_ok()
-                            || bytes.starts_with(b"\x89PNG")
-                        {
-                            return true;
-                        }
-                        let _ = std::fs::remove_file(output);
-                    }
-                    Err(_) => {}
+            if ok
+                && output.exists()
+                && let Ok(bytes) = std::fs::read(output)
+            {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                    || bytes.starts_with(b"\x89PNG")
+                {
+                    return true;
                 }
+                let _ = std::fs::remove_file(output);
             }
         }
 
         // Rust fallback for "fit".
         let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
         let output = output.to_path_buf();
+        return tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "fit"))
+            .await
+            .unwrap_or(false);
+    }
+
+    if style == "scattered" {
+        // --- "scattered" style: area-normalised tiles, moderate rotation, overlap ---
+        //
+        // Tiles are slightly larger (~115×115 cell) and placed so they can
+        // overlap, giving the impression of casually stacked photos.
+        //
+        // Slot angles and positions (NW corner of the 115×115 cell before
+        // rotation) on the 240×240 canvas.  After rotation a 115×115 tile at
+        // ~10° becomes ~133×133, so adjacent tiles naturally overlap by
+        // ~15–25 px.
+        let sc_slots: &[(i32, i64, i64)] = match n {
+            1 => &[(-9, 63, 63)],
+            2 => &[(-10, 5, 60), (8, 115, 62)],
+            3 => &[(-9, 3, 5), (10, 112, 8), (4, 60, 118)],
+            _ => &[(-9, 3, 5), (10, 118, 8), (6, 5, 118), (-11, 120, 118)],
+        };
+
+        // --- ImageMagick "scattered" path ---
+        for cmd_name in &["magick", "convert"] {
+            let mut cmd = tokio::process::Command::new(cmd_name);
+            cmd.args(["-size", "240x240", "xc:none"]);
+            for (i, (angle, x, y)) in sc_slots.iter().take(n).enumerate() {
+                cmd.arg("(");
+                cmd.arg(&inputs[i]);
+                // Scale to ~13 000-pixel area, cap at 115×115, centre on that
+                // cell, then rotate so the background remains transparent.
+                cmd.args([
+                    "-resize",
+                    "13000@",
+                    "-resize",
+                    "115x115>",
+                    "-gravity",
+                    "Center",
+                    "-background",
+                    "none",
+                    "-extent",
+                    "115x115",
+                    "-rotate",
+                    &angle.to_string(),
+                ]);
+                cmd.arg(")");
+                cmd.args([
+                    "-gravity",
+                    "NorthWest",
+                    "-geometry",
+                    &format!("+{}+{}", x, y),
+                    "-composite",
+                ]);
+            }
+            cmd.arg(output);
+            let ok = cmd
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok
+                && output.exists()
+                && let Ok(bytes) = std::fs::read(output)
+            {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                    || bytes.starts_with(b"\x89PNG")
+                {
+                    return true;
+                }
+                let _ = std::fs::remove_file(output);
+            }
+        }
+
+        // Rust fallback for "scattered".
+        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        let output = output.to_path_buf();
         return tokio::task::spawn_blocking(move || {
-            build_collage_rust(&inputs, &output, "fit")
+            build_collage_rust(&inputs, &output, "scattered")
         })
         .await
         .unwrap_or(false);
@@ -1622,6 +1699,48 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         .unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------------
+// Rotation helper for the Rust collage fallback
+// ---------------------------------------------------------------------------
+
+/// Rotate an RGBA image by `degrees` around its centre (positive = clockwise).
+///
+/// The output canvas is expanded to contain the entire rotated image;
+/// background pixels are transparent.  Uses nearest-neighbour sampling, which
+/// is acceptable quality for the Rust-only fallback path.
+fn rotate_rgba(img: &image::RgbaImage, degrees: f32) -> image::RgbaImage {
+    if degrees == 0.0 {
+        return img.clone();
+    }
+    let angle = degrees.to_radians();
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    // Bounding box of the rotated image.
+    let cos_a = angle.cos().abs();
+    let sin_a = angle.sin().abs();
+    let out_w = (w * cos_a + h * sin_a).ceil() as u32;
+    let out_h = (w * sin_a + h * cos_a).ceil() as u32;
+    let mut out = image::RgbaImage::from_pixel(out_w, out_h, image::Rgba([0, 0, 0, 0]));
+    // Inverse rotation to map each output pixel back to an input pixel.
+    let cos_inv = (-angle).cos();
+    let sin_inv = (-angle).sin();
+    let cx_in = w / 2.0;
+    let cy_in = h / 2.0;
+    let cx_out = out_w as f32 / 2.0;
+    let cy_out = out_h as f32 / 2.0;
+    for oy in 0..out_h {
+        for ox in 0..out_w {
+            let dx = ox as f32 - cx_out;
+            let dy = oy as f32 - cy_out;
+            let ix = dx * cos_inv - dy * sin_inv + cx_in;
+            let iy = dx * sin_inv + dy * cos_inv + cy_in;
+            if ix >= 0.0 && ix < w && iy >= 0.0 && iy < h {
+                out.put_pixel(ox, oy, *img.get_pixel(ix as u32, iy as u32));
+            }
+        }
+    }
+    out
+}
+
 fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     let n = inputs.len().min(4);
     if n == 0 {
@@ -1682,6 +1801,67 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             let ox = cx + ((CELL - nw) / 2) as i64;
             let oy = cy + ((CELL - nh) / 2) as i64;
             image::imageops::overlay(&mut canvas, &tile, ox, oy);
+        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        if image::DynamicImage::ImageRgba8(canvas)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .is_err()
+        {
+            return false;
+        }
+        return std::fs::write(output, out.into_inner()).is_ok();
+    }
+
+    if style == "scattered" {
+        // "scattered" style: area-normalised tiles (~13 000 px), moderate
+        // rotation, no crop.  Tiles may overlap on the 240×240 canvas.
+        const TARGET_AREA: f64 = 13_000.0;
+        const CELL: u32 = 115;
+        let angles: &[f32] = match n {
+            1 => &[-9.0],
+            2 => &[-10.0, 8.0],
+            3 => &[-9.0, 10.0, 4.0],
+            _ => &[-9.0, 10.0, 6.0, -11.0],
+        };
+        let positions: &[(i64, i64)] = match n {
+            1 => &[(63, 63)],
+            2 => &[(5, 60), (115, 62)],
+            3 => &[(3, 5), (112, 8), (60, 118)],
+            _ => &[(3, 5), (118, 8), (5, 118), (120, 118)],
+        };
+        let mut canvas =
+            image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
+        for ((input, &angle), (bx, by)) in inputs
+            .iter()
+            .take(n)
+            .zip(angles.iter())
+            .zip(positions.iter())
+        {
+            let Ok(data) = std::fs::read(input) else {
+                continue;
+            };
+            let Ok(img) = image::load_from_memory(&data) else {
+                continue;
+            };
+            let (w, h) = (img.width() as f64, img.height() as f64);
+            let scale = (TARGET_AREA / (w * h)).sqrt();
+            let mut nw = (w * scale).round() as u32;
+            let mut nh = (h * scale).round() as u32;
+            if nw > CELL {
+                let s = CELL as f64 / nw as f64;
+                nw = CELL;
+                nh = (nh as f64 * s).round().max(1.0) as u32;
+            }
+            if nh > CELL {
+                let s = CELL as f64 / nh as f64;
+                nh = CELL;
+                nw = (nw as f64 * s).round().max(1.0) as u32;
+            }
+            let resized = img
+                .resize_exact(nw, nh, image::imageops::FilterType::Lanczos3)
+                .to_rgba8();
+            let rotated = rotate_rgba(&resized, angle);
+            image::imageops::overlay(&mut canvas, &rotated, *bx, *by);
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
@@ -1948,8 +2128,12 @@ pub async fn api_dir_thumbs(
         .iter()
         .find(|r| r.root == cache_root)
         .and_then(|tag_root| crate::state::open_conn(tag_root).ok())
-        .and_then(|c| filetag_lib::db::get_setting(&c, "dir_preview_style").ok().flatten())
-        .filter(|v| v == "fit" || v == "crop")
+        .and_then(|c| {
+            filetag_lib::db::get_setting(&c, "dir_preview_style")
+                .ok()
+                .flatten()
+        })
+        .filter(|v| v == "fit" || v == "crop" || v == "scattered")
         .unwrap_or_else(|| "crop".to_string());
 
     let files = list_previewable_files(&abs_dir);
@@ -1958,7 +2142,9 @@ pub async fn api_dir_thumbs(
     }
 
     // Check cache before starting background generation.
-    if let Some(cache_path) = dir_thumb_cache_path(&abs_dir, &cache_root, &files, features, &dir_preview_style) {
+    if let Some(cache_path) =
+        dir_thumb_cache_path(&abs_dir, &cache_root, &files, features, &dir_preview_style)
+    {
         if let Ok(data) = tokio::fs::read(&cache_path).await {
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
@@ -2108,7 +2294,11 @@ mod tests {
             .unwrap();
         std::fs::write(&input, jpeg.into_inner()).unwrap();
 
-        assert!(build_collage_rust(std::slice::from_ref(&input), &frame, "crop"));
+        assert!(build_collage_rust(
+            std::slice::from_ref(&input),
+            &frame,
+            "crop"
+        ));
         let webp = stitch_dir_frames_rust(std::slice::from_ref(&frame)).unwrap();
         assert!(webp.starts_with(b"RIFF"));
 
