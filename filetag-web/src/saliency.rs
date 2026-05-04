@@ -38,11 +38,11 @@ use crate::state::{AppError, AppState};
 
 const POSE_MODEL_NAME: &str = "yolov8n-pose.onnx";
 const POSE_MODEL_URL: &str =
-    "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n-pose.onnx";
+    "https://github.com/b4ry0n/filetag/releases/download/models/yolov8n-pose.onnx";
 
 const OBJECT_MODEL_NAME: &str = "yolov8n.onnx";
 const OBJECT_MODEL_URL: &str =
-    "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx";
+    "https://github.com/b4ry0n/filetag/releases/download/models/yolov8n.onnx";
 
 /// Detection confidence threshold (0–1).  Lower = more detections but
 /// more false positives.
