@@ -2920,7 +2920,10 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &content_files[idx];
-                    let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered");
+                    // For grid style, preserve the source aspect ratio so that
+                    // smart_fill_tile / North-gravity can crop correctly.
+                    // Fit and scattered styles handle aspect themselves.
+                    let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered" | "grid");
                     if let Some(data) =
                         dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
                     {
