@@ -1447,7 +1447,7 @@ fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
 
     let mut out = std::io::Cursor::new(Vec::new());
     if image::DynamicImage::ImageRgba8(canvas)
-        .write_to(&mut out, image::ImageFormat::Png)
+        .write_to(&mut out, image::ImageFormat::WebP)
         .is_err()
     {
         return false;
@@ -2187,7 +2187,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::Png)
+            .write_to(&mut out, image::ImageFormat::WebP)
             .is_err()
         {
             return false;
@@ -2248,7 +2248,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::Png)
+            .write_to(&mut out, image::ImageFormat::WebP)
             .is_err()
         {
             return false;
@@ -2324,7 +2324,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::Png)
+            .write_to(&mut out, image::ImageFormat::WebP)
             .is_err()
         {
             return false;
@@ -2462,7 +2462,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::Png)
+            .write_to(&mut out, image::ImageFormat::WebP)
             .is_err()
         {
             return false;
@@ -2493,7 +2493,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
     let mut out = std::io::Cursor::new(Vec::new());
     if image::DynamicImage::ImageRgba8(canvas)
-        .write_to(&mut out, image::ImageFormat::Png)
+        .write_to(&mut out, image::ImageFormat::WebP)
         .is_err()
     {
         return false;
@@ -2501,9 +2501,9 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     std::fs::write(output, out.into_inner()).is_ok()
 }
 
-/// Stitch `frames` (PNG with alpha) side by side into a single WebP sprite sheet.
+/// Stitch `frames` (WebP with alpha) side by side into a single WebP sprite sheet.
 ///
-/// Frames are always PNG (intermediate, transparent).  Output is always lossless
+/// Frames are always WebP (intermediate, transparent).  Output is always lossless
 /// WebP with alpha.  Tries ImageMagick (`+append`) first, then an ffmpeg fallback.
 async fn stitch_dir_frames(frames: &[PathBuf]) -> Option<Vec<u8>> {
     if frames.is_empty() {
@@ -2775,7 +2775,7 @@ pub async fn api_dir_thumbs(
                 let cover_path = find_cover_image(&abs_dir_bg);
                 let mut frame_paths: Vec<PathBuf> = Vec::new();
                 if let Some(ref cover) = cover_path {
-                    let cover_frame = tmp_dir.join("cover_frame.png");
+                    let cover_frame = tmp_dir.join("cover_frame.webp");
                     if build_cover_frame(cover, &cover_frame).await {
                         frame_paths.push(cover_frame);
                     }
@@ -2819,7 +2819,7 @@ pub async fn api_dir_thumbs(
                     if group.is_empty() {
                         continue;
                     }
-                    let frame_path = tmp_dir.join(format!("frame{frame_idx}.png"));
+                    let frame_path = tmp_dir.join(format!("frame{frame_idx}.webp"));
                     if build_collage(group, &frame_path, &style_bg).await {
                         frame_paths.push(frame_path);
                     }
@@ -2913,7 +2913,7 @@ mod tests {
     fn rust_dir_collage_fallback_outputs_webp_sprite() {
         let dir = unique_temp_dir("dir_collage");
         let input = dir.join("input.jpg");
-        let frame = dir.join("frame.png");
+        let frame = dir.join("frame.webp");
 
         let img = image::RgbImage::from_pixel(120, 120, image::Rgb([200, 30, 80]));
         let mut jpeg = std::io::Cursor::new(Vec::new());
