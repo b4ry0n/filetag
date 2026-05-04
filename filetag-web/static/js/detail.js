@@ -885,7 +885,10 @@ async function _dirThumbFetch(el) {
     const src = el.dataset.thumbSrc;
     if (!src) return;
     const signal = _dirThumbAbortCtrl.signal;
-    for (let attempt = 0; attempt < 24; attempt++) {
+    // Backoff schedule: first 10 retries at 500 ms, next 10 at 1 s, rest at 3 s.
+    // Total budget ~120 attempts ≈ ~5 min, well beyond any realistic generation time.
+    const retryDelay = attempt => attempt < 10 ? 500 : attempt < 20 ? 1000 : 3000;
+    for (let attempt = 0; attempt < 120; attempt++) {
         if (!el.isConnected || signal.aborted) return;
         if (_thumbCache.has(src)) {
             const cached = _thumbCache.get(src);
@@ -911,7 +914,7 @@ async function _dirThumbFetch(el) {
                 // Server still generating; wait and retry (slot stays occupied).
                 // The wait is abortable so navigation cancels it immediately.
                 await new Promise(resolve => {
-                    const t = setTimeout(resolve, 500);
+                    const t = setTimeout(resolve, retryDelay(attempt));
                     signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
                 });
             } else if (resp.status === 204) {
@@ -927,7 +930,7 @@ async function _dirThumbFetch(el) {
             return;
         }
     }
-    // Exhausted retries (~12 s total); give up.
+    // Exhausted retries; give up silently (thumbnail stays as icon placeholder).
     if (el.isConnected) _thumbShowFailed(el);
 }
 
