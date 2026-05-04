@@ -1498,43 +1498,45 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
 
     if style == "grid" {
-        // --- "grid" style: square-cropped tiles, clean 2×2 grid, no rotation ---
-        let tile_size: u32 = 100;
-        // Positions are a tight 2×2 grid centred on the 240×240 canvas.
-        // n=1: one tile centred; n=2: side-by-side; n=3: top-row + one below;
-        // n=4: four-tile 2×2 grid.
-        let grid_slots: &[(i64, i64)] = match n {
-            1 => &[(70, 70)],
-            2 => &[(15, 70), (125, 70)],
-            3 => &[(15, 15), (125, 15), (70, 125)],
-            _ => &[(15, 15), (125, 15), (15, 125), (125, 125)],
+        // --- "grid" style: comic-book panels on a light background ---
+        //
+        // Visually identical to "comic": #f0f0f0 canvas, 3 px outer border,
+        // 2 px separators.  Panel coordinates: (x, y, w, h).
+        let panels: &[(i64, i64, i64, i64)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            _ => &[
+                (3, 3, 116, 116),
+                (121, 3, 116, 116),
+                (3, 121, 116, 116),
+                (121, 121, 116, 116),
+            ],
         };
-        let tile_geom = format!("{}x{}", tile_size, tile_size);
-        let tile_geom2 = tile_geom.clone();
 
         // --- ImageMagick "grid" path ---
         for cmd_name in &["magick", "convert"] {
             let mut cmd = tokio::process::Command::new(cmd_name);
-            cmd.args(["-size", "240x240", "xc:none"]);
-            for (i, (x, y)) in grid_slots.iter().take(n).enumerate() {
+            cmd.args(["-size", "240x240", "xc:#f0f0f0"]);
+            for (i, &(px, py, pw, ph)) in panels.iter().take(n).enumerate() {
                 cmd.arg("(");
                 cmd.arg(&inputs[i]);
+                let dims = format!("{}x{}", pw, ph);
+                let dims2 = dims.clone();
                 cmd.args([
                     "-resize",
-                    &format!("{}^", tile_geom),
+                    &format!("{}^", dims),
                     "-gravity",
                     "Center",
                     "-extent",
-                    &tile_geom2,
-                    "-background",
-                    "none",
+                    &dims2,
                 ]);
                 cmd.arg(")");
                 cmd.args([
                     "-gravity",
                     "NorthWest",
                     "-geometry",
-                    &format!("+{}+{}", x, y),
+                    &format!("+{}+{}", px, py),
                     "-composite",
                 ]);
             }
@@ -1558,62 +1560,6 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 }
                 let _ = std::fs::remove_file(output);
             }
-        }
-
-        // ffmpeg fallback for "grid" (same as crop but angle=0).
-        let offsets: &[(i32, i32)] = match n {
-            1 => &[(70, 70)],
-            2 => &[(15, 70), (125, 70)],
-            3 => &[(15, 15), (125, 15), (70, 125)],
-            _ => &[(15, 15), (125, 15), (15, 125), (125, 125)],
-        };
-        let ts = tile_size;
-        let tile_parts: String = (0..n)
-            .map(|i| {
-                format!(
-                    "[{i}]format=rgba,scale={ts}:{ts}:force_original_aspect_ratio=increase,\
-                     crop={ts}:{ts}[f{i}]"
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(";");
-        let overlay_parts: String = (0..n)
-            .map(|i| {
-                let (x, y) = offsets[i];
-                let src = if i == 0 {
-                    "bg".to_string()
-                } else {
-                    format!("l{}", i - 1)
-                };
-                let dst = if i == n - 1 {
-                    "out".to_string()
-                } else {
-                    format!("l{i}")
-                };
-                format!("[{src}][f{i}]overlay={x}:{y}[{dst}]")
-            })
-            .collect::<Vec<_>>()
-            .join(";");
-        let filter = format!(
-            "color=c=0x00000000:s=240x240:r=1,format=rgba[bg];{tile_parts};{overlay_parts}"
-        );
-        let mut cmd = tokio::process::Command::new("ffmpeg");
-        for p in inputs.iter().take(n) {
-            cmd.args(["-i", p.to_str().unwrap_or("")]);
-        }
-        let ok = cmd
-            .args(["-filter_complex", &filter])
-            .args(["-map", "[out]", "-frames:v", "1", "-pix_fmt", "rgba", "-y"])
-            .arg(output)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok && output.exists() {
-            return true;
         }
 
         // Rust fallback for "grid".
@@ -1704,70 +1650,24 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         // --- "comic" style: panels of varying size on a light background ---
         //
         // The 240×240 canvas has a 3 px outer border and 2 px separators between
-        // panels.  Panels are fit-within (aspect-ratio preserved) so images are
-        // not over-cropped.
+        // panels.  Panels are crop-filled to their exact dimensions.
         //
-        // For n=3 and n=4, multiple layouts are available; one is chosen
-        // deterministically from the first input filename so the same directory
-        // always gets the same layout.
+        //  n=1: one full panel
+        //  n=2: two side-by-side panels
+        //  n=3: one wide top panel + two panels below
+        //  n=4: classic 2×2 grid
         //
         // Panel coordinates: (x, y, w, h)
-        let variant: usize = inputs
-            .first()
-            .and_then(|p| p.file_name())
-            .map(|f| {
-                f.as_encoded_bytes()
-                    .iter()
-                    .fold(0u32, |a, &b| a.wrapping_mul(31).wrapping_add(u32::from(b)))
-            })
-            .unwrap_or(0) as usize;
-
-        // n=3: three layouts
-        let n3: [&[(i64, i64, i64, i64)]; 3] = [
-            // wide top + two below
-            &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
-            // two stacked left + tall right
-            &[(3, 3, 116, 116), (3, 121, 116, 116), (121, 3, 116, 234)],
-            // tall left + two stacked right
-            &[(3, 3, 116, 234), (121, 3, 116, 116), (121, 121, 116, 116)],
-        ];
-        // n=4: four layouts
-        let n4: [&[(i64, i64, i64, i64)]; 4] = [
-            // 2×2
-            &[
+        let panels: &[(i64, i64, i64, i64)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            _ => &[
                 (3, 3, 116, 116),
                 (121, 3, 116, 116),
                 (3, 121, 116, 116),
                 (121, 121, 116, 116),
             ],
-            // tall left + three stacked right
-            &[
-                (3, 3, 116, 234),
-                (121, 3, 116, 76),
-                (121, 81, 116, 76),
-                (121, 159, 116, 78),
-            ],
-            // wide top + three columns bottom
-            &[
-                (3, 3, 234, 78),
-                (3, 83, 76, 154),
-                (81, 83, 76, 154),
-                (159, 83, 78, 154),
-            ],
-            // three columns top + wide bottom
-            &[
-                (3, 3, 76, 78),
-                (81, 3, 76, 78),
-                (159, 3, 78, 78),
-                (3, 83, 234, 154),
-            ],
-        ];
-
-        let panels: &[(i64, i64, i64, i64)] = match n {
-            1 => &[(3, 3, 234, 234)],
-            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
-            3 => n3[variant % 3],
-            _ => n4[variant % 4],
         };
 
         // --- ImageMagick "comic" path ---
@@ -1779,17 +1679,14 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 cmd.arg("(");
                 cmd.arg(&inputs[i]);
                 let dims = format!("{}x{}", pw, ph);
-                // Fit-within (no `^`): image is scaled to fit the panel without
-                // cropping; the background colour fills any empty space.
+                let dims2 = dims.clone();
                 cmd.args([
                     "-resize",
-                    &dims,
+                    &format!("{}^", dims),
                     "-gravity",
                     "Center",
-                    "-background",
-                    "#f0f0f0",
                     "-extent",
-                    &dims,
+                    &dims2,
                 ]);
                 cmd.arg(")");
                 cmd.args([
@@ -2307,56 +2204,19 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         return std::fs::write(output, out.into_inner()).is_ok();
     }
 
-    if style == "comic" {
-        // Comic-book panels: varying layouts on a light background.
-        // Images are fit-within each panel (no crop) and centred.
+    if style == "comic" || style == "grid" {
+        // Comic-book panels: varying sizes on a light background.
         // Panel coordinates: (x, y, w, h)
-        let variant: usize = inputs
-            .first()
-            .and_then(|p| p.file_name())
-            .map(|f| {
-                f.as_encoded_bytes()
-                    .iter()
-                    .fold(0u32, |a, &b| a.wrapping_mul(31).wrapping_add(u32::from(b)))
-            })
-            .unwrap_or(0) as usize;
-
-        let n3: [&[(u32, u32, u32, u32)]; 3] = [
-            &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
-            &[(3, 3, 116, 116), (3, 121, 116, 116), (121, 3, 116, 234)],
-            &[(3, 3, 116, 234), (121, 3, 116, 116), (121, 121, 116, 116)],
-        ];
-        let n4: [&[(u32, u32, u32, u32)]; 4] = [
-            &[
+        let panels: &[(u32, u32, u32, u32)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            _ => &[
                 (3, 3, 116, 116),
                 (121, 3, 116, 116),
                 (3, 121, 116, 116),
                 (121, 121, 116, 116),
             ],
-            &[
-                (3, 3, 116, 234),
-                (121, 3, 116, 76),
-                (121, 81, 116, 76),
-                (121, 159, 116, 78),
-            ],
-            &[
-                (3, 3, 234, 78),
-                (3, 83, 76, 154),
-                (81, 83, 76, 154),
-                (159, 83, 78, 154),
-            ],
-            &[
-                (3, 3, 76, 78),
-                (81, 3, 76, 78),
-                (159, 3, 78, 78),
-                (3, 83, 234, 154),
-            ],
-        ];
-        let panels: &[(u32, u32, u32, u32)] = match n {
-            1 => &[(3, 3, 234, 234)],
-            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
-            3 => n3[variant % 3],
-            _ => n4[variant % 4],
         };
         let mut canvas =
             image::RgbaImage::from_pixel(240, 240, image::Rgba([240_u8, 240_u8, 240_u8, 255_u8]));
@@ -2367,14 +2227,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             let Ok(img) = image::load_from_memory(&data) else {
                 continue;
             };
-            // Fit within the panel, preserving aspect ratio (no crop).
-            let fitted = img
-                .resize(pw, ph, image::imageops::FilterType::Lanczos3)
+            let tile = img
+                .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
                 .to_rgba8();
-            // Centre the fitted image inside the panel.
-            let ox = px as i64 + (pw as i32 - fitted.width() as i32).max(0) as i64 / 2;
-            let oy = py as i64 + (ph as i32 - fitted.height() as i32).max(0) as i64 / 2;
-            image::imageops::overlay(&mut canvas, &fitted, ox, oy);
+            image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
@@ -2392,18 +2248,6 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         2 => &[(10, 68), (128, 68)],
         3 => &[(8, 10), (125, 3), (67, 128)],
         _ => &[(8, 10), (125, 3), (11, 128), (122, 122)],
-    };
-    // "grid" style reuses the crop-without-rotation branch — same resize_to_fill
-    // logic, only the slot positions differ (tighter grid).
-    let slots: &[(i64, i64)] = if style == "grid" {
-        match n {
-            1 => &[(70, 70)],
-            2 => &[(15, 70), (125, 70)],
-            3 => &[(15, 15), (125, 15), (70, 125)],
-            _ => &[(15, 15), (125, 15), (15, 125), (125, 125)],
-        }
-    } else {
-        slots
     };
     let mut canvas = image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
     for (input, (x, y)) in inputs.iter().take(n).zip(slots.iter()) {
@@ -2708,8 +2552,7 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &files[idx];
-                    let preserve_aspect =
-                        matches!(style_bg.as_str(), "fit" | "scattered" | "comic");
+                    let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered");
                     if let Some(data) =
                         dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
                     {
