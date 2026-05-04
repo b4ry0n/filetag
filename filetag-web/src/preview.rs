@@ -1296,23 +1296,52 @@ const COVER_IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "avif", "gif",
 
 /// Find a cover image in `dir` by checking well-known stems and extensions
 /// (case-insensitive).  Plain names are tried before hidden (dot-prefixed) ones.
+///
+/// Also matches numeric prefixes used to force sort order in other applications,
+/// e.g. `00_cover.jpg`, `01-folder.png`, `0cover.jpg`.
 fn find_cover_image(dir: &Path) -> Option<PathBuf> {
     let entries: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+
+    /// Returns true when `name` (already lowercased, extension stripped) matches
+    /// `stem`, optionally preceded by leading digits and an optional separator
+    /// character (`_`, `-`, ` `).
+    fn stem_matches(name_stem: &str, stem: &str) -> bool {
+        if name_stem == stem {
+            return true;
+        }
+        // Strip leading ASCII digits, then an optional single separator.
+        let after_digits = name_stem.trim_start_matches(|c: char| c.is_ascii_digit());
+        if after_digits == name_stem {
+            return false; // no leading digits
+        }
+        let after_sep = after_digits
+            .strip_prefix(['_', '-', ' '])
+            .unwrap_or(after_digits);
+        after_sep == stem
+    }
+
     for hidden in [false, true] {
         for stem in COVER_STEMS {
             for ext in COVER_IMAGE_EXTS {
-                let name = if hidden {
-                    format!(".{stem}.{ext}")
-                } else {
-                    format!("{stem}.{ext}")
-                };
                 for entry in &entries {
-                    if entry
-                        .file_name()
-                        .to_str()
-                        .is_some_and(|n| n.to_lowercase() == name)
-                        && entry.path().is_file()
-                    {
+                    let Some(fname) = entry.file_name().into_string().ok() else {
+                        continue;
+                    };
+                    let lower = fname.to_lowercase();
+                    // Check extension matches.
+                    let Some(name_stem) = lower.strip_suffix(&format!(".{ext}")) else {
+                        continue;
+                    };
+                    // Check hidden/plain prefix.
+                    let candidate_stem = if hidden {
+                        name_stem.strip_prefix('.')?
+                    } else {
+                        if name_stem.starts_with('.') {
+                            continue;
+                        }
+                        name_stem
+                    };
+                    if stem_matches(candidate_stem, stem) && entry.path().is_file() {
                         return Some(entry.path());
                     }
                 }
