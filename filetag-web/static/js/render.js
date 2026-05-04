@@ -463,8 +463,8 @@ function renderContent() {
         el.className = 'file-list';
         el.innerHTML = renderList(displayItems);
     }
-    // Start polling na elke content render
-    setTimeout(pollDirPreviews, 200);
+    // Trigger dir-thumb pool after each content render.
+    setTimeout(_dirThumbSchedule, 200);
 
     // Entry count
     const dirs = displayItems.filter(e => e.is_dir).length;
