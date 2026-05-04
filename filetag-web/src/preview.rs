@@ -1548,10 +1548,26 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                     (2, 121, 118, 116, 119),
                 ]
             }
+        } else if n == 2 {
+            // Orientation-adaptive 2-panel layout:
+            //   both landscape → side by side  (116 × 234 each)
+            //   one or both portrait → stacked  (234 × 116 each)
+            let mut is_portrait = [false; 2];
+            for i in 0..2 {
+                if let Ok(data) = tokio::fs::read(&inputs[i]).await
+                    && let Ok(img) = image::load_from_memory(&data)
+                {
+                    is_portrait[i] = img.height() > img.width();
+                }
+            }
+            if !is_portrait[0] && !is_portrait[1] {
+                vec![(0, 3_i64, 3_i64, 116_i64, 234_i64), (1, 121, 3, 116, 234)]
+            } else {
+                vec![(0, 3_i64, 3_i64, 234_i64, 116_i64), (1, 3, 121, 234, 116)]
+            }
         } else {
             let fixed: &[(i64, i64, i64, i64)] = match n {
                 1 => &[(3, 3, 234, 234)],
-                2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
                 _ => &[
                     (3, 3, 116, 116),
                     (121, 3, 116, 116),
@@ -2189,11 +2205,35 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                     .to_rgba8();
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
+        } else if n == 2 {
+            // Orientation-adaptive 2-panel layout:
+            //   both landscape → side by side  (116 × 234 each)
+            //   one or both portrait → stacked  (234 × 116 each)
+            let loaded2: Vec<image::DynamicImage> = inputs
+                .iter()
+                .take(2)
+                .filter_map(|p| {
+                    std::fs::read(p)
+                        .ok()
+                        .and_then(|d| image::load_from_memory(&d).ok())
+                })
+                .collect();
+            let both_landscape = loaded2.iter().all(|img| img.width() >= img.height());
+            let panels: &[(u32, u32, u32, u32)] = if both_landscape {
+                &[(3, 3, 116, 234), (121, 3, 116, 234)]
+            } else {
+                &[(3, 3, 234, 116), (3, 121, 234, 116)]
+            };
+            for (img, &(px, py, pw, ph)) in loaded2.iter().zip(panels.iter()) {
+                let tile = img
+                    .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+                    .to_rgba8();
+                image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+            }
         } else {
-            // n != 3: fixed panel layouts.
+            // n == 1 or n >= 4: fixed panel layouts.
             let panels: &[(u32, u32, u32, u32)] = match n {
                 1 => &[(3, 3, 234, 234)],
-                2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
                 _ => &[
                     (3, 3, 116, 116),
                     (121, 3, 116, 116),
