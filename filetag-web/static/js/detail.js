@@ -627,10 +627,17 @@ function _dirThumbInit() {
 // The IntersectionObserver promotes visible items to the front in
 // top-to-bottom order. A single async worker processes one thumbnail at a
 // time (matching the server-side semaphore of 1).
+//
+// Dir-thumbs are visibility-gated: they are only added to the queue when
+// they intersect the viewport (plus rootMargin).  This prevents triggering
+// heavy server-side collage generation for off-screen directories.
+// The server returns 202 Accepted while generation is in progress; the
+// client retries until 200 or until a retry cap is reached.
 
 const _thumbQueue = [];
 let _thumbBusy = false;
 const _thumbCache = new Map(); // thumb URL → blob URL
+const _thumbFetching = new WeakSet(); // elements currently being fetched
 
 const _thumbObserver = new IntersectionObserver((entries) => {
     // Collect all newly-visible elements from this batch.
@@ -640,13 +647,15 @@ const _thumbObserver = new IntersectionObserver((entries) => {
         const el = e.target;
         _thumbObserver.unobserve(el);
         const i = _thumbQueue.indexOf(el);
-        // i === -1 means the element was already shifted by _thumbRun and is
-        // currently being fetched — don't re-queue it.
-        if (i === -1) continue;
-        // Remove from wherever it sits (including index 0) so we can re-insert
-        // in proper sorted order below.
-        _thumbQueue.splice(i, 1);
-        newly.push(el);
+        if (i !== -1) {
+            // Already in queue — move to front.
+            _thumbQueue.splice(i, 1);
+            newly.push(el);
+        } else if (!_thumbFetching.has(el) && el.dataset.thumbSrc) {
+            // Dir-thumb that was observe-only (not yet queued) — add now.
+            newly.push(el);
+        }
+        // i === -1 && _thumbFetching.has(el) → currently being fetched; skip.
     }
     if (newly.length > 0) {
         // Sort by vertical position so top-most cards are processed first
@@ -674,8 +683,14 @@ function _thumbInit() {
             if (cached) _thumbReplace(el, cached); else _thumbShowFailed(el);
             return;
         }
-        if (_thumbQueue.includes(el)) return;
-        _thumbQueue.push(el);
+        if (_thumbQueue.includes(el) || _thumbFetching.has(el)) return;
+        // Dir-thumbs are visibility-gated: only observe, don't queue yet.
+        // The IntersectionObserver callback adds them when they enter the
+        // viewport, preventing off-screen collage generation.
+        const isDirThumb = src.includes('/api/dir-thumbs?');
+        if (!isDirThumb) {
+            _thumbQueue.push(el);
+        }
         _thumbObserver.observe(el);
     });
     _thumbRun();
@@ -775,20 +790,30 @@ async function _thumbRun() {
             if (cached) _thumbReplace(el, cached);
             continue;
         }
+        _thumbFetching.add(el);
         try {
             const resp = await fetch(src);
             if (!el.isConnected) continue;
-            if (resp.ok && resp.status !== 204) {
+            if (resp.status === 200) {
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
                 _thumbCache.set(src, url);
                 if (el.isConnected) _thumbReplace(el, url);
-            } else if (resp.status === 503) {
-                // Server busy: re-queue at back.
-                await new Promise(resolve => setTimeout(resolve, 250));
-                if (el.isConnected) {
-                    _thumbQueue.push(el);
-                    _thumbObserver.observe(el);
+            } else if (resp.status === 202 || resp.status === 503) {
+                // 202: server is still generating the collage in the background.
+                // 503: server busy. Retry after a short delay, up to a cap.
+                // Do NOT cache the response — it is not an image.
+                const retries = parseInt(el.dataset.thumbRetry || '0', 10);
+                if (retries >= 24) {
+                    // Give up after ~12 seconds total (24 × 500 ms).
+                    if (el.isConnected) _thumbShowFailed(el);
+                } else {
+                    el.dataset.thumbRetry = String(retries + 1);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (el.isConnected) {
+                        _thumbQueue.push(el);
+                        _thumbObserver.observe(el);
+                    }
                 }
             } else if (resp.status === 204) {
                 // No thumbnail available for this URL. Cache that result for
@@ -806,6 +831,8 @@ async function _thumbRun() {
         } catch (_) {
             // Network error: show placeholder so shimmer does not run forever.
             if (el.isConnected) _thumbShowFailed(el);
+        } finally {
+            _thumbFetching.delete(el);
         }
     }
     _thumbBusy = false;
