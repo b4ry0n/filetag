@@ -249,6 +249,7 @@
    which also suppresses Chrome's own PiP placeholder overlay. */
 .detail.pip-active .detail-top {
     visibility: hidden;
+    pointer-events: none;
 }
 
 
