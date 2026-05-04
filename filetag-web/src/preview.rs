@@ -1525,6 +1525,20 @@ async fn dir_item_jpeg(
         if !features.video {
             return None;
         }
+        // Seek to an interesting frame rather than frame 1 (which is often a
+        // title card or black leader).  Strategy: 15% into the video, clamped
+        // to [5 s, 300 s].  For videos shorter than 5 s we use the midpoint.
+        let seek_secs: f64 = if let Some(info) = crate::video::video_info(path).await {
+            let dur = info.duration;
+            if dur <= 5.0 {
+                dur * 0.5
+            } else {
+                (dur * 0.15).clamp(5.0, 300.0)
+            }
+        } else {
+            0.0
+        };
+
         // Extract the first decodable video frame.  For the crop style the
         // frame is square-cropped to 120×120; for fit/scattered styles the
         // frame is scaled down to fit in 240×240 without cropping so the
@@ -1534,7 +1548,11 @@ async fn dir_item_jpeg(
         } else {
             "scale=120:120:force_original_aspect_ratio=increase,crop=120:120"
         };
-        let out = tokio::process::Command::new("ffmpeg")
+        let mut cmd = tokio::process::Command::new("ffmpeg");
+        if seek_secs > 0.0 {
+            cmd.args(["-ss", &format!("{seek_secs:.2}")]);
+        }
+        let out = cmd
             .arg("-i")
             .arg(path)
             .args([
