@@ -1397,6 +1397,7 @@ async fn dir_item_jpeg(
 ///
 /// Three layout styles:
 /// - `"crop"` (default): 100×100 tiles, crop-to-fill, slightly rotated.
+/// - `"grid"`: 100×100 tiles, crop-to-fill, no rotation — clean grid.
 /// - `"fit"`: 110×110 area-normalised tiles, no crop, no rotation.
 /// - `"scattered"`: 115×115 area-normalised tiles, no crop, moderate rotation
 ///   and deliberate overlap — like a physical photo collage.
@@ -1489,6 +1490,133 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
         let output = output.to_path_buf();
         return tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "fit"))
+            .await
+            .unwrap_or(false);
+    }
+
+    if style == "grid" {
+        // --- "grid" style: square-cropped tiles, clean 2×2 grid, no rotation ---
+        let tile_size: u32 = 100;
+        // Positions are a tight 2×2 grid centred on the 240×240 canvas.
+        // n=1: one tile centred; n=2: side-by-side; n=3: top-row + one below;
+        // n=4: four-tile 2×2 grid.
+        let grid_slots: &[(i64, i64)] = match n {
+            1 => &[(70, 70)],
+            2 => &[(15, 70), (125, 70)],
+            3 => &[(15, 15), (125, 15), (70, 125)],
+            _ => &[(15, 15), (125, 15), (15, 125), (125, 125)],
+        };
+        let tile_geom = format!("{}x{}", tile_size, tile_size);
+        let tile_geom2 = tile_geom.clone();
+
+        // --- ImageMagick "grid" path ---
+        for cmd_name in &["magick", "convert"] {
+            let mut cmd = tokio::process::Command::new(cmd_name);
+            cmd.args(["-size", "240x240", "xc:none"]);
+            for (i, (x, y)) in grid_slots.iter().take(n).enumerate() {
+                cmd.arg("(");
+                cmd.arg(&inputs[i]);
+                cmd.args([
+                    "-resize",
+                    &format!("{}^", tile_geom),
+                    "-gravity",
+                    "Center",
+                    "-extent",
+                    &tile_geom2,
+                    "-background",
+                    "none",
+                ]);
+                cmd.arg(")");
+                cmd.args([
+                    "-gravity",
+                    "NorthWest",
+                    "-geometry",
+                    &format!("+{}+{}", x, y),
+                    "-composite",
+                ]);
+            }
+            cmd.arg(output);
+            let ok = cmd
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok
+                && output.exists()
+                && let Ok(bytes) = std::fs::read(output)
+            {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                    || bytes.starts_with(b"\x89PNG")
+                {
+                    return true;
+                }
+                let _ = std::fs::remove_file(output);
+            }
+        }
+
+        // ffmpeg fallback for "grid" (same as crop but angle=0).
+        let offsets: &[(i32, i32)] = match n {
+            1 => &[(70, 70)],
+            2 => &[(15, 70), (125, 70)],
+            3 => &[(15, 15), (125, 15), (70, 125)],
+            _ => &[(15, 15), (125, 15), (15, 125), (125, 125)],
+        };
+        let ts = tile_size;
+        let tile_parts: String = (0..n)
+            .map(|i| {
+                format!(
+                    "[{i}]format=rgba,scale={ts}:{ts}:force_original_aspect_ratio=increase,\
+                     crop={ts}:{ts}[f{i}]"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        let overlay_parts: String = (0..n)
+            .map(|i| {
+                let (x, y) = offsets[i];
+                let src = if i == 0 {
+                    "bg".to_string()
+                } else {
+                    format!("l{}", i - 1)
+                };
+                let dst = if i == n - 1 {
+                    "out".to_string()
+                } else {
+                    format!("l{i}")
+                };
+                format!("[{src}][f{i}]overlay={x}:{y}[{dst}]")
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        let filter = format!(
+            "color=c=0x00000000:s=240x240:r=1,format=rgba[bg];{tile_parts};{overlay_parts}"
+        );
+        let mut cmd = tokio::process::Command::new("ffmpeg");
+        for p in inputs.iter().take(n) {
+            cmd.args(["-i", p.to_str().unwrap_or("")]);
+        }
+        let ok = cmd
+            .args(["-filter_complex", &filter])
+            .args(["-map", "[out]", "-frames:v", "1", "-pix_fmt", "rgba", "-y"])
+            .arg(output)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok && output.exists() {
+            return true;
+        }
+
+        // Rust fallback for "grid".
+        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        let output = output.to_path_buf();
+        return tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "grid"))
             .await
             .unwrap_or(false);
     }
@@ -1901,6 +2029,18 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         3 => &[(8, 10), (125, 3), (67, 128)],
         _ => &[(8, 10), (125, 3), (11, 128), (122, 122)],
     };
+    // "grid" style reuses the crop-without-rotation branch — same resize_to_fill
+    // logic, only the slot positions differ (tighter grid).
+    let slots: &[(i64, i64)] = if style == "grid" {
+        match n {
+            1 => &[(70, 70)],
+            2 => &[(15, 70), (125, 70)],
+            3 => &[(15, 15), (125, 15), (70, 125)],
+            _ => &[(15, 15), (125, 15), (15, 125), (125, 125)],
+        }
+    } else {
+        slots
+    };
     let mut canvas = image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
     for (input, (x, y)) in inputs.iter().take(n).zip(slots.iter()) {
         // Read by content (not extension) so WebP bytes in a .jpg temp file work.
@@ -2154,7 +2294,7 @@ pub async fn api_dir_thumbs(
                 .ok()
                 .flatten()
         })
-        .filter(|v| v == "fit" || v == "crop" || v == "scattered")
+        .filter(|v| v == "fit" || v == "crop" || v == "scattered" || v == "grid")
         .unwrap_or_else(|| "crop".to_string());
 
     let files = list_previewable_files(&abs_dir);
@@ -2197,7 +2337,7 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &files[idx];
-                    let preserve_aspect = style_bg != "crop";
+                    let preserve_aspect = style_bg != "crop" && style_bg != "grid";
                     if let Some(data) =
                         dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
                     {
