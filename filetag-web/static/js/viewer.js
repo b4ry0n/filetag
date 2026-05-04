@@ -247,7 +247,7 @@ function _cvAnimateScrollTo(stage, isH, pos) {
     const step = () => {
         const cur  = stage[prop];
         const dist = _cvScrollAnimTarget - cur;
-        if (Math.abs(dist) < 18) {
+        if (Math.abs(dist) < 1) {
             stage.scrollTo({ [isH ? 'left' : 'top']: _cvScrollAnimTarget, behavior: 'instant' });
             _cvScrollAnimRafId  = null;
             _cvScrollAnimTarget = null;
@@ -883,14 +883,15 @@ function _cvScrollNav(dir) {
 
     if (dir > 0) {
         // Intra-page forward scroll (only when no page-jump is queued).
-        // Use the animation target position (if in flight) rather than the
-        // current scroll offset so we don't keep scrolling intra-page after
-        // the final intra-page step has already been queued.
+        // Use the actual scroll position (not the animation target) so that
+        // pressing the key while the animation is still running toward the
+        // page end queues another intra-page step rather than jumping to the
+        // next page prematurely.
         if (_cvNavTarget === null) {
             const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
-                const scrollPos = _cvScrollAnimTarget ?? stage[sProp];
+                const scrollPos = stage[sProp];
                 if (sz > vSize + 2 && scrollPos < off + sz - vSize - 2) {
                     doScroll(Math.min(scrollPos + vSize * 0.85, off + sz - vSize));
                     return;
@@ -910,7 +911,7 @@ function _cvScrollNav(dir) {
             const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
-                const scrollPos = _cvScrollAnimTarget ?? stage[sProp];
+                const scrollPos = stage[sProp];
                 if (sz > vSize + 2 && scrollPos > off + 2) {
                     doScroll(Math.max(scrollPos - vSize * 0.85, off));
                     return;
