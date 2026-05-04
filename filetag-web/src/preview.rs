@@ -1280,6 +1280,152 @@ fn is_ignored_dir_preview_file(path: &Path) -> bool {
         .is_some_and(|name| name == ".DS_Store" || name.starts_with("._"))
 }
 
+/// Well-known cover image stems, checked case-insensitively.
+const COVER_STEMS: &[&str] = &[
+    "cover",
+    "folder",
+    "poster",
+    "thumb",
+    "thumbnail",
+    "front",
+    "albumart",
+    "artwork",
+    "album",
+];
+const COVER_IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "avif", "gif", "bmp"];
+
+/// Find a cover image in `dir` by checking well-known stems and extensions
+/// (case-insensitive).  Plain names are tried before hidden (dot-prefixed) ones.
+fn find_cover_image(dir: &Path) -> Option<PathBuf> {
+    let entries: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+    for hidden in [false, true] {
+        for stem in COVER_STEMS {
+            for ext in COVER_IMAGE_EXTS {
+                let name = if hidden {
+                    format!(".{stem}.{ext}")
+                } else {
+                    format!("{stem}.{ext}")
+                };
+                for entry in &entries {
+                    if entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|n| n.to_lowercase() == name)
+                        && entry.path().is_file()
+                    {
+                        return Some(entry.path());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Build a 240×240 "cover frame" for a directory preview.
+///
+/// The image is scaled to fit within 220×220 (preserving aspect ratio),
+/// centred on a dark canvas, and surrounded by a thin decorative border.
+async fn build_cover_frame(cover: &Path, output: &Path) -> bool {
+    // --- ImageMagick path ---
+    for cmd_name in &["magick", "convert"] {
+        let ok = tokio::process::Command::new(cmd_name)
+            .args(["-size", "240x240", "xc:#111111"])
+            .arg("(")
+            .arg(cover)
+            .args([
+                "-resize",
+                "220x220",
+                "-background",
+                "#111111",
+                "-gravity",
+                "center",
+                "-extent",
+                "220x220",
+                "-bordercolor",
+                "#777777",
+                "-border",
+                "1",
+            ])
+            .arg(")")
+            .args(["-gravity", "center", "-composite"])
+            .arg(output)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok
+            && output.exists()
+            && let Ok(bytes) = std::fs::read(output)
+            && (image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                || bytes.starts_with(b"\x89PNG"))
+        {
+            return true;
+        }
+        if output.exists() {
+            let _ = std::fs::remove_file(output);
+        }
+    }
+
+    // --- Rust fallback ---
+    let cover = cover.to_path_buf();
+    let output = output.to_path_buf();
+    tokio::task::spawn_blocking(move || build_cover_frame_rust(&cover, &output))
+        .await
+        .unwrap_or(false)
+}
+
+fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
+    let Ok(data) = std::fs::read(cover) else {
+        return false;
+    };
+    let Ok(img) = image::load_from_memory(&data) else {
+        return false;
+    };
+
+    const CANVAS: u32 = 240;
+    // Scale image to fit in 220×220, preserving aspect ratio
+    let scaled = img.resize(220, 220, image::imageops::FilterType::Lanczos3);
+    let sw = scaled.width();
+    let sh = scaled.height();
+
+    // Dark canvas
+    let bg = image::Rgba([17_u8, 17, 17, 255]);
+    let mut canvas = image::RgbaImage::from_pixel(CANVAS, CANVAS, bg);
+
+    // Centre the image
+    let ox = (CANVAS - sw) / 2;
+    let oy = (CANVAS - sh) / 2;
+    image::imageops::overlay(&mut canvas, &scaled.to_rgba8(), ox as i64, oy as i64);
+
+    // Draw 1-pixel border around the image
+    let border = image::Rgba([119_u8, 119, 119, 255]);
+    let x1 = ox.saturating_sub(1);
+    let y1 = oy.saturating_sub(1);
+    let x2 = (ox + sw).min(CANVAS - 1);
+    let y2 = (oy + sh).min(CANVAS - 1);
+    for px in x1..=x2 {
+        canvas.put_pixel(px, y1, border);
+        canvas.put_pixel(px, y2, border);
+    }
+    for py in (y1 + 1)..y2 {
+        canvas.put_pixel(x1, py, border);
+        canvas.put_pixel(x2, py, border);
+    }
+
+    let mut out = std::io::Cursor::new(Vec::new());
+    if image::DynamicImage::ImageRgba8(canvas)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .is_err()
+    {
+        return false;
+    }
+    std::fs::write(output, out.into_inner()).is_ok()
+}
+
 /// Return candidate indices in expanding even samples. This keeps the first
 /// frames representative, but still falls back to more files when early
 /// candidates cannot actually produce thumbnails.
@@ -2567,6 +2713,7 @@ pub async fn api_dir_thumbs(
             let cache_path2 = cache_path.clone();
             let features_bg = features;
             let style_bg = dir_preview_style.clone();
+            let abs_dir_bg = abs_dir.clone();
             tokio::spawn(async move {
                 const IMAGES_PER_FRAME: usize = 4;
                 const MAX_FRAMES: usize = 6;
@@ -2576,12 +2723,34 @@ pub async fn api_dir_thumbs(
                     .join("tmp")
                     .join(format!("dpt_{}", rand_hex()));
                 let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+
+                // Detect a cover image and generate a dedicated cover frame.
+                let cover_path = find_cover_image(&abs_dir_bg);
+                let mut frame_paths: Vec<PathBuf> = Vec::new();
+                if let Some(ref cover) = cover_path {
+                    let cover_frame = tmp_dir.join("cover_frame.png");
+                    if build_cover_frame(cover, &cover_frame).await {
+                        frame_paths.push(cover_frame);
+                    }
+                }
+
+                // Exclude the cover file from content collage so it isn't shown twice.
+                let content_files: Vec<PathBuf> = files
+                    .iter()
+                    .filter(|p| {
+                        cover_path
+                            .as_ref()
+                            .is_none_or(|c| p.as_path() != c.as_path())
+                    })
+                    .cloned()
+                    .collect();
+
                 let mut item_thumb_paths: Vec<PathBuf> = Vec::new();
-                for idx in preview_candidate_order(files.len(), MAX_ITEMS) {
+                for idx in preview_candidate_order(content_files.len(), MAX_ITEMS) {
                     if item_thumb_paths.len() >= MAX_ITEMS {
                         break;
                     }
-                    let item_path = &files[idx];
+                    let item_path = &content_files[idx];
                     let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered");
                     if let Some(data) =
                         dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
@@ -2598,7 +2767,7 @@ pub async fn api_dir_thumbs(
                         }
                     }
                 }
-                let mut frame_paths: Vec<PathBuf> = Vec::new();
+                let content_frame_start = frame_paths.len(); // index after cover frame
                 for (frame_idx, group) in item_thumb_paths.chunks(IMAGES_PER_FRAME).enumerate() {
                     if group.is_empty() {
                         continue;
@@ -2608,6 +2777,9 @@ pub async fn api_dir_thumbs(
                         frame_paths.push(frame_path);
                     }
                 }
+                // If we only got a cover frame and nothing else, that's fine.
+                // If we got no frames at all, bail.
+                let _ = content_frame_start; // used above for clarity
                 let result = if frame_paths.is_empty() {
                     None
                 } else {
