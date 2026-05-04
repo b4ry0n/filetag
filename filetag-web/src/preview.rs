@@ -1549,22 +1549,32 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 ]
             }
         } else if n == 2 {
-            // Orientation-adaptive 2-panel layout:
-            //   both landscape → side by side  (116 × 234 each)
-            //   one or both portrait → stacked  (234 × 116 each)
-            let mut is_portrait = [false; 2];
-            for i in 0..2 {
-                if let Ok(data) = tokio::fs::read(&inputs[i]).await
+            // If both images are landscape, stack them top/bottom;
+            // if one or both are portrait, place them side by side.
+            let mut both_landscape = true;
+            for input in inputs.iter().take(2) {
+                if let Ok(data) = tokio::fs::read(input).await
                     && let Ok(img) = image::load_from_memory(&data)
                 {
-                    is_portrait[i] = img.height() > img.width();
+                    if img.height() >= img.width() {
+                        both_landscape = false;
+                        break;
+                    }
+                } else {
+                    both_landscape = false;
+                    break;
                 }
             }
-            if !is_portrait[0] && !is_portrait[1] {
-                vec![(0, 3_i64, 3_i64, 116_i64, 234_i64), (1, 121, 3, 116, 234)]
+            let panels: &[(i64, i64, i64, i64)] = if both_landscape {
+                &[(3, 3, 234, 116), (3, 121, 234, 116)] // landscape: top / bottom
             } else {
-                vec![(0, 3_i64, 3_i64, 234_i64, 116_i64), (1, 3, 121, 234, 116)]
-            }
+                &[(3, 3, 116, 234), (121, 3, 116, 234)] // portrait: side by side
+            };
+            panels
+                .iter()
+                .enumerate()
+                .map(|(i, &(px, py, pw, ph))| (i, px, py, pw, ph))
+                .collect()
         } else {
             let fixed: &[(i64, i64, i64, i64)] = match n {
                 1 => &[(3, 3, 234, 234)],
@@ -2206,10 +2216,8 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         } else if n == 2 {
-            // Orientation-adaptive 2-panel layout:
-            //   both landscape → side by side  (116 × 234 each)
-            //   one or both portrait → stacked  (234 × 116 each)
-            let loaded2: Vec<image::DynamicImage> = inputs
+            // Load both images to detect orientation, then reuse for rendering.
+            let imgs_2: Vec<image::DynamicImage> = inputs
                 .iter()
                 .take(2)
                 .filter_map(|p| {
@@ -2218,20 +2226,25 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                         .and_then(|d| image::load_from_memory(&d).ok())
                 })
                 .collect();
-            let both_landscape = loaded2.iter().all(|img| img.width() >= img.height());
+            let both_landscape = imgs_2.len() == 2
+                && imgs_2[0].width() > imgs_2[0].height()
+                && imgs_2[1].width() > imgs_2[1].height();
             let panels: &[(u32, u32, u32, u32)] = if both_landscape {
-                &[(3, 3, 116, 234), (121, 3, 116, 234)]
+                &[(3, 3, 234, 116), (3, 121, 234, 116)] // landscape: top / bottom
             } else {
-                &[(3, 3, 234, 116), (3, 121, 234, 116)]
+                &[(3, 3, 116, 234), (121, 3, 116, 234)] // portrait: side by side
             };
-            for (img, &(px, py, pw, ph)) in loaded2.iter().zip(panels.iter()) {
+            for (img_idx, &(px, py, pw, ph)) in panels.iter().enumerate() {
+                let Some(img) = imgs_2.get(img_idx) else {
+                    continue;
+                };
                 let tile = img
                     .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
                     .to_rgba8();
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         } else {
-            // n == 1 or n >= 4: fixed panel layouts.
+            // n == 1 or n == 4: fixed panel layouts.
             let panels: &[(u32, u32, u32, u32)] = match n {
                 1 => &[(3, 3, 234, 234)],
                 _ => &[
