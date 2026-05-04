@@ -258,7 +258,7 @@ function _cvAnimateScrollTo(stage, isH, pos) {
         }
         // Use scrollTo({ behavior:'instant' }) rather than direct scrollTop assignment
         // so the CSS scroll-behavior:smooth on the stage does not re-animate each step.
-        stage.scrollTo({ [isH ? 'left' : 'top']: cur + dist * 0.18, behavior: 'instant' });
+        stage.scrollTo({ [isH ? 'left' : 'top']: cur + dist * 0.07, behavior: 'instant' });
         _cvScrollAnimRafId = requestAnimationFrame(step);
     };
     _cvScrollAnimRafId = requestAnimationFrame(step);
@@ -883,12 +883,16 @@ function _cvScrollNav(dir) {
 
     if (dir > 0) {
         // Intra-page forward scroll (only when no page-jump is queued).
+        // Use the animation target position (if in flight) rather than the
+        // current scroll offset so we don't keep scrolling intra-page after
+        // the final intra-page step has already been queued.
         if (_cvNavTarget === null) {
             const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
-                if (sz > vSize + 2 && stage[sProp] < off + sz - vSize - 2) {
-                    doScroll(Math.min(stage[sProp] + vSize * 0.85, off + sz - vSize));
+                const scrollPos = _cvScrollAnimTarget ?? stage[sProp];
+                if (sz > vSize + 2 && scrollPos < off + sz - vSize - 2) {
+                    doScroll(Math.min(scrollPos + vSize * 0.85, off + sz - vSize));
                     return;
                 }
             }
@@ -906,8 +910,9 @@ function _cvScrollNav(dir) {
             const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
-                if (sz > vSize + 2 && stage[sProp] > off + 2) {
-                    doScroll(Math.max(stage[sProp] - vSize * 0.85, off));
+                const scrollPos = _cvScrollAnimTarget ?? stage[sProp];
+                if (sz > vSize + 2 && scrollPos > off + 2) {
+                    doScroll(Math.max(scrollPos - vSize * 0.85, off));
                     return;
                 }
             }
