@@ -726,6 +726,12 @@ function _thumbReplace(el, blobUrl, revokeOnLoad = false) {
     if (el.dataset.cls) img.className = el.dataset.cls;
     img.alt = '';
     img.dataset.name = el.dataset.name || '';
+    // Apply North gravity for portrait images: crop from top so heads stay visible.
+    img.addEventListener('load', () => {
+        if (img.naturalHeight > img.naturalWidth) {
+            img.style.objectPosition = 'top';
+        }
+    }, { once: true });
     if (revokeOnLoad) {
         img.addEventListener('load',  () => URL.revokeObjectURL(blobUrl), { once: true });
         img.addEventListener('error', () => URL.revokeObjectURL(blobUrl), { once: true });
