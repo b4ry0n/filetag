@@ -15,6 +15,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::extract::{heic_extract_jpeg_thumbnail, raw_embedded_jpeg, raw_tiff_orientation};
+use crate::saliency::SalientPoint;
 use crate::state::Features;
 use crate::state::{AppState, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir};
 use crate::types::DirParam;
@@ -41,7 +42,15 @@ fn encode_lossy_webp(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>>
 /// Portrait source image into a square or landscape panel: crop from the top
 /// ("North" gravity) so that subjects near the top of the frame — faces,
 /// heads — are preserved.  All other combinations use centre crop.
-fn smart_fill_tile(img: &image::DynamicImage, pw: u32, ph: u32) -> image::RgbaImage {
+fn smart_fill_tile(
+    img: &image::DynamicImage,
+    pw: u32,
+    ph: u32,
+    salient: Option<SalientPoint>,
+) -> image::RgbaImage {
+    if let Some(sp) = salient {
+        return salient_crop(img, pw, ph, sp.cx, sp.cy);
+    }
     if img.height() > img.width() {
         // Portrait source: crop from top (North gravity) regardless of panel shape,
         // so subjects near the top of the frame (faces, heads) are preserved.
@@ -53,6 +62,32 @@ fn smart_fill_tile(img: &image::DynamicImage, pw: u32, ph: u32) -> image::RgbaIm
         img.resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
             .to_rgba8()
     }
+}
+
+/// Crop `img` to `pw`×`ph` centred on the normalised focus point (`cx`, `cy`).
+/// Scales the image to cover the panel, then shifts the crop window so the
+/// salient point is as close to the centre as possible.
+fn salient_crop(img: &image::DynamicImage, pw: u32, ph: u32, cx: f32, cy: f32) -> image::RgbaImage {
+    // Scale so the panel is fully covered.
+    let scale = (pw as f32 / img.width() as f32).max(ph as f32 / img.height() as f32);
+    let sw = (img.width() as f32 * scale).round() as u32;
+    let sh = (img.height() as f32 * scale).round() as u32;
+    let scaled = img.resize_exact(
+        sw.max(pw),
+        sh.max(ph),
+        image::imageops::FilterType::Lanczos3,
+    );
+    let sw = scaled.width();
+    let sh = scaled.height();
+
+    // Salient pixel in scaled space.
+    let px = (cx * sw as f32) as i64;
+    let py = (cy * sh as f32) as i64;
+
+    // Crop origin centred on salient point, clamped to valid range.
+    let ox = (px - pw as i64 / 2).clamp(0, (sw - pw) as i64) as u32;
+    let oy = (py - ph as i64 / 2).clamp(0, (sh - ph) as i64) as u32;
+    image::imageops::crop_imm(&scaled.to_rgba8(), ox, oy, pw, ph).to_image()
 }
 
 fn encode_lossy_webp_rgba(canvas: &image::RgbaImage) -> Option<Vec<u8>> {
@@ -1627,7 +1662,7 @@ async fn dir_item_jpeg(
 ///
 /// Tries ImageMagick (`magick` / `convert`) first, then falls back to the
 /// pure-Rust implementation.
-async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
+async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str, features: Features) -> bool {
     let n = inputs.len().min(4);
     if n == 0 {
         return false;
@@ -1819,6 +1854,27 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             ]
         };
 
+        // If saliency is enabled, pre-compute focus points and use the Rust
+        // path directly (skipping ImageMagick) so per-pixel crop offsets apply.
+        let salient_points: Vec<Option<SalientPoint>> =
+            if features.saliency_pose && crate::saliency::pose_model_ready() {
+                let paths: Vec<PathBuf> = placements
+                    .iter()
+                    .map(|&(img_idx, _, _, _, _)| inputs[img_idx].clone())
+                    .collect();
+                let use_obj = features.saliency_object;
+                tokio::task::spawn_blocking(move || {
+                    crate::saliency::detect_salient_points_for_files(&paths, use_obj)
+                })
+                .await
+                .unwrap_or_default()
+            } else {
+                vec![None; placements.len()]
+            };
+
+        // Skip ImageMagick when salient points are available; use Rust path instead.
+        let any_salient = salient_points.iter().any(|s| s.is_some());
+
         // Per-tile crop gravity: portrait source → North (top crop, preserves heads);
         // landscape → Center.
         let mut tile_gravities: Vec<&str> = vec!["Center"; placements.len()];
@@ -1832,59 +1888,70 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         }
 
         // --- ImageMagick "grid" path ---
-        for cmd_name in &["magick", "convert"] {
-            let mut cmd = tokio::process::Command::new(cmd_name);
-            cmd.args(["-size", "240x240", "xc:none"]);
-            for (pi, &(img_idx, px, py, pw, ph)) in placements.iter().enumerate() {
-                cmd.arg("(");
-                cmd.arg(&inputs[img_idx]);
-                let dims = format!("{}x{}", pw, ph);
-                let dims2 = dims.clone();
-                cmd.args([
-                    "-resize",
-                    &format!("{}^", dims),
-                    "-gravity",
-                    tile_gravities[pi],
-                    "-extent",
-                    &dims2,
-                ]);
-                cmd.arg(")");
-                cmd.args([
-                    "-gravity",
-                    "NorthWest",
-                    "-geometry",
-                    &format!("+{}+{}", px, py),
-                    "-composite",
-                ]);
-            }
-            cmd.arg(output);
-            let ok = cmd
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .status()
-                .await
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if ok
-                && output.exists()
-                && let Ok(bytes) = std::fs::read(output)
-            {
-                if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
-                    || bytes.starts_with(b"\x89PNG")
-                {
-                    return true;
+        if !any_salient {
+            for cmd_name in &["magick", "convert"] {
+                let mut cmd = tokio::process::Command::new(cmd_name);
+                cmd.args(["-size", "240x240", "xc:none"]);
+                for (pi, &(img_idx, px, py, pw, ph)) in placements.iter().enumerate() {
+                    cmd.arg("(");
+                    cmd.arg(&inputs[img_idx]);
+                    let dims = format!("{}x{}", pw, ph);
+                    let dims2 = dims.clone();
+                    cmd.args([
+                        "-resize",
+                        &format!("{}^", dims),
+                        "-gravity",
+                        tile_gravities[pi],
+                        "-extent",
+                        &dims2,
+                    ]);
+                    cmd.arg(")");
+                    cmd.args([
+                        "-gravity",
+                        "NorthWest",
+                        "-geometry",
+                        &format!("+{}+{}", px, py),
+                        "-composite",
+                    ]);
                 }
-                let _ = std::fs::remove_file(output);
+                cmd.arg(output);
+                let ok = cmd
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true)
+                    .status()
+                    .await
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok
+                    && output.exists()
+                    && let Ok(bytes) = std::fs::read(output)
+                {
+                    if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                        || bytes.starts_with(b"\x89PNG")
+                    {
+                        return true;
+                    }
+                    let _ = std::fs::remove_file(output);
+                }
             }
-        }
+        } // end !any_salient
 
         // Rust fallback for "grid".
-        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        let inputs_for_rust: Vec<PathBuf> = placements
+            .iter()
+            .map(|&(img_idx, _, _, _, _)| inputs[img_idx].clone())
+            .collect();
+        let placements_rust: Vec<(i64, i64, i64, i64)> = placements
+            .iter()
+            .map(|&(_, px, py, pw, ph)| (px, py, pw, ph))
+            .collect();
         let output = output.to_path_buf();
-        return tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "grid"))
-            .await
-            .unwrap_or(false);
+        return tokio::task::spawn_blocking(move || {
+            build_collage_rust_grid(&inputs_for_rust, &placements_rust, &salient_points, &output)
+        })
+        .await
+        .unwrap_or(false);
     }
 
     if style == "bookshelf" {
@@ -2169,6 +2236,36 @@ fn rotate_rgba(img: &image::RgbaImage, degrees: f32) -> image::RgbaImage {
     out
 }
 
+/// Render a grid collage with pre-computed salient points.
+///
+/// Called by the async `build_collage` grid path when `feature.saliency_pose`
+/// is enabled.  `inputs` and `salient_points` are parallel slices matching
+/// the `placements` vector (already resolved from image-index to path).
+fn build_collage_rust_grid(
+    inputs: &[PathBuf],
+    placements: &[(i64, i64, i64, i64)],
+    salient_points: &[Option<SalientPoint>],
+    output: &Path,
+) -> bool {
+    let mut canvas = image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
+    for (i, &(px, py, pw, ph)) in placements.iter().enumerate() {
+        let Some(input) = inputs.get(i) else { continue };
+        let Ok(data) = std::fs::read(input) else {
+            continue;
+        };
+        let Ok(img) = image::load_from_memory(&data) else {
+            continue;
+        };
+        let sp = salient_points.get(i).copied().flatten();
+        let tile = smart_fill_tile(&img, pw as u32, ph as u32, sp);
+        image::imageops::overlay(&mut canvas, &tile, px, py);
+    }
+    let Some(bytes) = encode_lossy_webp_rgba(&canvas) else {
+        return false;
+    };
+    std::fs::write(output, bytes).is_ok()
+}
+
 fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     let n = inputs.len().min(4);
     if n == 0 {
@@ -2435,7 +2532,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 let Some(img) = loaded.get(img_idx) else {
                     continue;
                 };
-                let tile = smart_fill_tile(img, pw, ph);
+                let tile = smart_fill_tile(img, pw, ph, None);
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         } else if n == 2 {
@@ -2461,7 +2558,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 let Some(img) = imgs_2.get(img_idx) else {
                     continue;
                 };
-                let tile = smart_fill_tile(img, pw, ph);
+                let tile = smart_fill_tile(img, pw, ph, None);
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         } else if n == 1 {
@@ -2477,7 +2574,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             } else {
                 (3, 3, 116, 234) // portrait: left two cells
             };
-            let tile = smart_fill_tile(&img, pw, ph);
+            let tile = smart_fill_tile(&img, pw, ph, None);
             image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
         } else {
             // n == 4: 2×2 grid
@@ -2494,7 +2591,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 let Ok(img) = image::load_from_memory(&data) else {
                     continue;
                 };
-                let tile = smart_fill_tile(&img, pw, ph);
+                let tile = smart_fill_tile(&img, pw, ph, None);
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         }
@@ -2845,7 +2942,7 @@ pub async fn api_dir_thumbs(
                         continue;
                     }
                     let frame_path = tmp_dir.join(format!("frame{frame_idx}.webp"));
-                    if build_collage(group, &frame_path, &style_bg).await {
+                    if build_collage(group, &frame_path, &style_bg, features_bg).await {
                         frame_paths.push(frame_path);
                     }
                 }

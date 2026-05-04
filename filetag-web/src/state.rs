@@ -20,6 +20,7 @@ use rusqlite::Connection;
 
 use crate::ai::AiProgress;
 use crate::face::{FaceProgress, ModelDownloadProgress};
+use crate::saliency::SaliencyDownloadProgress;
 
 // ---------------------------------------------------------------------------
 // Feature flags
@@ -41,6 +42,12 @@ pub struct Features {
     /// Enable PDF thumbnail generation via `pdftoppm` (poppler) or ImageMagick
     /// + Ghostscript.
     pub pdf: bool,
+    /// Enable YOLOv8n-pose for salient-point-aware grid thumbnail cropping.
+    /// Downloads yolov8n-pose.onnx on first use (~6.7 MB).
+    pub saliency_pose: bool,
+    /// Additionally enable YOLOv8n object detection for non-person images.
+    /// Downloads yolov8n.onnx on first use (~6.4 MB).  Requires `saliency_pose`.
+    pub saliency_object: bool,
 }
 
 /// Load feature flags from the per-root settings table.
@@ -56,6 +63,8 @@ pub fn load_features(conn: &Connection) -> Features {
         video: get("feature.video"),
         imagemagick: get("feature.imagemagick"),
         pdf: get("feature.pdf"),
+        saliency_pose: get("feature.saliency_pose"),
+        saliency_object: get("feature.saliency_object"),
     }
 }
 
@@ -106,6 +115,8 @@ pub struct AppState {
     pub face_progress: std::sync::Mutex<FaceProgress>,
     /// Progress for the model download (if active).
     pub model_download: std::sync::Mutex<ModelDownloadProgress>,
+    /// Progress for saliency model downloads.
+    pub saliency_download: std::sync::Mutex<SaliencyDownloadProgress>,
     /// Session store for optional password authentication.
     pub sessions: SessionStore,
 }

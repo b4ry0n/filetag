@@ -5,6 +5,7 @@ mod auth;
 mod extract;
 mod face;
 mod preview;
+mod saliency;
 mod state;
 mod types;
 mod video;
@@ -236,6 +237,9 @@ async fn main() -> anyhow::Result<()> {
         ai_progress: std::sync::Mutex::new(AiProgress::default()),
         face_progress: std::sync::Mutex::new(crate::face::FaceProgress::default()),
         model_download: std::sync::Mutex::new(crate::face::ModelDownloadProgress::default()),
+        saliency_download: std::sync::Mutex::new(
+            crate::saliency::SaliencyDownloadProgress::default(),
+        ),
         sessions,
     });
 
@@ -343,6 +347,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/face/models/status", get(face::api_face_models_status))
         .route("/api/face/subjects", get(face::api_face_subjects))
         .route("/api/face/files", get(face::api_face_files))
+        // Saliency model routes
+        .route("/api/saliency/status", get(saliency::api_saliency_status))
+        .route(
+            "/api/saliency/ensure-pose",
+            post(saliency::api_saliency_ensure_pose),
+        )
+        .route(
+            "/api/saliency/ensure-object",
+            post(saliency::api_saliency_ensure_object),
+        )
         .route("/api/settings", get(api::api_settings_get))
         .route("/api/settings", post(api::api_settings_set))
         // Authentication routes (always available so login/logout work).
