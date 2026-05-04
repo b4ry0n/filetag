@@ -228,8 +228,36 @@ function cvScrollThumbIntoView(idx) {
 // ---------------------------------------------------------------------------
 
 let _cvScrollObserver = null;
-let _cvNavTarget = null;  // page index we are navigating to; blocks IntersectionObserver
+let _cvNavTarget = null;  // page index we are navigating to; blocks scroll detection
 let _cvNavTimer  = null;
+let _cvScrollRafPending = false;
+
+// Pick the page whose centre is closest to the scroll-stage's midpoint.
+// This is reliable for any scroll position, including the first and last
+// page where the page centre is not at the viewport centre.
+function _cvDetectPageFromScroll() {
+    if (_cvNavTarget !== null) return;  // programmatic navigation in progress
+    const stage = document.getElementById('cv-stage');
+    if (!stage) return;
+    const stageRect = stage.getBoundingClientRect();
+    const mid = _cv.scrollDir === 'h'
+        ? stageRect.left + stageRect.width  / 2
+        : stageRect.top  + stageRect.height / 2;
+    let best = -1, bestDist = Infinity;
+    stage.querySelectorAll('img.cv-page[data-page]').forEach(img => {
+        const r = img.getBoundingClientRect();
+        const imgMid = _cv.scrollDir === 'h'
+            ? r.left + r.width  / 2
+            : r.top  + r.height / 2;
+        const dist = Math.abs(imgMid - mid);
+        if (dist < bestDist) { bestDist = dist; best = Number(img.dataset.page); }
+    });
+    if (best >= 0 && best !== _cv.current) {
+        _cv.current = best;
+        cvUpdateThumbActive(best);
+        document.getElementById('cv-status').textContent = `${best + 1} / ${_cv.pages.length}`;
+    }
+}
 
 function _cvSetScrollButtons() {
     document.getElementById('cv-scroll-btn').classList.toggle('active', _cv.scroll && _cv.scrollDir === 'v');
@@ -320,28 +348,23 @@ function cvBuildScrollView() {
         container.appendChild(img);
     });
 
-    // Track which page is most visible and update status + thumbnail strip.
-    // While a keyboard-initiated jump is in progress (_cvNavTarget != null) we
-    // ignore observer callbacks so intermediate pages don't corrupt _cv.current.
-    _cvScrollObserver = new IntersectionObserver(entries => {
-        if (_cvNavTarget !== null) return;   // navigation animation in progress
-        let best = -1, bestRatio = 0;
-        entries.forEach(entry => {
-            if (entry.intersectionRatio > bestRatio) {
-                bestRatio = entry.intersectionRatio;
-                best = Number(entry.target.dataset.page);
-            }
+    // Track the current page via the scroll position rather than
+    // IntersectionObserver.  IntersectionObserver only fires for entries
+    // that *changed*, so with multiple pages in view it kept jumping between
+    // the outermost visible pages.  The scroll handler picks the page whose
+    // centre is geometrically closest to the viewport midpoint, which always
+    // gives a stable, intuitive result – including for the first and last page.
+    const _cvScrollHandler = () => {
+        if (_cvScrollRafPending) return;
+        _cvScrollRafPending = true;
+        requestAnimationFrame(() => {
+            _cvScrollRafPending = false;
+            _cvDetectPageFromScroll();
         });
-        if (best >= 0 && best !== _cv.current) {
-            _cv.current = best;
-            cvUpdateThumbActive(best);
-            document.getElementById('cv-status').textContent = `${best + 1} / ${_cv.pages.length}`;
-        }
-    }, { root: stage, threshold: [0, 0.25, 0.5, 0.75, 1.0] });
-
-    container.querySelectorAll('img.cv-page[data-page]').forEach(img => {
-        _cvScrollObserver.observe(img);
-    });
+    };
+    stage.addEventListener('scroll', _cvScrollHandler, { passive: true });
+    // Store the handler so cvExitScrollView can remove it.
+    stage._cvScrollHandler = _cvScrollHandler;
 
     // Clear the nav lock as soon as the smooth-scroll animation ends.
     // This is more reliable than a fixed timeout, especially in fullscreen
@@ -349,6 +372,8 @@ function cvBuildScrollView() {
     stage.addEventListener('scrollend', () => {
         clearTimeout(_cvNavTimer);
         _cvNavTarget = null;
+        // Final detection pass after navigation settles.
+        _cvDetectPageFromScroll();
     });
 
     cvApplyScrollZoom();
@@ -370,8 +395,12 @@ function cvBuildScrollView() {
 
 function cvExitScrollView() {
     if (_cvScrollObserver) { _cvScrollObserver.disconnect(); _cvScrollObserver = null; }
-    clearTimeout(_cvNavTimer); _cvNavTimer = null; _cvNavTarget = null;
+    clearTimeout(_cvNavTimer); _cvNavTimer = null; _cvNavTarget = null; _cvScrollRafPending = false;
     const stage = document.getElementById('cv-stage');
+    if (stage._cvScrollHandler) {
+        stage.removeEventListener('scroll', stage._cvScrollHandler);
+        delete stage._cvScrollHandler;
+    }
     stage.classList.remove('cv-scroll-mode');
     stage.classList.remove('cv-hscroll-mode');
     stage.style.removeProperty('--cv-scroll-width');
