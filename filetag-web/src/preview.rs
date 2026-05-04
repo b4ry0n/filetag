@@ -42,8 +42,9 @@ fn encode_lossy_webp(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>>
 /// ("North" gravity) so that subjects near the top of the frame — faces,
 /// heads — are preserved.  All other combinations use centre crop.
 fn smart_fill_tile(img: &image::DynamicImage, pw: u32, ph: u32) -> image::RgbaImage {
-    if img.height() > img.width() && pw >= ph {
-        // Scale so the full width is covered, then take from y=0.
+    if img.height() > img.width() {
+        // Portrait source: crop from top (North gravity) regardless of panel shape,
+        // so subjects near the top of the frame (faces, heads) are preserved.
         let scale = pw as f32 / img.width() as f32;
         let new_h = ((img.height() as f32) * scale).ceil() as u32;
         let scaled = img.resize_exact(pw, new_h.max(ph), image::imageops::FilterType::Lanczos3);
@@ -1818,12 +1819,11 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             ]
         };
 
-        // Per-tile crop gravity: portrait source into square/landscape panel → North
-        // (preserves heads); all other cases → Center.
+        // Per-tile crop gravity: portrait source → North (top crop, preserves heads);
+        // landscape → Center.
         let mut tile_gravities: Vec<&str> = vec!["Center"; placements.len()];
-        for (pi, &(img_idx, _, _, pw, ph)) in placements.iter().enumerate() {
-            if pw >= ph
-                && let Ok(data) = tokio::fs::read(&inputs[img_idx]).await
+        for (pi, &(img_idx, _, _, _, _)) in placements.iter().enumerate() {
+            if let Ok(data) = tokio::fs::read(&inputs[img_idx]).await
                 && let Ok(img) = image::load_from_memory(&data)
                 && img.height() > img.width()
             {
