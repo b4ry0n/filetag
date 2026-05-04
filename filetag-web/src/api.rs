@@ -1354,6 +1354,10 @@ pub async fn api_settings_get(
         "feature_video": bool_setting("feature.video"),
         "feature_imagemagick": bool_setting("feature.imagemagick"),
         "feature_pdf": bool_setting("feature.pdf"),
+        "feature_saliency_pose": bool_setting("feature.saliency_pose"),
+        "feature_saliency_object": bool_setting("feature.saliency_object"),
+        "saliency_pose_ready": crate::saliency::pose_model_ready(),
+        "saliency_object_ready": crate::saliency::object_model_ready(),
         "dir_preview_style": dir_preview_style,
         "imagemagick_installed": imagemagick_installed,
         "ffmpeg_installed": ffmpeg_installed
@@ -1382,6 +1386,12 @@ pub async fn api_settings_set(
     }
     if let Some(v) = body.feature_pdf {
         db::set_setting(&conn, "feature.pdf", bool_to_str(v)).map_err(AppError)?;
+    }
+    if let Some(v) = body.feature_saliency_pose {
+        db::set_setting(&conn, "feature.saliency_pose", bool_to_str(v)).map_err(AppError)?;
+    }
+    if let Some(v) = body.feature_saliency_object {
+        db::set_setting(&conn, "feature.saliency_object", bool_to_str(v)).map_err(AppError)?;
     }
     if let Some(v) = body.dir_preview_style {
         // Whitelist: only persist known values.

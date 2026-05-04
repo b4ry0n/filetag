@@ -870,6 +870,13 @@ function updateFeaturesTab() {
         if (magickInstalled) magickWarn.style.display = 'none';
         else magickWarn.style.display = 'block';
     }
+
+    // Saliency (smart cropping)
+    const poseBox = document.getElementById('feat-saliency-pose');
+    if (poseBox) poseBox.checked = state.settings.feature_saliency_pose ?? false;
+    const objBox = document.getElementById('feat-saliency-object');
+    if (objBox) objBox.checked = state.settings.feature_saliency_object ?? false;
+    _updateSaliencyStatus();
 }
 
 function closeSettings() {
@@ -905,12 +912,16 @@ async function saveFeaturesSettings() {
         feature_video: document.getElementById('feat-video').checked,
         feature_imagemagick: document.getElementById('feat-imagemagick').checked,
         feature_pdf: document.getElementById('feat-pdf').checked,
+        feature_saliency_pose: document.getElementById('feat-saliency-pose').checked,
+        feature_saliency_object: document.getElementById('feat-saliency-object').checked,
     };
     try {
         await apiPost('/api/settings', body);
         state.settings.feature_video = body.feature_video;
         state.settings.feature_imagemagick = body.feature_imagemagick;
         state.settings.feature_pdf = body.feature_pdf;
+        state.settings.feature_saliency_pose = body.feature_saliency_pose;
+        state.settings.feature_saliency_object = body.feature_saliency_object;
         _thumbClearCache();
         closeSettings();
         await loadFiles(state.currentPath);
@@ -923,6 +934,114 @@ async function saveFeaturesSettings() {
 // Backward-compat wrappers (called from cache-menu & ai-test flow)
 function openAiSettings() { openSettings('ai'); }
 function closeAiSettings() { closeSettings(); }
+
+// ---------------------------------------------------------------------------
+// Saliency (smart cropping) settings
+// ---------------------------------------------------------------------------
+
+function _updateSaliencyStatus() {
+    const poseReady = state.settings.saliency_pose_ready === true;
+    const objReady = state.settings.saliency_object_ready === true;
+    const poseEl = document.getElementById('feat-saliency-pose-status');
+    const objEl = document.getElementById('feat-saliency-object-status');
+    if (poseEl) {
+        if (state._saliencyPoseDownloading) {
+            const s = state._saliencyStatus;
+            if (s && s.pose_bytes_total > 0) {
+                const pct = Math.round(s.pose_bytes_done / s.pose_bytes_total * 100);
+                poseEl.textContent = `Downloading… ${pct}%`;
+            } else {
+                poseEl.textContent = 'Downloading…';
+            }
+        } else {
+            poseEl.textContent = poseReady ? '✓ Model ready' : '⚠ Model not downloaded';
+            if (!poseReady) {
+                poseEl.innerHTML += ' <button onclick="saliencyDownloadPose()">Download</button>';
+            }
+        }
+    }
+    if (objEl) {
+        if (state._saliencyObjectDownloading) {
+            const s = state._saliencyStatus;
+            if (s && s.object_bytes_total > 0) {
+                const pct = Math.round(s.object_bytes_done / s.object_bytes_total * 100);
+                objEl.textContent = `Downloading… ${pct}%`;
+            } else {
+                objEl.textContent = 'Downloading…';
+            }
+        } else {
+            objEl.textContent = objReady ? '✓ Model ready' : '⚠ Model not downloaded';
+            if (!objReady) {
+                objEl.innerHTML += ' <button onclick="saliencyDownloadObject()">Download</button>';
+            }
+        }
+    }
+}
+
+function saliencyPoseToggled() {
+    // When pose is disabled, also disable object.
+    if (!document.getElementById('feat-saliency-pose').checked) {
+        document.getElementById('feat-saliency-object').checked = false;
+    }
+}
+
+function saliencyObjectToggled() {
+    // Object model requires pose to be enabled.
+    if (document.getElementById('feat-saliency-object').checked) {
+        document.getElementById('feat-saliency-pose').checked = true;
+    }
+}
+
+async function saliencyDownloadPose() {
+    if (state._saliencyPoseDownloading) return;
+    state._saliencyPoseDownloading = true;
+    _updateSaliencyStatus();
+    try {
+        await apiPost('/api/saliency/ensure-pose', {});
+        _pollSaliency();
+    } catch (e) {
+        state._saliencyPoseDownloading = false;
+        _updateSaliencyStatus();
+        showToast('Download failed: ' + e.message, 5000);
+    }
+}
+
+async function saliencyDownloadObject() {
+    if (state._saliencyObjectDownloading) return;
+    state._saliencyObjectDownloading = true;
+    _updateSaliencyStatus();
+    try {
+        await apiPost('/api/saliency/ensure-object', {});
+        _pollSaliency();
+    } catch (e) {
+        state._saliencyObjectDownloading = false;
+        _updateSaliencyStatus();
+        showToast('Download failed: ' + e.message, 5000);
+    }
+}
+
+function _pollSaliency() {
+    if (state._saliencyPollTimer) return;
+    state._saliencyPollTimer = setInterval(async () => {
+        try {
+            const s = await api('/api/saliency/status');
+            state._saliencyStatus = s;
+            state._saliencyPoseDownloading = s.pose_active === true;
+            state._saliencyObjectDownloading = s.object_active === true;
+            state.settings.saliency_pose_ready = s.pose_ready === true;
+            state.settings.saliency_object_ready = s.object_ready === true;
+            _updateSaliencyStatus();
+            if (!s.pose_active && !s.object_active) {
+                clearInterval(state._saliencyPollTimer);
+                state._saliencyPollTimer = null;
+                if (s.error) showToast('Download error: ' + s.error, 5000);
+            }
+        } catch (_) {
+            clearInterval(state._saliencyPollTimer);
+            state._saliencyPollTimer = null;
+        }
+    }, 600);
+}
 
 // ---------------------------------------------------------------------------
 // Face settings

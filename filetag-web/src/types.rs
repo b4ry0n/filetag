@@ -378,6 +378,10 @@ pub struct SettingsBody {
     pub feature_imagemagick: Option<bool>,
     /// Enable PDF thumbnail generation.
     pub feature_pdf: Option<bool>,
+    /// Enable YOLOv8n-pose salient-point detection for grid thumbnails.
+    pub feature_saliency_pose: Option<bool>,
+    /// Enable YOLOv8n object-detection fallback for non-person images.
+    pub feature_saliency_object: Option<bool>,
     /// Directory collage layout style: `"crop"` (default) or `"fit"`.
     pub dir_preview_style: Option<String>,
 }

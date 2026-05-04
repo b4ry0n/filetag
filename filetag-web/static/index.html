@@ -357,6 +357,24 @@
                         </div>
                         <span class="toggle-knob" aria-hidden="true"></span>
                     </label>
+                    <label class="toggle-row">
+                        <input type="checkbox" id="feat-saliency-pose" onchange="saliencyPoseToggled()">
+                        <div class="toggle-text">
+                            <span class="toggle-title">Smart cropping (pose)</span>
+                            <small>Uses YOLOv8n-pose to detect people and crop grid thumbnails to their head/nose. Requires model download (~6.7 MB).</small>
+                            <div id="feat-saliency-pose-status" style="margin-top:3px;font-size:0.9em;opacity:0.75"></div>
+                        </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
+                    </label>
+                    <label class="toggle-row">
+                        <input type="checkbox" id="feat-saliency-object" onchange="saliencyObjectToggled()">
+                        <div class="toggle-text">
+                            <span class="toggle-title">Smart cropping (objects)</span>
+                            <small>Uses YOLOv8n object detection as fallback for non-person images (animals, vehicles, …). Requires pose model to be enabled first. Requires model download (~6.4 MB).</small>
+                            <div id="feat-saliency-object-status" style="margin-top:3px;font-size:0.9em;opacity:0.75"></div>
+                        </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
+                    </label>
                     <div class="modal-actions">
                         <button onclick="saveFeaturesSettings()">Save</button>
                         <button onclick="closeSettings()">Cancel</button>
