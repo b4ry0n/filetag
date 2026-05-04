@@ -646,6 +646,7 @@ const _thumbFetching = new WeakSet(); // regular-thumb elements currently in fli
 
 const _dirThumbQueue  = [];          // ordered: visible-first, then by proximity
 const _dirThumbActive = new Set();   // dir-thumb elements currently being fetched
+let   _dirThumbAbortCtrl = new AbortController(); // aborted on navigation to cancel in-flight fetches
 
 const _thumbObserver = new IntersectionObserver((entries) => {
     const newlyRegular = [];
@@ -877,12 +878,15 @@ function _dirThumbSchedule() {
     }
 }
 
-/** Fetch one dir-thumb, retrying on 202 (generation in progress) or 503. */
+/** Fetch one dir-thumb, retrying on 202 (generation in progress) or 503.
+ *  Uses _dirThumbAbortCtrl.signal so the fetch and its retry waits are
+ *  cancelled immediately when the user navigates away. */
 async function _dirThumbFetch(el) {
     const src = el.dataset.thumbSrc;
     if (!src) return;
+    const signal = _dirThumbAbortCtrl.signal;
     for (let attempt = 0; attempt < 24; attempt++) {
-        if (!el.isConnected) return;
+        if (!el.isConnected || signal.aborted) return;
         if (_thumbCache.has(src)) {
             const cached = _thumbCache.get(src);
             // Remove data-thumb-src immediately so _dirThumbEnqueueRemaining
@@ -892,8 +896,8 @@ async function _dirThumbFetch(el) {
             return;
         }
         try {
-            const resp = await fetch(src);
-            if (!el.isConnected) return;
+            const resp = await fetch(src, { signal });
+            if (!el.isConnected || signal.aborted) return;
             if (resp.status === 200) {
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
@@ -905,7 +909,11 @@ async function _dirThumbFetch(el) {
                 return;
             } else if (resp.status === 202 || resp.status === 503) {
                 // Server still generating; wait and retry (slot stays occupied).
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // The wait is abortable so navigation cancels it immediately.
+                await new Promise(resolve => {
+                    const t = setTimeout(resolve, 500);
+                    signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+                });
             } else if (resp.status === 204) {
                 if (el.isConnected) _thumbShowFailed(el);
                 return;
@@ -913,7 +921,8 @@ async function _dirThumbFetch(el) {
                 if (el.isConnected) _thumbShowFailed(el);
                 return;
             }
-        } catch (_) {
+        } catch (err) {
+            if (err.name === 'AbortError') return; // navigation cancelled this fetch
             if (el.isConnected) _thumbShowFailed(el);
             return;
         }
@@ -922,12 +931,23 @@ async function _dirThumbFetch(el) {
     if (el.isConnected) _thumbShowFailed(el);
 }
 
+/** Cancel all in-flight dir-thumb fetches and their retry waits, then reset
+ *  the queue.  Called on navigation so the new directory gets pool slots
+ *  immediately instead of waiting for the previous directory to drain. */
+function _dirThumbAbort() {
+    _dirThumbAbortCtrl.abort();
+    _dirThumbAbortCtrl = new AbortController();
+    _dirThumbQueue.length = 0;
+    // _dirThumbActive is NOT cleared here: aborted coroutines exit via
+    // AbortError, then free their own slot via the .finally() callback in
+    // _dirThumbSchedule.  This keeps active.size accurate at all times.
+}
+
 function _thumbClearCache() {
     for (const url of _thumbCache.values()) URL.revokeObjectURL(url);
     _thumbCache.clear();
     _thumbQueue.length = 0;
-    _dirThumbQueue.length = 0;
-    // _dirThumbActive: in-flight fetches bail when el.isConnected becomes false.
+    _dirThumbAbort(); // abort in-flight dir-thumb fetches + clear queue
     _trickplayCache.clear();
 }
 
