@@ -193,7 +193,7 @@ function navigateToParent(filePath) {
 }
 
 /// Quote a tag name for the query language if it contains special characters.
-function openSettings(tab = 'video') {
+function openSettings(tab = 'general') {
     const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
     // Video settings from per-root state.

@@ -1305,8 +1305,16 @@ fn preview_candidate_order(len: usize, target: usize) -> Vec<usize> {
 }
 
 /// Generate a small JPEG for a single directory item (image, video, or PDF).
-/// Target dimensions: 120 × 120 px, square-cropped.
-async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<Vec<u8>> {
+/// Target dimensions: 120 × 120 px, square-cropped when `preserve_aspect` is
+/// `false` (crop style).  When `preserve_aspect` is `true` (fit/scattered
+/// style), the full image is returned un-cropped so the collage builder can
+/// apply area-normalisation while keeping the original proportions.
+async fn dir_item_jpeg(
+    path: &Path,
+    root: &Path,
+    features: Features,
+    preserve_aspect: bool,
+) -> Option<Vec<u8>> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -1324,10 +1332,15 @@ async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<V
                 .await
                 .ok()
                 .flatten()?;
-        // Resize the cover to 120×120, square-cropped, using the same image
-        // pipeline as regular images.
+        // Resize the cover: square-crop for "crop" style, fit-in-box for
+        // "fit"/"scattered" styles so the collage builder can preserve the
+        // aspect ratio.
         let img = image::load_from_memory(&bytes).ok()?;
-        let thumb = img.resize_to_fill(120, 120, image::imageops::FilterType::Lanczos3);
+        let thumb = if preserve_aspect {
+            img.resize(240, 240, image::imageops::FilterType::Lanczos3)
+        } else {
+            img.resize_to_fill(120, 120, image::imageops::FilterType::Lanczos3)
+        };
         let mut out = std::io::Cursor::new(Vec::new());
         thumb.write_to(&mut out, image::ImageFormat::Jpeg).ok()?;
         return Some(out.into_inner());
@@ -1337,13 +1350,21 @@ async fn dir_item_jpeg(path: &Path, root: &Path, features: Features) -> Option<V
         if !features.video {
             return None;
         }
-        // Extract the first decodable video frame, square-cropped to 120×120.
+        // Extract the first decodable video frame.  For the crop style the
+        // frame is square-cropped to 120×120; for fit/scattered styles the
+        // frame is scaled down to fit in 240×240 without cropping so the
+        // collage builder can area-normalise while preserving proportions.
+        let vf = if preserve_aspect {
+            "scale=240:240:force_original_aspect_ratio=decrease"
+        } else {
+            "scale=120:120:force_original_aspect_ratio=increase,crop=120:120"
+        };
         let out = tokio::process::Command::new("ffmpeg")
             .arg("-i")
             .arg(path)
             .args([
                 "-vf",
-                "scale=120:120:force_original_aspect_ratio=increase,crop=120:120",
+                vf,
                 "-vframes",
                 "1",
                 "-q:v",
@@ -1483,10 +1504,10 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         // ~10° becomes ~133×133, so adjacent tiles naturally overlap by
         // ~15–25 px.
         let sc_slots: &[(i32, i64, i64)] = match n {
-            1 => &[(-5, 63, 63)],
-            2 => &[(-6, 5, 60), (5, 115, 62)],
-            3 => &[(-5, 3, 5), (6, 112, 8), (3, 60, 118)],
-            _ => &[(-5, 3, 5), (6, 118, 8), (4, 5, 118), (-7, 120, 118)],
+            1 => &[(-9, 63, 63)],
+            2 => &[(-10, 5, 60), (8, 115, 62)],
+            3 => &[(-9, 3, 5), (10, 112, 8), (4, 60, 118)],
+            _ => &[(-9, 3, 5), (10, 118, 8), (6, 5, 118), (-11, 120, 118)],
         };
 
         // --- ImageMagick "scattered" path ---
@@ -1818,10 +1839,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         const TARGET_AREA: f64 = 13_000.0;
         const CELL: u32 = 115;
         let angles: &[f32] = match n {
-            1 => &[-5.0],
-            2 => &[-6.0, 5.0],
-            3 => &[-5.0, 6.0, 3.0],
-            _ => &[-5.0, 6.0, 4.0, -7.0],
+            1 => &[-9.0],
+            2 => &[-10.0, 8.0],
+            3 => &[-9.0, 10.0, 4.0],
+            _ => &[-9.0, 10.0, 6.0, -11.0],
         };
         let positions: &[(i64, i64)] = match n {
             1 => &[(63, 63)],
@@ -2176,7 +2197,10 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &files[idx];
-                    if let Some(data) = dir_item_jpeg(item_path, &cache_root, features_bg).await {
+                    let preserve_aspect = style_bg != "crop";
+                    if let Some(data) =
+                        dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
+                    {
                         // Use the correct extension so ImageMagick gets the right format hint.
                         let ext = if data.starts_with(b"RIFF") {
                             "webp"

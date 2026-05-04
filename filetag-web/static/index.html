@@ -282,7 +282,8 @@
                 <button class="modal-close" onclick="closeSettings()">&times;</button>
             </div>
             <nav class="modal-tabs">
-                <button class="modal-tab-btn active" data-tab="video" onclick="switchSettingsTab('video')" data-i18n="settings.tab.video">Video</button>
+                <button class="modal-tab-btn active" data-tab="general" onclick="switchSettingsTab('general')" data-i18n="settings.tab.general">General</button>
+                <button class="modal-tab-btn" data-tab="video" onclick="switchSettingsTab('video')" data-i18n="settings.tab.video">Video</button>
                 <button class="modal-tab-btn" data-tab="features" onclick="switchSettingsTab('features')" data-i18n="settings.tab.features">Features</button>
                 <button class="modal-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')" data-i18n="settings.tab.ai">AI</button>
                 <button class="modal-tab-btn" data-tab="prompts" onclick="switchSettingsTab('prompts')" data-i18n="settings.tab.prompts">Prompts</button>
@@ -290,15 +291,7 @@
                 <button class="modal-tab-btn" data-tab="language" onclick="switchSettingsTab('language')" data-i18n="settings.tab.language">Language</button>
             </nav>
             <div class="modal-body">
-                <div id="settings-tab-video" class="modal-tab-panel">
-                    <label>Min trickplay sprites
-                        <input type="number" id="sprite-min" value="8" min="2" max="64">
-                        <small>Minimum preview frames, even for short videos.</small>
-                    </label>
-                    <label>Max trickplay sprites
-                        <input type="number" id="sprite-max" value="16" min="2" max="64">
-                        <small>Maximum preview frames per video (lower = faster generation).</small>
-                    </label>
+                <div id="settings-tab-general" class="modal-tab-panel">
                     <label>Directory preview style
                         <select id="dir-preview-style">
                             <option value="crop">Crop (square tiles, rotated)</option>
@@ -306,6 +299,20 @@
                             <option value="scattered">Scattered (full image, rotated, overlapping)</option>
                         </select>
                         <small>How thumbnails look for folders. “Fit” shows the full image without cropping. “Scattered” adds rotation and overlap for a natural photo-collage look.</small>
+                    </label>
+                    <div class="modal-actions">
+                        <button onclick="saveVideoSettings()">Save</button>
+                        <button onclick="closeSettings()">Cancel</button>
+                    </div>
+                </div>
+                <div id="settings-tab-video" class="modal-tab-panel" hidden>
+                    <label>Min trickplay sprites
+                        <input type="number" id="sprite-min" value="8" min="2" max="64">
+                        <small>Minimum preview frames, even for short videos.</small>
+                    </label>
+                    <label>Max trickplay sprites
+                        <input type="number" id="sprite-max" value="16" min="2" max="64">
+                        <small>Maximum preview frames per video (lower = faster generation).</small>
                     </label>
                     <div class="modal-actions">
                         <button onclick="saveVideoSettings()">Save</button>
