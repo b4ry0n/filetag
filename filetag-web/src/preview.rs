@@ -1704,24 +1704,70 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         // --- "comic" style: panels of varying size on a light background ---
         //
         // The 240×240 canvas has a 3 px outer border and 2 px separators between
-        // panels.  Panels are crop-filled to their exact dimensions.
+        // panels.  Panels are fit-within (aspect-ratio preserved) so images are
+        // not over-cropped.
         //
-        //  n=1: one full panel
-        //  n=2: two side-by-side panels
-        //  n=3: one wide top panel + two panels below
-        //  n=4: classic 2×2 grid
+        // For n=3 and n=4, multiple layouts are available; one is chosen
+        // deterministically from the first input filename so the same directory
+        // always gets the same layout.
         //
         // Panel coordinates: (x, y, w, h)
-        let panels: &[(i64, i64, i64, i64)] = match n {
-            1 => &[(3, 3, 234, 234)],
-            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
-            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
-            _ => &[
+        let variant: usize = inputs
+            .first()
+            .and_then(|p| p.file_name())
+            .map(|f| {
+                f.as_encoded_bytes()
+                    .iter()
+                    .fold(0u32, |a, &b| a.wrapping_mul(31).wrapping_add(u32::from(b)))
+            })
+            .unwrap_or(0) as usize;
+
+        // n=3: three layouts
+        let n3: [&[(i64, i64, i64, i64)]; 3] = [
+            // wide top + two below
+            &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            // two stacked left + tall right
+            &[(3, 3, 116, 116), (3, 121, 116, 116), (121, 3, 116, 234)],
+            // tall left + two stacked right
+            &[(3, 3, 116, 234), (121, 3, 116, 116), (121, 121, 116, 116)],
+        ];
+        // n=4: four layouts
+        let n4: [&[(i64, i64, i64, i64)]; 4] = [
+            // 2×2
+            &[
                 (3, 3, 116, 116),
                 (121, 3, 116, 116),
                 (3, 121, 116, 116),
                 (121, 121, 116, 116),
             ],
+            // tall left + three stacked right
+            &[
+                (3, 3, 116, 234),
+                (121, 3, 116, 76),
+                (121, 81, 116, 76),
+                (121, 159, 116, 78),
+            ],
+            // wide top + three columns bottom
+            &[
+                (3, 3, 234, 78),
+                (3, 83, 76, 154),
+                (81, 83, 76, 154),
+                (159, 83, 78, 154),
+            ],
+            // three columns top + wide bottom
+            &[
+                (3, 3, 76, 78),
+                (81, 3, 76, 78),
+                (159, 3, 78, 78),
+                (3, 83, 234, 154),
+            ],
+        ];
+
+        let panels: &[(i64, i64, i64, i64)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => n3[variant % 3],
+            _ => n4[variant % 4],
         };
 
         // --- ImageMagick "comic" path ---
@@ -1733,14 +1779,17 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 cmd.arg("(");
                 cmd.arg(&inputs[i]);
                 let dims = format!("{}x{}", pw, ph);
-                let dims2 = dims.clone();
+                // Fit-within (no `^`): image is scaled to fit the panel without
+                // cropping; the background colour fills any empty space.
                 cmd.args([
                     "-resize",
-                    &format!("{}^", dims),
+                    &dims,
                     "-gravity",
                     "Center",
+                    "-background",
+                    "#f0f0f0",
                     "-extent",
-                    &dims2,
+                    &dims,
                 ]);
                 cmd.arg(")");
                 cmd.args([
@@ -2259,18 +2308,55 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
 
     if style == "comic" {
-        // Comic-book panels: varying sizes on a light background.
+        // Comic-book panels: varying layouts on a light background.
+        // Images are fit-within each panel (no crop) and centred.
         // Panel coordinates: (x, y, w, h)
-        let panels: &[(u32, u32, u32, u32)] = match n {
-            1 => &[(3, 3, 234, 234)],
-            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
-            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
-            _ => &[
+        let variant: usize = inputs
+            .first()
+            .and_then(|p| p.file_name())
+            .map(|f| {
+                f.as_encoded_bytes()
+                    .iter()
+                    .fold(0u32, |a, &b| a.wrapping_mul(31).wrapping_add(u32::from(b)))
+            })
+            .unwrap_or(0) as usize;
+
+        let n3: [&[(u32, u32, u32, u32)]; 3] = [
+            &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            &[(3, 3, 116, 116), (3, 121, 116, 116), (121, 3, 116, 234)],
+            &[(3, 3, 116, 234), (121, 3, 116, 116), (121, 121, 116, 116)],
+        ];
+        let n4: [&[(u32, u32, u32, u32)]; 4] = [
+            &[
                 (3, 3, 116, 116),
                 (121, 3, 116, 116),
                 (3, 121, 116, 116),
                 (121, 121, 116, 116),
             ],
+            &[
+                (3, 3, 116, 234),
+                (121, 3, 116, 76),
+                (121, 81, 116, 76),
+                (121, 159, 116, 78),
+            ],
+            &[
+                (3, 3, 234, 78),
+                (3, 83, 76, 154),
+                (81, 83, 76, 154),
+                (159, 83, 78, 154),
+            ],
+            &[
+                (3, 3, 76, 78),
+                (81, 3, 76, 78),
+                (159, 3, 78, 78),
+                (3, 83, 234, 154),
+            ],
+        ];
+        let panels: &[(u32, u32, u32, u32)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => n3[variant % 3],
+            _ => n4[variant % 4],
         };
         let mut canvas =
             image::RgbaImage::from_pixel(240, 240, image::Rgba([240_u8, 240_u8, 240_u8, 255_u8]));
@@ -2281,10 +2367,14 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             let Ok(img) = image::load_from_memory(&data) else {
                 continue;
             };
-            let tile = img
-                .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+            // Fit within the panel, preserving aspect ratio (no crop).
+            let fitted = img
+                .resize(pw, ph, image::imageops::FilterType::Lanczos3)
                 .to_rgba8();
-            image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+            // Centre the fitted image inside the panel.
+            let ox = px as i64 + (pw as i32 - fitted.width() as i32).max(0) as i64 / 2;
+            let oy = py as i64 + (ph as i32 - fitted.height() as i32).max(0) as i64 / 2;
+            image::imageops::overlay(&mut canvas, &fitted, ox, oy);
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
@@ -2618,7 +2708,8 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &files[idx];
-                    let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered");
+                    let preserve_aspect =
+                        matches!(style_bg.as_str(), "fit" | "scattered" | "comic");
                     if let Some(data) =
                         dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
                     {
