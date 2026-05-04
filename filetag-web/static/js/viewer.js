@@ -231,6 +231,36 @@ let _cvScrollObserver = null;
 let _cvNavTarget = null;  // page index we are navigating to; blocks scroll detection
 let _cvNavTimer  = null;
 let _cvScrollRafPending = false;
+let _cvScrollAnimTarget = null;  // absolute pixel target for the RAF animation
+let _cvScrollAnimRafId  = null;  // requestAnimationFrame handle
+
+// Smooth-easing scroll animation for keyboard navigation.
+// Calling this repeatedly (e.g. held arrow key) just updates the target;
+// the single running RAF loop naturally accelerates toward the new position
+// without restarting, giving fluid motion with no stutter.
+function _cvAnimateScrollTo(stage, isH, pos) {
+    const prop  = isH ? 'scrollLeft'  : 'scrollTop';
+    const sSize = isH ? 'scrollWidth' : 'scrollHeight';
+    const vSize = isH ? stage.clientWidth : stage.clientHeight;
+    _cvScrollAnimTarget = Math.max(0, Math.min(pos, stage[sSize] - vSize));
+    if (_cvScrollAnimRafId !== null) return;  // loop already running; just updated target
+    const step = () => {
+        const cur  = stage[prop];
+        const dist = _cvScrollAnimTarget - cur;
+        if (Math.abs(dist) < 1) {
+            stage[prop] = _cvScrollAnimTarget;
+            _cvScrollAnimRafId  = null;
+            _cvScrollAnimTarget = null;
+            clearTimeout(_cvNavTimer);
+            _cvNavTarget = null;
+            _cvDetectPageFromScroll();
+            return;
+        }
+        stage[prop] = cur + dist * 0.25;  // ease-out: ~20 frames to settle
+        _cvScrollAnimRafId = requestAnimationFrame(step);
+    };
+    _cvScrollAnimRafId = requestAnimationFrame(step);
+}
 
 // Pick the page whose centre is closest to the scroll-stage's midpoint.
 // This is reliable for any scroll position, including the first and last
@@ -366,13 +396,13 @@ function cvBuildScrollView() {
     // Store the handler so cvExitScrollView can remove it.
     stage._cvScrollHandler = _cvScrollHandler;
 
-    // Clear the nav lock as soon as the smooth-scroll animation ends.
-    // This is more reliable than a fixed timeout, especially in fullscreen
-    // where pages are larger and animations take longer.
+    // scrollend fires after our RAF animation stops changing the scroll position.
+    // Guard against firing while the RAF is still running (e.g. browser fires
+    // scrollend on a sub-frame pause).
     stage.addEventListener('scrollend', () => {
+        if (_cvScrollAnimRafId !== null) return;
         clearTimeout(_cvNavTimer);
         _cvNavTarget = null;
-        // Final detection pass after navigation settles.
         _cvDetectPageFromScroll();
     });
 
@@ -396,6 +426,8 @@ function cvBuildScrollView() {
 function cvExitScrollView() {
     if (_cvScrollObserver) { _cvScrollObserver.disconnect(); _cvScrollObserver = null; }
     clearTimeout(_cvNavTimer); _cvNavTimer = null; _cvNavTarget = null; _cvScrollRafPending = false;
+    if (_cvScrollAnimRafId !== null) { cancelAnimationFrame(_cvScrollAnimRafId); _cvScrollAnimRafId = null; }
+    _cvScrollAnimTarget = null;
     const stage = document.getElementById('cv-stage');
     if (stage._cvScrollHandler) {
         stage.removeEventListener('scroll', stage._cvScrollHandler);
@@ -840,17 +872,12 @@ function _cvScrollNav(dir) {
         return (isH ? er.left - sr.left : er.top - sr.top) + stage[sProp];
     };
 
-    // Navigate relative to the queued target, not the mid-animation scroll position.
+    // Navigate relative to the queued target, not the current scroll position.
     const baseIdx = _cvNavTarget ?? _cv.current;
 
-    // For the first keypress use smooth animation; for rapid / held keypresses
-    // (where a smooth scroll is already in flight) use instant so each new
-    // target snaps cleanly without fighting the previous animation.
-    const isRapid = _cvNavTarget !== null;
-    const doScroll = pos => stage.scrollTo({
-        [isH ? 'left' : 'top']: Math.max(0, Math.min(pos, stage[sSize] - vSize)),
-        behavior: isRapid ? 'instant' : 'smooth',
-    });
+    // Delegate to the RAF easing loop.  If already running it just updates
+    // the target, so rapid / held keypresses accelerate the animation naturally.
+    const doScroll = pos => _cvAnimateScrollTo(stage, isH, pos);
 
     if (dir > 0) {
         // Intra-page forward scroll (only when no page-jump is queued).
