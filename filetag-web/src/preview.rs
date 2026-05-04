@@ -1363,31 +1363,37 @@ fn find_cover_image(dir: &Path) -> Option<PathBuf> {
 
 /// Build a 240×240 "cover frame" for a directory preview.
 ///
-/// The image is scaled to fit within 220×220 (preserving aspect ratio),
-/// centred on a transparent canvas, and surrounded by a thin decorative border.
+/// The cover image is scaled to fill the full 240×240 canvas (square crop),
+/// then a blurred+darkened version is used as background and the
+/// aspect-ratio-preserved image is centred on top.  This avoids
+/// transparent letterbox bars showing the card background colour.
 async fn build_cover_frame(cover: &Path, output: &Path) -> bool {
     // --- ImageMagick path ---
+    // Layer 0: blurred+darkened full-bleed background.
+    // Layer 1: aspect-ratio-fit foreground, centred.
     for cmd_name in &["magick", "convert"] {
         let ok = tokio::process::Command::new(cmd_name)
-            .args(["-size", "240x240", "xc:none"])
+            .arg(cover)
+            // background layer: fill 240×240, blur, darken
+            .args([
+                "-resize", "240x240^", "-gravity", "Center", "-extent", "240x240",
+            ])
+            .args(["-blur", "0x8", "-brightness-contrast", "-25"])
             .arg("(")
             .arg(cover)
+            // foreground layer: fit in 220×220, preserve aspect ratio
             .args([
                 "-resize",
                 "220x220",
                 "-background",
                 "none",
                 "-gravity",
-                "center",
+                "Center",
                 "-extent",
                 "220x220",
-                "-bordercolor",
-                "#777777",
-                "-border",
-                "1",
             ])
             .arg(")")
-            .args(["-gravity", "center", "-composite"])
+            .args(["-gravity", "Center", "-composite"])
             .arg(output)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1426,33 +1432,30 @@ fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
     };
 
     const CANVAS: u32 = 240;
-    // Scale to fit within 220×220, preserving aspect ratio
+
+    // Background layer: full-bleed square crop, blurred and darkened.
+    let bg_base = img.resize_to_fill(CANVAS, CANVAS, image::imageops::FilterType::Lanczos3);
+    let bg_blurred = image::imageops::blur(&bg_base.to_rgba8(), 8.0);
+    // Darken by multiplying each channel by ~0.55
+    let bg_dark: image::RgbaImage = image::RgbaImage::from_fn(CANVAS, CANVAS, |x, y| {
+        let p = bg_blurred.get_pixel(x, y);
+        image::Rgba([
+            (p[0] as f32 * 0.55) as u8,
+            (p[1] as f32 * 0.55) as u8,
+            (p[2] as f32 * 0.55) as u8,
+            p[3],
+        ])
+    });
+
+    // Foreground layer: aspect-ratio fit, centred.
     let scaled = img.resize(220, 220, image::imageops::FilterType::Lanczos3);
     let sw = scaled.width();
     let sh = scaled.height();
-
-    // Transparent canvas
-    let mut canvas = image::RgbaImage::from_pixel(CANVAS, CANVAS, image::Rgba([0, 0, 0, 0]));
-
-    // Centre the image
     let ox = (CANVAS - sw) / 2;
     let oy = (CANVAS - sh) / 2;
-    image::imageops::overlay(&mut canvas, &scaled.to_rgba8(), ox as i64, oy as i64);
 
-    // Draw 1-pixel border around the image
-    let border = image::Rgba([119_u8, 119, 119, 255]);
-    let x1 = ox.saturating_sub(1);
-    let y1 = oy.saturating_sub(1);
-    let x2 = (ox + sw).min(CANVAS - 1);
-    let y2 = (oy + sh).min(CANVAS - 1);
-    for px in x1..=x2 {
-        canvas.put_pixel(px, y1, border);
-        canvas.put_pixel(px, y2, border);
-    }
-    for py in (y1 + 1)..y2 {
-        canvas.put_pixel(x1, py, border);
-        canvas.put_pixel(x2, py, border);
-    }
+    let mut canvas = bg_dark;
+    image::imageops::overlay(&mut canvas, &scaled.to_rgba8(), ox as i64, oy as i64);
 
     let Some(bytes) = encode_lossy_webp_rgba(&canvas) else {
         return false;
