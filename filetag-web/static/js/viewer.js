@@ -248,7 +248,7 @@ function _cvAnimateScrollTo(stage, isH, pos) {
         const cur  = stage[prop];
         const dist = _cvScrollAnimTarget - cur;
         if (Math.abs(dist) < 1) {
-            stage[prop] = _cvScrollAnimTarget;
+            stage.scrollTo({ [isH ? 'left' : 'top']: _cvScrollAnimTarget, behavior: 'instant' });
             _cvScrollAnimRafId  = null;
             _cvScrollAnimTarget = null;
             clearTimeout(_cvNavTimer);
@@ -256,7 +256,9 @@ function _cvAnimateScrollTo(stage, isH, pos) {
             _cvDetectPageFromScroll();
             return;
         }
-        stage[prop] = cur + dist * 0.3;   // ease-out: ~10 frames to settle
+        // Use scrollTo({ behavior:'instant' }) rather than direct scrollTop assignment
+        // so the CSS scroll-behavior:smooth on the stage does not re-animate each step.
+        stage.scrollTo({ [isH ? 'left' : 'top']: cur + dist * 0.3, behavior: 'instant' });
         _cvScrollAnimRafId = requestAnimationFrame(step);
     };
     _cvScrollAnimRafId = requestAnimationFrame(step);
