@@ -1363,16 +1363,31 @@ fn find_cover_image(dir: &Path) -> Option<PathBuf> {
 
 /// Build a 240×240 "cover frame" for a directory preview.
 ///
-/// The image is square-cropped and scaled to fill the full 240×240 frame,
-/// matching the style of regular content frames.
+/// The image is scaled to fit within 220×220 (preserving aspect ratio),
+/// centred on a transparent canvas, and surrounded by a thin decorative border.
 async fn build_cover_frame(cover: &Path, output: &Path) -> bool {
     // --- ImageMagick path ---
     for cmd_name in &["magick", "convert"] {
         let ok = tokio::process::Command::new(cmd_name)
+            .args(["-size", "240x240", "xc:none"])
+            .arg("(")
             .arg(cover)
             .args([
-                "-resize", "240x240^", "-gravity", "center", "-extent", "240x240",
+                "-resize",
+                "220x220",
+                "-background",
+                "none",
+                "-gravity",
+                "center",
+                "-extent",
+                "220x220",
+                "-bordercolor",
+                "#777777",
+                "-border",
+                "1",
             ])
+            .arg(")")
+            .args(["-gravity", "center", "-composite"])
             .arg(output)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1411,10 +1426,35 @@ fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
     };
 
     const CANVAS: u32 = 240;
-    // Square-crop and fill the full canvas, matching regular content frames
-    let scaled = img.resize_to_fill(CANVAS, CANVAS, image::imageops::FilterType::Lanczos3);
+    // Scale to fit within 220×220, preserving aspect ratio
+    let scaled = img.resize(220, 220, image::imageops::FilterType::Lanczos3);
+    let sw = scaled.width();
+    let sh = scaled.height();
 
-    let Some(bytes) = encode_lossy_webp_rgba(&scaled.to_rgba8()) else {
+    // Transparent canvas
+    let mut canvas = image::RgbaImage::from_pixel(CANVAS, CANVAS, image::Rgba([0, 0, 0, 0]));
+
+    // Centre the image
+    let ox = (CANVAS - sw) / 2;
+    let oy = (CANVAS - sh) / 2;
+    image::imageops::overlay(&mut canvas, &scaled.to_rgba8(), ox as i64, oy as i64);
+
+    // Draw 1-pixel border around the image
+    let border = image::Rgba([119_u8, 119, 119, 255]);
+    let x1 = ox.saturating_sub(1);
+    let y1 = oy.saturating_sub(1);
+    let x2 = (ox + sw).min(CANVAS - 1);
+    let y2 = (oy + sh).min(CANVAS - 1);
+    for px in x1..=x2 {
+        canvas.put_pixel(px, y1, border);
+        canvas.put_pixel(px, y2, border);
+    }
+    for py in (y1 + 1)..y2 {
+        canvas.put_pixel(x1, py, border);
+        canvas.put_pixel(x2, py, border);
+    }
+
+    let Some(bytes) = encode_lossy_webp_rgba(&canvas) else {
         return false;
     };
     std::fs::write(output, bytes).is_ok()
