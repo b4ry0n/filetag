@@ -1776,22 +1776,28 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 .enumerate()
                 .map(|(i, &(px, py, pw, ph))| (i, px, py, pw, ph))
                 .collect()
-        } else {
-            let fixed: &[(i64, i64, i64, i64)] = match n {
-                1 => &[(3, 3, 234, 234)],
-                _ => &[
-                    (3, 3, 116, 116),
-                    (121, 3, 116, 116),
-                    (3, 121, 116, 116),
-                    (121, 121, 116, 116),
-                ],
+        } else if n == 1 {
+            // Single image: top two cells for landscape, left two cells for portrait.
+            let mut is_landscape = true;
+            if let Ok(data) = tokio::fs::read(&inputs[0]).await
+                && let Ok(img) = image::load_from_memory(&data)
+            {
+                is_landscape = img.width() >= img.height();
+            }
+            let (px, py, pw, ph): (i64, i64, i64, i64) = if is_landscape {
+                (3, 3, 234, 116) // top two cells
+            } else {
+                (3, 3, 116, 234) // left two cells
             };
-            fixed
-                .iter()
-                .take(n)
-                .enumerate()
-                .map(|(i, &(px, py, pw, ph))| (i, px, py, pw, ph))
-                .collect()
+            vec![(0, px, py, pw, ph)]
+        } else {
+            // n == 4: 2×2 grid
+            vec![
+                (0, 3_i64, 3, 116, 116),
+                (1, 121, 3, 116, 116),
+                (2, 3, 121, 116, 116),
+                (3, 121, 121, 116, 116),
+            ]
         };
 
         // --- ImageMagick "grid" path ---
@@ -2432,17 +2438,31 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                     .to_rgba8();
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
-        } else {
-            // n == 1 or n == 4: fixed panel layouts.
-            let panels: &[(u32, u32, u32, u32)] = match n {
-                1 => &[(3, 3, 234, 234)],
-                _ => &[
-                    (3, 3, 116, 116),
-                    (121, 3, 116, 116),
-                    (3, 121, 116, 116),
-                    (121, 121, 116, 116),
-                ],
+        } else if n == 1 {
+            // Single image: top two cells for landscape, left two cells for portrait.
+            let Ok(data) = std::fs::read(&inputs[0]) else {
+                return false;
             };
+            let Ok(img) = image::load_from_memory(&data) else {
+                return false;
+            };
+            let (px, py, pw, ph): (u32, u32, u32, u32) = if img.width() >= img.height() {
+                (3, 3, 234, 116) // landscape: top two cells
+            } else {
+                (3, 3, 116, 234) // portrait: left two cells
+            };
+            let tile = img
+                .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+                .to_rgba8();
+            image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+        } else {
+            // n == 4: 2×2 grid
+            let panels: &[(u32, u32, u32, u32)] = &[
+                (3, 3, 116, 116),
+                (121, 3, 116, 116),
+                (3, 121, 116, 116),
+                (121, 121, 116, 116),
+            ];
             for (input, &(px, py, pw, ph)) in inputs.iter().take(n).zip(panels.iter()) {
                 let Ok(data) = std::fs::read(input) else {
                     continue;
