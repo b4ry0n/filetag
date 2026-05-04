@@ -843,11 +843,13 @@ function _cvScrollNav(dir) {
     // Navigate relative to the queued target, not the mid-animation scroll position.
     const baseIdx = _cvNavTarget ?? _cv.current;
 
-    // Always animate smoothly. absPos() returns a stable content-relative pixel
-    // position, so scrollTo(smooth) called mid-animation goes to the right place.
+    // For the first keypress use smooth animation; for rapid / held keypresses
+    // (where a smooth scroll is already in flight) use instant so each new
+    // target snaps cleanly without fighting the previous animation.
+    const isRapid = _cvNavTarget !== null;
     const doScroll = pos => stage.scrollTo({
         [isH ? 'left' : 'top']: Math.max(0, Math.min(pos, stage[sSize] - vSize)),
-        behavior: 'smooth',
+        behavior: isRapid ? 'instant' : 'smooth',
     });
 
     if (dir > 0) {
