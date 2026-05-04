@@ -1803,7 +1803,7 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         // --- ImageMagick "grid" path ---
         for cmd_name in &["magick", "convert"] {
             let mut cmd = tokio::process::Command::new(cmd_name);
-            cmd.args(["-size", "240x240", "xc:#f0f0f0"]);
+            cmd.args(["-size", "240x240", "xc:none"]);
             for &(img_idx, px, py, pw, ph) in &placements {
                 cmd.arg("(");
                 cmd.arg(&inputs[img_idx]);
@@ -2335,8 +2335,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
 
     if style == "grid" {
-        // Comic-book panels on a light background (#f0f0f0 canvas, 3 px outer
-        // border, 2 px separators).
+        // Comic-book panels on a transparent canvas.
         //
         // For n=3 the layout adapts to the aspect ratios of the images:
         //   portrait_count == 1 → that portrait image spans a full side
@@ -2345,7 +2344,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         //   portrait_count == 3 → first image spans the left side
         //   portrait_count == 0 → standard T-shape (full-width top, two bottom)
         let mut canvas =
-            image::RgbaImage::from_pixel(240, 240, image::Rgba([240_u8, 240_u8, 240_u8, 255_u8]));
+            image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
 
         if n == 3 {
             // Load all three images first so we can inspect dimensions and
