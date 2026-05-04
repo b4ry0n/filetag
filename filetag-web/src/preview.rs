@@ -36,6 +36,24 @@ fn encode_lossy_webp(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>>
 /// Encode an `RgbaImage` as **lossy** WebP at quality 80, preserving the alpha channel.
 /// `image::ImageFormat::WebP` discards alpha; this helper uses the `webp` crate
 /// directly (`WebPEncodeRGBA`) so transparency is retained.
+/// Resize-to-fill for grid tiles with orientation-aware gravity.
+///
+/// Portrait source image into a square or landscape panel: crop from the top
+/// ("North" gravity) so that subjects near the top of the frame — faces,
+/// heads — are preserved.  All other combinations use centre crop.
+fn smart_fill_tile(img: &image::DynamicImage, pw: u32, ph: u32) -> image::RgbaImage {
+    if img.height() > img.width() && pw >= ph {
+        // Scale so the full width is covered, then take from y=0.
+        let scale = pw as f32 / img.width() as f32;
+        let new_h = ((img.height() as f32) * scale).ceil() as u32;
+        let scaled = img.resize_exact(pw, new_h.max(ph), image::imageops::FilterType::Lanczos3);
+        image::imageops::crop_imm(&scaled.to_rgba8(), 0, 0, pw, ph).to_image()
+    } else {
+        img.resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+            .to_rgba8()
+    }
+}
+
 fn encode_lossy_webp_rgba(canvas: &image::RgbaImage) -> Option<Vec<u8>> {
     let (w, h) = canvas.dimensions();
     let mem = webp::Encoder::from_rgba(canvas.as_raw(), w, h).encode(80.0);
@@ -1800,11 +1818,24 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             ]
         };
 
+        // Per-tile crop gravity: portrait source into square/landscape panel → North
+        // (preserves heads); all other cases → Center.
+        let mut tile_gravities: Vec<&str> = vec!["Center"; placements.len()];
+        for (pi, &(img_idx, _, _, pw, ph)) in placements.iter().enumerate() {
+            if pw >= ph
+                && let Ok(data) = tokio::fs::read(&inputs[img_idx]).await
+                && let Ok(img) = image::load_from_memory(&data)
+                && img.height() > img.width()
+            {
+                tile_gravities[pi] = "North";
+            }
+        }
+
         // --- ImageMagick "grid" path ---
         for cmd_name in &["magick", "convert"] {
             let mut cmd = tokio::process::Command::new(cmd_name);
             cmd.args(["-size", "240x240", "xc:none"]);
-            for &(img_idx, px, py, pw, ph) in &placements {
+            for (pi, &(img_idx, px, py, pw, ph)) in placements.iter().enumerate() {
                 cmd.arg("(");
                 cmd.arg(&inputs[img_idx]);
                 let dims = format!("{}x{}", pw, ph);
@@ -1813,7 +1844,7 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                     "-resize",
                     &format!("{}^", dims),
                     "-gravity",
-                    "Center",
+                    tile_gravities[pi],
                     "-extent",
                     &dims2,
                 ]);
@@ -2404,9 +2435,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 let Some(img) = loaded.get(img_idx) else {
                     continue;
                 };
-                let tile = img
-                    .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
-                    .to_rgba8();
+                let tile = smart_fill_tile(img, pw, ph);
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         } else if n == 2 {
@@ -2432,9 +2461,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 let Some(img) = imgs_2.get(img_idx) else {
                     continue;
                 };
-                let tile = img
-                    .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
-                    .to_rgba8();
+                let tile = smart_fill_tile(img, pw, ph);
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         } else if n == 1 {
@@ -2450,9 +2477,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             } else {
                 (3, 3, 116, 234) // portrait: left two cells
             };
-            let tile = img
-                .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
-                .to_rgba8();
+            let tile = smart_fill_tile(&img, pw, ph);
             image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
         } else {
             // n == 4: 2×2 grid
@@ -2469,9 +2494,7 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 let Ok(img) = image::load_from_memory(&data) else {
                     continue;
                 };
-                let tile = img
-                    .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
-                    .to_rgba8();
+                let tile = smart_fill_tile(&img, pw, ph);
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         }
