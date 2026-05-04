@@ -244,15 +244,11 @@
 }
 
 /* Picture-in-Picture mode: hide our UI so Chrome's gray PiP placeholder
-   doesn't clash with the detail header and background. Also suppress hover
-   interaction with the PiP placeholder so the video doesn't darken on hover. */
-.detail.pip-active .detail-header {
-    opacity: 0;
-    pointer-events: none;
-}
-.detail.pip-active .detail-preview {
-    background: transparent;
-    pointer-events: none;
+   doesn't show. visibility:hidden on the entire detail-top keeps the tags
+   section visible below while making the video element itself invisible,
+   which also suppresses Chrome's own PiP placeholder overlay. */
+.detail.pip-active .detail-top {
+    visibility: hidden;
 }
 
 
