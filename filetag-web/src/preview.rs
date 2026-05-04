@@ -21,7 +21,7 @@ use crate::types::DirParam;
 use crate::video::{orient_to_vf_prefix, serve_transcoded_mp4, video_thumb_strip};
 
 // ---------------------------------------------------------------------------
-// Lossy WebP encoding helper
+// WebP encoding helpers
 // ---------------------------------------------------------------------------
 
 /// Encode a `DynamicImage` as lossy WebP at the given quality (0–100).
@@ -29,6 +29,16 @@ use crate::video::{orient_to_vf_prefix, serve_transcoded_mp4, video_thumb_strip}
 fn encode_lossy_webp(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>> {
     let rgb = img.to_rgb8();
     let mem = webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height()).encode(quality);
+    let bytes: Vec<u8> = mem.to_vec();
+    bytes.starts_with(b"RIFF").then_some(bytes)
+}
+
+/// Encode an `RgbaImage` as **lossless** WebP, preserving the alpha channel.
+/// `image::ImageFormat::WebP` discards alpha; this helper uses the `webp` crate
+/// directly so transparency is retained.
+fn encode_lossless_webp_rgba(canvas: &image::RgbaImage) -> Option<Vec<u8>> {
+    let (w, h) = canvas.dimensions();
+    let mem = webp::Encoder::from_rgba(canvas.as_raw(), w, h).encode_lossless();
     let bytes: Vec<u8> = mem.to_vec();
     bytes.starts_with(b"RIFF").then_some(bytes)
 }
@@ -1445,14 +1455,10 @@ fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
         canvas.put_pixel(x2, py, border);
     }
 
-    let mut out = std::io::Cursor::new(Vec::new());
-    if image::DynamicImage::ImageRgba8(canvas)
-        .write_to(&mut out, image::ImageFormat::WebP)
-        .is_err()
-    {
+    let Some(bytes) = encode_lossless_webp_rgba(&canvas) else {
         return false;
-    }
-    std::fs::write(output, out.into_inner()).is_ok()
+    };
+    std::fs::write(output, bytes).is_ok()
 }
 
 /// Return candidate indices in expanding even samples. This keeps the first
@@ -2185,14 +2191,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             let oy = cy + ((CELL - nh) / 2) as i64;
             image::imageops::overlay(&mut canvas, &tile, ox, oy);
         }
-        let mut out = std::io::Cursor::new(Vec::new());
-        if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::WebP)
-            .is_err()
-        {
+        let Some(bytes) = encode_lossless_webp_rgba(&canvas) else {
             return false;
-        }
-        return std::fs::write(output, out.into_inner()).is_ok();
+        };
+        return std::fs::write(output, bytes).is_ok();
     }
 
     if style == "scattered" {
@@ -2246,14 +2248,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             let rotated = rotate_rgba(&resized, angle);
             image::imageops::overlay(&mut canvas, &rotated, *bx, *by);
         }
-        let mut out = std::io::Cursor::new(Vec::new());
-        if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::WebP)
-            .is_err()
-        {
+        let Some(bytes) = encode_lossless_webp_rgba(&canvas) else {
             return false;
-        }
-        return std::fs::write(output, out.into_inner()).is_ok();
+        };
+        return std::fs::write(output, bytes).is_ok();
     }
 
     if style == "bookshelf" {
@@ -2322,14 +2320,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
 
             x_cursor += w as i64 + 1;
         }
-        let mut out = std::io::Cursor::new(Vec::new());
-        if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::WebP)
-            .is_err()
-        {
+        let Some(bytes) = encode_lossless_webp_rgba(&canvas) else {
             return false;
-        }
-        return std::fs::write(output, out.into_inner()).is_ok();
+        };
+        return std::fs::write(output, bytes).is_ok();
     }
 
     if style == "grid" {
@@ -2460,14 +2454,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
                 image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
             }
         }
-        let mut out = std::io::Cursor::new(Vec::new());
-        if image::DynamicImage::ImageRgba8(canvas)
-            .write_to(&mut out, image::ImageFormat::WebP)
-            .is_err()
-        {
+        let Some(bytes) = encode_lossless_webp_rgba(&canvas) else {
             return false;
-        }
-        return std::fs::write(output, out.into_inner()).is_ok();
+        };
+        return std::fs::write(output, bytes).is_ok();
     }
 
     // --- "crop" style (default) ---
@@ -2491,14 +2481,10 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             .to_rgba8();
         image::imageops::overlay(&mut canvas, &tile, *x, *y);
     }
-    let mut out = std::io::Cursor::new(Vec::new());
-    if image::DynamicImage::ImageRgba8(canvas)
-        .write_to(&mut out, image::ImageFormat::WebP)
-        .is_err()
-    {
+    let Some(bytes) = encode_lossless_webp_rgba(&canvas) else {
         return false;
-    }
-    std::fs::write(output, out.into_inner()).is_ok()
+    };
+    std::fs::write(output, bytes).is_ok()
 }
 
 /// Stitch `frames` (WebP with alpha) side by side into a single WebP sprite sheet.
@@ -2621,12 +2607,7 @@ fn stitch_dir_frames_rust(frames: &[PathBuf]) -> Option<Vec<u8>> {
         x += i64::from(img.width());
     }
 
-    let mut out = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(sheet)
-        .write_to(&mut out, image::ImageFormat::WebP)
-        .ok()?;
-    let bytes = out.into_inner();
-    bytes.starts_with(b"RIFF").then_some(bytes)
+    encode_lossless_webp_rgba(&sheet)
 }
 
 /// Cache path for a directory sprite sheet, keyed on discovered media files.
