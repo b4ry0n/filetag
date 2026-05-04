@@ -1625,47 +1625,48 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
 
     if style == "bookshelf" {
-        // --- "bookshelf" style: tall portrait strips placed side by side ---
+        // --- "bookshelf" style: book spines filling the full canvas ---
         //
-        // Mimics books standing upright on a shelf.  Each image is
-        // crop-filled into a portrait rectangle (spine) and centred
-        // vertically on the 240×240 canvas.
-        let (spine_w, spine_h, x_start, gap): (u32, u32, i64, i64) = match n {
-            1 => (120, 180, 60, 0),
-            2 => (80, 180, 35, 10),
-            3 => (60, 180, 22, 8),
-            _ => (46, 180, 19, 6),
-        };
-        let y: i64 = 30; // top of spines, leaving equal padding above/below
-        let sw = format!("{}x{}", spine_w, spine_h);
-        let sw2 = sw.clone();
+        // Up to 5 spines fill the 240×240 canvas top-to-bottom.  A single
+        // 1 px black gap separates adjacent spines.  The Rust fallback adds a
+        // subtle light gradient on the left edge and a shadow on the right edge
+        // of each spine to give the impression of a rounded book spine.
+        let n5 = n.min(5);
+        let total_gap = (n5.saturating_sub(1)) as i64; // 1 px per seam
+        let spine_w = ((240 - total_gap) / n5 as i64).max(1) as u32;
+        // Leftover pixels go to the rightmost spine.
+        let last_w = (240 - total_gap - spine_w as i64 * (n5 as i64 - 1)).max(1) as u32;
+        let spine_h: u32 = 240;
 
         // --- ImageMagick "bookshelf" path ---
+        // (no shadow — plain crop-fill; Rust fallback adds the gradient)
         for cmd_name in &["magick", "convert"] {
             let mut cmd = tokio::process::Command::new(cmd_name);
-            cmd.args(["-size", "240x240", "xc:none"]);
-            for (i, input_path) in inputs.iter().enumerate().take(n) {
+            cmd.args(["-size", "240x240", "xc:black"]);
+            let mut x_cursor: i64 = 0;
+            for (i, input_path) in inputs.iter().enumerate().take(n5) {
+                let w = if i == n5 - 1 { last_w } else { spine_w };
+                let dims = format!("{}x{}", w, spine_h);
+                let dims2 = dims.clone();
                 cmd.arg("(");
                 cmd.arg(input_path);
                 cmd.args([
                     "-resize",
-                    &format!("{}^", sw),
+                    &format!("{}^", dims),
                     "-gravity",
                     "Center",
                     "-extent",
-                    &sw2,
-                    "-background",
-                    "none",
+                    &dims2,
                 ]);
                 cmd.arg(")");
-                let x = x_start + i as i64 * (spine_w as i64 + gap);
                 cmd.args([
                     "-gravity",
                     "NorthWest",
                     "-geometry",
-                    &format!("+{}+{}", x, y),
+                    &format!("+{}+0", x_cursor),
                     "-composite",
                 ]);
+                x_cursor += w as i64 + 1;
             }
             cmd.arg(output);
             let ok = cmd
@@ -1689,8 +1690,8 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
             }
         }
 
-        // Rust fallback for "bookshelf".
-        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        // Rust fallback for "bookshelf" (includes light/shadow gradient).
+        let inputs = inputs.iter().take(n5).cloned().collect::<Vec<_>>();
         let output = output.to_path_buf();
         return tokio::task::spawn_blocking(move || {
             build_collage_rust(&inputs, &output, "bookshelf")
@@ -2182,28 +2183,70 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
 
     if style == "bookshelf" {
-        // Tall portrait strips side by side, like books on a shelf.
-        let (spine_w, spine_h, x_start, gap): (u32, u32, i64, i64) = match n {
-            1 => (120, 180, 60, 0),
-            2 => (80, 180, 35, 10),
-            3 => (60, 180, 22, 8),
-            _ => (46, 180, 19, 6),
-        };
-        let y: i64 = 30;
+        // Book spines filling the full 240×240 canvas, separated by 1 px black
+        // gaps.  A light-to-dark horizontal gradient is painted over each spine
+        // to simulate rounded book-spine shading.
+        let n5 = n.min(5);
+        let total_gap = n5.saturating_sub(1) as i64;
+        let spine_w = ((240 - total_gap) / n5 as i64).max(1) as u32;
+        let last_w = (240 - total_gap - spine_w as i64 * (n5 as i64 - 1)).max(1) as u32;
+        let spine_h: u32 = 240;
+
+        // Black canvas (the 1 px gaps will remain black).
         let mut canvas =
-            image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
-        for (i, input) in inputs.iter().take(n).enumerate() {
+            image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 255_u8]));
+
+        let mut x_cursor: i64 = 0;
+        for (i, input) in inputs.iter().take(n5).enumerate() {
+            let w = if i == n5 - 1 { last_w } else { spine_w };
             let Ok(data) = std::fs::read(input) else {
+                x_cursor += w as i64 + 1;
                 continue;
             };
             let Ok(img) = image::load_from_memory(&data) else {
+                x_cursor += w as i64 + 1;
                 continue;
             };
             let spine = img
-                .resize_to_fill(spine_w, spine_h, image::imageops::FilterType::Lanczos3)
+                .resize_to_fill(w, spine_h, image::imageops::FilterType::Lanczos3)
                 .to_rgba8();
-            let x = x_start + i as i64 * (spine_w as i64 + gap);
-            image::imageops::overlay(&mut canvas, &spine, x, y);
+
+            image::imageops::overlay(&mut canvas, &spine, x_cursor, 0);
+
+            // Light/shadow gradient: left edge bright, right edge dark.
+            // This gives the rounded-spine illusion.
+            let highlight_cols = (w / 6).max(2);
+            let shadow_cols = (w / 5).max(2);
+            for y in 0..spine_h {
+                // Left highlight: white overlay fading right
+                for col in 0..highlight_cols {
+                    let px_x = x_cursor + col as i64;
+                    if px_x >= 240 {
+                        break;
+                    }
+                    let t = 1.0 - col as f32 / highlight_cols as f32;
+                    let alpha = (t * t * 60.0) as u8; // soft quadratic falloff
+                    let p = canvas.get_pixel_mut(px_x as u32, y);
+                    p[0] = p[0].saturating_add(alpha);
+                    p[1] = p[1].saturating_add(alpha);
+                    p[2] = p[2].saturating_add(alpha);
+                }
+                // Right shadow: dark overlay fading left
+                for col in 0..shadow_cols {
+                    let px_x = x_cursor + w as i64 - 1 - col as i64;
+                    if !(0..240).contains(&px_x) {
+                        continue;
+                    }
+                    let t = 1.0 - col as f32 / shadow_cols as f32;
+                    let alpha = (t * t * 80.0) as u8;
+                    let p = canvas.get_pixel_mut(px_x as u32, y);
+                    p[0] = p[0].saturating_sub(alpha);
+                    p[1] = p[1].saturating_sub(alpha);
+                    p[2] = p[2].saturating_sub(alpha);
+                }
+            }
+
+            x_cursor += w as i64 + 1;
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
