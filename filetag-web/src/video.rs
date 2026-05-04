@@ -422,11 +422,18 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
 
-    let n_sprite: f64 = 8.0;
     let info = video_info(path).await;
     let ss = info
         .as_ref()
-        .map(|i| format!("{:.2}", i.duration / (2.0 * n_sprite)))
+        .map(|i| {
+            let dur = i.duration;
+            let t = if dur <= 5.0 {
+                dur * 0.5
+            } else {
+                (dur * 0.15).clamp(5.0, 300.0)
+            };
+            format!("{t:.2}")
+        })
         .unwrap_or_else(|| "5".to_string());
 
     let ok = tokio::process::Command::new("nice")

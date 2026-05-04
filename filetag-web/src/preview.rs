@@ -1354,19 +1354,19 @@ fn find_cover_image(dir: &Path) -> Option<PathBuf> {
 /// Build a 240×240 "cover frame" for a directory preview.
 ///
 /// The image is scaled to fit within 220×220 (preserving aspect ratio),
-/// centred on a dark canvas, and surrounded by a thin decorative border.
+/// centred on a transparent canvas, and surrounded by a thin decorative border.
 async fn build_cover_frame(cover: &Path, output: &Path) -> bool {
     // --- ImageMagick path ---
     for cmd_name in &["magick", "convert"] {
         let ok = tokio::process::Command::new(cmd_name)
-            .args(["-size", "240x240", "xc:#111111"])
+            .args(["-size", "240x240", "xc:none"])
             .arg("(")
             .arg(cover)
             .args([
                 "-resize",
                 "220x220",
                 "-background",
-                "#111111",
+                "none",
                 "-gravity",
                 "center",
                 "-extent",
@@ -1421,8 +1421,8 @@ fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
     let sw = scaled.width();
     let sh = scaled.height();
 
-    // Dark canvas
-    let bg = image::Rgba([17_u8, 17, 17, 255]);
+    // Transparent canvas
+    let bg = image::Rgba([0_u8, 0, 0, 0]);
     let mut canvas = image::RgbaImage::from_pixel(CANVAS, CANVAS, bg);
 
     // Centre the image
