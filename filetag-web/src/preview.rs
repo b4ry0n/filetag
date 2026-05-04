@@ -1500,27 +1500,80 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     if style == "grid" {
         // --- "grid" style: comic-book panels on a light background ---
         //
-        // Visually identical to "comic": #f0f0f0 canvas, 3 px outer border,
-        // 2 px separators.  Panel coordinates: (x, y, w, h).
-        let panels: &[(i64, i64, i64, i64)] = match n {
-            1 => &[(3, 3, 234, 234)],
-            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
-            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
-            _ => &[
-                (3, 3, 116, 116),
-                (121, 3, 116, 116),
-                (3, 121, 116, 116),
-                (121, 121, 116, 116),
-            ],
+        // Canvas: 240×240, #f0f0f0, 3 px outer border, 2 px separators.
+        //
+        // For n=3 the layout adapts to the aspect ratios of the images:
+        //   portrait_count == 1 → that portrait image spans a full side
+        //                         (left if it is image 0, right otherwise)
+        //   portrait_count == 2 → the single landscape image spans a full side
+        //   portrait_count == 3 → first image spans the left side
+        //   portrait_count == 0 → standard T-shape (full-width top, two bottom)
+        //
+        // Each placement is (image_index, x, y, w, h).
+        let placements: Vec<(usize, i64, i64, i64, i64)> = if n == 3 {
+            let mut is_portrait = [false; 3];
+            for i in 0..3 {
+                if let Ok(data) = tokio::fs::read(&inputs[i]).await
+                    && let Ok(img) = image::load_from_memory(&data)
+                {
+                    is_portrait[i] = img.height() > img.width();
+                }
+            }
+            let portrait_count = is_portrait.iter().filter(|&&p| p).count();
+            let large_idx: Option<usize> = match portrait_count {
+                2 => is_portrait.iter().position(|&p| !p), // landscape spans
+                1 => is_portrait.iter().position(|&p| p),  // portrait spans
+                3 => Some(0),                              // first spans left
+                _ => None,                                 // 0 → T-shape
+            };
+            if let Some(li) = large_idx {
+                let others: Vec<usize> = (0..3_usize).filter(|&i| i != li).collect();
+                if li == 0 {
+                    vec![
+                        (li, 3, 3, 116, 234),
+                        (others[0], 121, 3, 116, 116),
+                        (others[1], 121, 121, 116, 116),
+                    ]
+                } else {
+                    vec![
+                        (others[0], 3, 3, 116, 116),
+                        (others[1], 3, 121, 116, 116),
+                        (li, 121, 3, 116, 234),
+                    ]
+                }
+            } else {
+                vec![
+                    (0, 3, 3, 234, 113),
+                    (1, 3, 118, 116, 119),
+                    (2, 121, 118, 116, 119),
+                ]
+            }
+        } else {
+            let fixed: &[(i64, i64, i64, i64)] = match n {
+                1 => &[(3, 3, 234, 234)],
+                2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+                _ => &[
+                    (3, 3, 116, 116),
+                    (121, 3, 116, 116),
+                    (3, 121, 116, 116),
+                    (121, 121, 116, 116),
+                ],
+            };
+            fixed
+                .iter()
+                .take(n)
+                .enumerate()
+                .map(|(i, &(px, py, pw, ph))| (i, px, py, pw, ph))
+                .collect()
         };
 
         // --- ImageMagick "grid" path ---
         for cmd_name in &["magick", "convert"] {
             let mut cmd = tokio::process::Command::new(cmd_name);
             cmd.args(["-size", "240x240", "xc:#f0f0f0"]);
-            for (i, &(px, py, pw, ph)) in panels.iter().take(n).enumerate() {
+            for &(img_idx, px, py, pw, ph) in &placements {
                 cmd.arg("(");
-                cmd.arg(&inputs[i]);
+                cmd.arg(&inputs[img_idx]);
                 let dims = format!("{}x{}", pw, ph);
                 let dims2 = dims.clone();
                 cmd.args([
@@ -2061,32 +2114,105 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
     }
 
     if style == "grid" {
-        // Comic-book panels: varying sizes on a light background.
-        // Panel coordinates: (x, y, w, h)
-        let panels: &[(u32, u32, u32, u32)] = match n {
-            1 => &[(3, 3, 234, 234)],
-            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
-            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
-            _ => &[
-                (3, 3, 116, 116),
-                (121, 3, 116, 116),
-                (3, 121, 116, 116),
-                (121, 121, 116, 116),
-            ],
-        };
+        // Comic-book panels on a light background (#f0f0f0 canvas, 3 px outer
+        // border, 2 px separators).
+        //
+        // For n=3 the layout adapts to the aspect ratios of the images:
+        //   portrait_count == 1 → that portrait image spans a full side
+        //                         (left if it is image 0, right otherwise)
+        //   portrait_count == 2 → the single landscape image spans a full side
+        //   portrait_count == 3 → first image spans the left side
+        //   portrait_count == 0 → standard T-shape (full-width top, two bottom)
         let mut canvas =
             image::RgbaImage::from_pixel(240, 240, image::Rgba([240_u8, 240_u8, 240_u8, 255_u8]));
-        for (input, &(px, py, pw, ph)) in inputs.iter().take(n).zip(panels.iter()) {
-            let Ok(data) = std::fs::read(input) else {
-                continue;
+
+        if n == 3 {
+            // Load all three images first so we can inspect dimensions and
+            // then reuse them for rendering without a second file-read.
+            let loaded: Vec<image::DynamicImage> = inputs
+                .iter()
+                .take(3)
+                .filter_map(|p| {
+                    std::fs::read(p)
+                        .ok()
+                        .and_then(|d| image::load_from_memory(&d).ok())
+                })
+                .collect();
+
+            let fallback_panels: [(usize, u32, u32, u32, u32); 3] = [
+                (0, 3, 3, 234, 113),
+                (1, 3, 118, 116, 119),
+                (2, 121, 118, 116, 119),
+            ];
+
+            let placements: Vec<(usize, u32, u32, u32, u32)> = if loaded.len() == 3 {
+                let is_portrait = [
+                    loaded[0].height() > loaded[0].width(),
+                    loaded[1].height() > loaded[1].width(),
+                    loaded[2].height() > loaded[2].width(),
+                ];
+                let portrait_count = is_portrait.iter().filter(|&&p| p).count();
+                let large_idx: Option<usize> = match portrait_count {
+                    2 => is_portrait.iter().position(|&p| !p), // landscape spans
+                    1 => is_portrait.iter().position(|&p| p),  // portrait spans
+                    3 => Some(0),                              // first spans left
+                    _ => None,                                 // 0 → T-shape
+                };
+                if let Some(li) = large_idx {
+                    let others: Vec<usize> = (0..3_usize).filter(|&i| i != li).collect();
+                    if li == 0 {
+                        vec![
+                            (li, 3, 3, 116, 234),
+                            (others[0], 121, 3, 116, 116),
+                            (others[1], 121, 121, 116, 116),
+                        ]
+                    } else {
+                        vec![
+                            (others[0], 3, 3, 116, 116),
+                            (others[1], 3, 121, 116, 116),
+                            (li, 121, 3, 116, 234),
+                        ]
+                    }
+                } else {
+                    fallback_panels.to_vec()
+                }
+            } else {
+                fallback_panels[..loaded.len()].to_vec()
             };
-            let Ok(img) = image::load_from_memory(&data) else {
-                continue;
+
+            for (img_idx, px, py, pw, ph) in placements {
+                let Some(img) = loaded.get(img_idx) else {
+                    continue;
+                };
+                let tile = img
+                    .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+                    .to_rgba8();
+                image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+            }
+        } else {
+            // n != 3: fixed panel layouts.
+            let panels: &[(u32, u32, u32, u32)] = match n {
+                1 => &[(3, 3, 234, 234)],
+                2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+                _ => &[
+                    (3, 3, 116, 116),
+                    (121, 3, 116, 116),
+                    (3, 121, 116, 116),
+                    (121, 121, 116, 116),
+                ],
             };
-            let tile = img
-                .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
-                .to_rgba8();
-            image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+            for (input, &(px, py, pw, ph)) in inputs.iter().take(n).zip(panels.iter()) {
+                let Ok(data) = std::fs::read(input) else {
+                    continue;
+                };
+                let Ok(img) = image::load_from_memory(&data) else {
+                    continue;
+                };
+                let tile = img
+                    .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+                    .to_rgba8();
+                image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+            }
         }
         let mut out = std::io::Cursor::new(Vec::new());
         if image::DynamicImage::ImageRgba8(canvas)
