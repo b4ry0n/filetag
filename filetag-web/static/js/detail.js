@@ -885,6 +885,9 @@ async function _dirThumbFetch(el) {
         if (!el.isConnected) return;
         if (_thumbCache.has(src)) {
             const cached = _thumbCache.get(src);
+            // Remove data-thumb-src immediately so _dirThumbEnqueueRemaining
+            // does not re-queue this element before the async sprite replace fires.
+            delete el.dataset.thumbSrc;
             if (cached && el.isConnected) _thumbReplace(el, cached);
             return;
         }
@@ -895,6 +898,9 @@ async function _dirThumbFetch(el) {
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
                 _thumbCache.set(src, url);
+                // Remove data-thumb-src before the async sprite replace to
+                // prevent _dirThumbEnqueueRemaining from re-queuing this element.
+                delete el.dataset.thumbSrc;
                 if (el.isConnected) _thumbReplace(el, url);
                 return;
             } else if (resp.status === 202 || resp.status === 503) {
