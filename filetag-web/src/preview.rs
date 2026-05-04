@@ -1395,12 +1395,15 @@ async fn dir_item_jpeg(
 
 /// Assemble a transparent PNG collage (240 × 240 px) from 1–4 input images.
 ///
-/// Three layout styles:
+/// Four layout styles (plus the default):
 /// - `"crop"` (default): 100×100 tiles, crop-to-fill, slightly rotated.
 /// - `"grid"`: 100×100 tiles, crop-to-fill, no rotation — clean grid.
 /// - `"fit"`: 110×110 area-normalised tiles, no crop, no rotation.
 /// - `"scattered"`: 115×115 area-normalised tiles, no crop, moderate rotation
 ///   and deliberate overlap — like a physical photo collage.
+/// - `"bookshelf"`: tall portrait crops placed side by side like book spines.
+/// - `"comic"`: rectangular panels of varying size on a light background,
+///   evoking a comic-book page layout.
 ///
 /// Tries ImageMagick (`magick` / `convert`) first, then falls back to the
 /// pure-Rust implementation.
@@ -1617,6 +1620,162 @@ async fn build_collage(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
         let output = output.to_path_buf();
         return tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "grid"))
+            .await
+            .unwrap_or(false);
+    }
+
+    if style == "bookshelf" {
+        // --- "bookshelf" style: tall portrait strips placed side by side ---
+        //
+        // Mimics books standing upright on a shelf.  Each image is
+        // crop-filled into a portrait rectangle (spine) and centred
+        // vertically on the 240×240 canvas.
+        let (spine_w, spine_h, x_start, gap): (u32, u32, i64, i64) = match n {
+            1 => (120, 180, 60, 0),
+            2 => (80, 180, 35, 10),
+            3 => (60, 180, 22, 8),
+            _ => (46, 180, 19, 6),
+        };
+        let y: i64 = 30; // top of spines, leaving equal padding above/below
+        let sw = format!("{}x{}", spine_w, spine_h);
+        let sw2 = sw.clone();
+
+        // --- ImageMagick "bookshelf" path ---
+        for cmd_name in &["magick", "convert"] {
+            let mut cmd = tokio::process::Command::new(cmd_name);
+            cmd.args(["-size", "240x240", "xc:none"]);
+            for (i, input_path) in inputs.iter().enumerate().take(n) {
+                cmd.arg("(");
+                cmd.arg(input_path);
+                cmd.args([
+                    "-resize",
+                    &format!("{}^", sw),
+                    "-gravity",
+                    "Center",
+                    "-extent",
+                    &sw2,
+                    "-background",
+                    "none",
+                ]);
+                cmd.arg(")");
+                let x = x_start + i as i64 * (spine_w as i64 + gap);
+                cmd.args([
+                    "-gravity",
+                    "NorthWest",
+                    "-geometry",
+                    &format!("+{}+{}", x, y),
+                    "-composite",
+                ]);
+            }
+            cmd.arg(output);
+            let ok = cmd
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok
+                && output.exists()
+                && let Ok(bytes) = std::fs::read(output)
+            {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                    || bytes.starts_with(b"\x89PNG")
+                {
+                    return true;
+                }
+                let _ = std::fs::remove_file(output);
+            }
+        }
+
+        // Rust fallback for "bookshelf".
+        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        let output = output.to_path_buf();
+        return tokio::task::spawn_blocking(move || {
+            build_collage_rust(&inputs, &output, "bookshelf")
+        })
+        .await
+        .unwrap_or(false);
+    }
+
+    if style == "comic" {
+        // --- "comic" style: panels of varying size on a light background ---
+        //
+        // The 240×240 canvas has a 3 px outer border and 2 px separators between
+        // panels.  Panels are crop-filled to their exact dimensions.
+        //
+        //  n=1: one full panel
+        //  n=2: two side-by-side panels
+        //  n=3: one wide top panel + two panels below
+        //  n=4: classic 2×2 grid
+        //
+        // Panel coordinates: (x, y, w, h)
+        let panels: &[(i64, i64, i64, i64)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            _ => &[
+                (3, 3, 116, 116),
+                (121, 3, 116, 116),
+                (3, 121, 116, 116),
+                (121, 121, 116, 116),
+            ],
+        };
+
+        // --- ImageMagick "comic" path ---
+        for cmd_name in &["magick", "convert"] {
+            let mut cmd = tokio::process::Command::new(cmd_name);
+            // Light off-white background, fully opaque
+            cmd.args(["-size", "240x240", "xc:#f0f0f0"]);
+            for (i, &(px, py, pw, ph)) in panels.iter().take(n).enumerate() {
+                cmd.arg("(");
+                cmd.arg(&inputs[i]);
+                let dims = format!("{}x{}", pw, ph);
+                let dims2 = dims.clone();
+                cmd.args([
+                    "-resize",
+                    &format!("{}^", dims),
+                    "-gravity",
+                    "Center",
+                    "-extent",
+                    &dims2,
+                ]);
+                cmd.arg(")");
+                cmd.args([
+                    "-gravity",
+                    "NorthWest",
+                    "-geometry",
+                    &format!("+{}+{}", px, py),
+                    "-composite",
+                ]);
+            }
+            cmd.arg(output);
+            let ok = cmd
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok
+                && output.exists()
+                && let Ok(bytes) = std::fs::read(output)
+            {
+                if image::load_from_memory_with_format(&bytes, image::ImageFormat::WebP).is_ok()
+                    || bytes.starts_with(b"\x89PNG")
+                {
+                    return true;
+                }
+                let _ = std::fs::remove_file(output);
+            }
+        }
+
+        // Rust fallback for "comic".
+        let inputs = inputs.iter().take(n).cloned().collect::<Vec<_>>();
+        let output = output.to_path_buf();
+        return tokio::task::spawn_blocking(move || build_collage_rust(&inputs, &output, "comic"))
             .await
             .unwrap_or(false);
     }
@@ -2022,6 +2181,78 @@ fn build_collage_rust(inputs: &[PathBuf], output: &Path, style: &str) -> bool {
         return std::fs::write(output, out.into_inner()).is_ok();
     }
 
+    if style == "bookshelf" {
+        // Tall portrait strips side by side, like books on a shelf.
+        let (spine_w, spine_h, x_start, gap): (u32, u32, i64, i64) = match n {
+            1 => (120, 180, 60, 0),
+            2 => (80, 180, 35, 10),
+            3 => (60, 180, 22, 8),
+            _ => (46, 180, 19, 6),
+        };
+        let y: i64 = 30;
+        let mut canvas =
+            image::RgbaImage::from_pixel(240, 240, image::Rgba([0_u8, 0_u8, 0_u8, 0_u8]));
+        for (i, input) in inputs.iter().take(n).enumerate() {
+            let Ok(data) = std::fs::read(input) else {
+                continue;
+            };
+            let Ok(img) = image::load_from_memory(&data) else {
+                continue;
+            };
+            let spine = img
+                .resize_to_fill(spine_w, spine_h, image::imageops::FilterType::Lanczos3)
+                .to_rgba8();
+            let x = x_start + i as i64 * (spine_w as i64 + gap);
+            image::imageops::overlay(&mut canvas, &spine, x, y);
+        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        if image::DynamicImage::ImageRgba8(canvas)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .is_err()
+        {
+            return false;
+        }
+        return std::fs::write(output, out.into_inner()).is_ok();
+    }
+
+    if style == "comic" {
+        // Comic-book panels: varying sizes on a light background.
+        // Panel coordinates: (x, y, w, h)
+        let panels: &[(u32, u32, u32, u32)] = match n {
+            1 => &[(3, 3, 234, 234)],
+            2 => &[(3, 3, 116, 234), (121, 3, 116, 234)],
+            3 => &[(3, 3, 234, 113), (3, 118, 116, 119), (121, 118, 116, 119)],
+            _ => &[
+                (3, 3, 116, 116),
+                (121, 3, 116, 116),
+                (3, 121, 116, 116),
+                (121, 121, 116, 116),
+            ],
+        };
+        let mut canvas =
+            image::RgbaImage::from_pixel(240, 240, image::Rgba([240_u8, 240_u8, 240_u8, 255_u8]));
+        for (input, &(px, py, pw, ph)) in inputs.iter().take(n).zip(panels.iter()) {
+            let Ok(data) = std::fs::read(input) else {
+                continue;
+            };
+            let Ok(img) = image::load_from_memory(&data) else {
+                continue;
+            };
+            let tile = img
+                .resize_to_fill(pw, ph, image::imageops::FilterType::Lanczos3)
+                .to_rgba8();
+            image::imageops::overlay(&mut canvas, &tile, px as i64, py as i64);
+        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        if image::DynamicImage::ImageRgba8(canvas)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .is_err()
+        {
+            return false;
+        }
+        return std::fs::write(output, out.into_inner()).is_ok();
+    }
+
     // --- "crop" style (default) ---
     let slots: &[(i64, i64)] = match n {
         1 => &[(70, 70)],
@@ -2294,7 +2525,14 @@ pub async fn api_dir_thumbs(
                 .ok()
                 .flatten()
         })
-        .filter(|v| v == "fit" || v == "crop" || v == "scattered" || v == "grid")
+        .filter(|v| {
+            v == "fit"
+                || v == "crop"
+                || v == "scattered"
+                || v == "grid"
+                || v == "bookshelf"
+                || v == "comic"
+        })
         .unwrap_or_else(|| "crop".to_string());
 
     let files = list_previewable_files(&abs_dir);
@@ -2337,7 +2575,7 @@ pub async fn api_dir_thumbs(
                         break;
                     }
                     let item_path = &files[idx];
-                    let preserve_aspect = style_bg != "crop" && style_bg != "grid";
+                    let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered");
                     if let Some(data) =
                         dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
                     {
