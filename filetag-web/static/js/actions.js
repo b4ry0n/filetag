@@ -946,9 +946,9 @@ function _updateSaliencyStatus() {
     const objEl = document.getElementById('feat-saliency-object-status');
     if (poseEl) {
         if (state._saliencyPoseDownloading) {
-            const s = state._saliencyStatus;
-            if (s && s.pose_bytes_total > 0) {
-                const pct = Math.round(s.pose_bytes_done / s.pose_bytes_total * 100);
+            const dl = state._saliencyStatus?.download;
+            if (dl && dl.pose_bytes_total > 0) {
+                const pct = Math.round(dl.pose_bytes_done / dl.pose_bytes_total * 100);
                 poseEl.textContent = `Downloading… ${pct}%`;
             } else {
                 poseEl.textContent = 'Downloading…';
@@ -962,9 +962,9 @@ function _updateSaliencyStatus() {
     }
     if (objEl) {
         if (state._saliencyObjectDownloading) {
-            const s = state._saliencyStatus;
-            if (s && s.object_bytes_total > 0) {
-                const pct = Math.round(s.object_bytes_done / s.object_bytes_total * 100);
+            const dl = state._saliencyStatus?.download;
+            if (dl && dl.object_bytes_total > 0) {
+                const pct = Math.round(dl.object_bytes_done / dl.object_bytes_total * 100);
                 objEl.textContent = `Downloading… ${pct}%`;
             } else {
                 objEl.textContent = 'Downloading…';
@@ -1026,15 +1026,15 @@ function _pollSaliency() {
         try {
             const s = await api('/api/saliency/status');
             state._saliencyStatus = s;
-            state._saliencyPoseDownloading = s.pose_active === true;
-            state._saliencyObjectDownloading = s.object_active === true;
+            state._saliencyPoseDownloading = s.download?.pose_active === true;
+            state._saliencyObjectDownloading = s.download?.object_active === true;
             state.settings.saliency_pose_ready = s.pose_ready === true;
             state.settings.saliency_object_ready = s.object_ready === true;
             _updateSaliencyStatus();
-            if (!s.pose_active && !s.object_active) {
+            if (!s.download?.pose_active && !s.download?.object_active) {
                 clearInterval(state._saliencyPollTimer);
                 state._saliencyPollTimer = null;
-                if (s.error) showToast('Download error: ' + s.error, 5000);
+                if (s.download?.error) showToast('Download error: ' + s.download.error, 5000);
             }
         } catch (_) {
             clearInterval(state._saliencyPollTimer);
