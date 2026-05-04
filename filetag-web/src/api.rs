@@ -1345,12 +1345,7 @@ pub async fn api_settings_get(
     let dir_preview_style: String = db::get_setting(&conn, "dir_preview_style")
         .map_err(AppError)?
         .filter(|v| {
-            v == "fit"
-                || v == "crop"
-                || v == "scattered"
-                || v == "grid"
-                || v == "bookshelf"
-                || v == "comic"
+            v == "fit" || v == "crop" || v == "scattered" || v == "grid" || v == "bookshelf"
         })
         .unwrap_or_else(|| "crop".to_string());
     Ok(Json(serde_json::json!({
@@ -1390,13 +1385,7 @@ pub async fn api_settings_set(
     }
     if let Some(v) = body.dir_preview_style {
         // Whitelist: only persist known values.
-        if v == "crop"
-            || v == "fit"
-            || v == "scattered"
-            || v == "grid"
-            || v == "bookshelf"
-            || v == "comic"
-        {
+        if v == "crop" || v == "fit" || v == "scattered" || v == "grid" || v == "bookshelf" {
             db::set_setting(&conn, "dir_preview_style", &v).map_err(AppError)?;
         }
     }
