@@ -619,57 +619,71 @@ function _dirThumbInit() {
 }
 
 // ---------------------------------------------------------------------------
-// Thumbnail queue: serial loader, visible-first via IntersectionObserver
+// Thumbnail queue: serial loader + parallel dir-thumb pool
 // ---------------------------------------------------------------------------
-// Cards render with <div class="card-thumb-pending" data-thumb-src="...">
-// (or use a cached blob URL directly if available).
-// _thumbInit() enqueues pending placeholders after each render.
-// The IntersectionObserver promotes visible items to the front in
-// top-to-bottom order. A single async worker processes one thumbnail at a
-// time (matching the server-side semaphore of 1).
+// Regular thumbnails (images, videos, PDFs, archives) are handled by a serial
+// queue (_thumbQueue) — one at a time, respecting the server-side semaphore.
 //
-// Dir-thumbs are visibility-gated: they are only added to the queue when
-// they intersect the viewport (plus rootMargin).  This prevents triggering
-// heavy server-side collage generation for off-screen directories.
-// The server returns 202 Accepted while generation is in progress; the
-// client retries until 200 or until a retry cap is reached.
+// Directory-preview thumbnails use a separate parallel pool (_dirThumbQueue /
+// _dirThumbActive, cap DIR_THUMB_CONCURRENCY).  The server starts a background
+// collage-generation task on first request and returns 202 Accepted
+// immediately, so multiple requests can be in-flight without serialising.
+//
+// Ordering strategy:
+//   1. IntersectionObserver (rootMargin 150 px) fires first for visible
+//      directories → added to the front of _dirThumbQueue.
+//   2. When a slot becomes free and the queue is empty,
+//      _dirThumbEnqueueRemaining() collects all unqueued dir-thumb elements
+//      and sorts them by distance from the viewport midpoint (nearest first),
+//      so the page fills in concentric rings rather than random order.
 
-const _thumbQueue = [];
-let _thumbBusy = false;
-const _thumbCache = new Map(); // thumb URL → blob URL
-const _thumbFetching = new WeakSet(); // elements currently being fetched
+const DIR_THUMB_CONCURRENCY = 6; // max parallel dir-thumb fetches / pollers
+
+const _thumbQueue    = [];
+let   _thumbBusy     = false;
+const _thumbCache    = new Map();    // thumb URL → blob URL  (null = permanent miss)
+const _thumbFetching = new WeakSet(); // regular-thumb elements currently in flight
+
+const _dirThumbQueue  = [];          // ordered: visible-first, then by proximity
+const _dirThumbActive = new Set();   // dir-thumb elements currently being fetched
 
 const _thumbObserver = new IntersectionObserver((entries) => {
-    // Collect all newly-visible elements from this batch.
-    const newly = [];
+    const newlyRegular = [];
     for (const e of entries) {
         if (!e.isIntersecting) continue;
         const el = e.target;
         _thumbObserver.unobserve(el);
-        const i = _thumbQueue.indexOf(el);
-        if (i !== -1) {
-            // Already in queue — move to front.
-            _thumbQueue.splice(i, 1);
-            newly.push(el);
-        } else if (!_thumbFetching.has(el) && el.dataset.thumbSrc) {
-            // Dir-thumb that was observe-only (not yet queued) — add now.
-            newly.push(el);
+        const src = el.dataset.thumbSrc || '';
+        if (src.includes('/api/dir-thumbs?')) {
+            // Dir-thumb: promote to the front of the parallel pool queue.
+            if (!_dirThumbActive.has(el) && !_dirThumbQueue.includes(el)) {
+                _dirThumbQueue.unshift(el);
+            }
+        } else {
+            // Regular thumb: move to the front of the serial queue.
+            const i = _thumbQueue.indexOf(el);
+            if (i !== -1) {
+                _thumbQueue.splice(i, 1);
+                newlyRegular.push(el);
+            } else if (!_thumbFetching.has(el) && src) {
+                newlyRegular.push(el);
+            }
         }
-        // i === -1 && _thumbFetching.has(el) → currently being fetched; skip.
     }
-    if (newly.length > 0) {
-        // Sort by vertical position so top-most cards are processed first
-        // (standard document-order lazy loading, same as native loading="lazy").
-        newly.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
-        _thumbQueue.unshift(...newly);
+    if (newlyRegular.length > 0) {
+        newlyRegular.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+        _thumbQueue.unshift(...newlyRegular);
     }
     _thumbRun();
+    _dirThumbSchedule();
 }, { rootMargin: '150px' });
 
 function _thumbFlush() {
-    // Remove orphaned (disconnected) entries and stop observing them.
     for (let i = _thumbQueue.length - 1; i >= 0; i--) {
         if (!_thumbQueue[i].isConnected) _thumbQueue.splice(i, 1);
+    }
+    for (let i = _dirThumbQueue.length - 1; i >= 0; i--) {
+        if (!_dirThumbQueue[i].isConnected) _dirThumbQueue.splice(i, 1);
     }
 }
 
@@ -677,21 +691,22 @@ function _thumbInit() {
     _thumbFlush();
     document.querySelectorAll('.card-icon[data-thumb-src]').forEach(el => {
         const src = el.dataset.thumbSrc;
-        // If we already have this thumbnail cached, replace immediately.
         if (_thumbCache.has(src)) {
             const cached = _thumbCache.get(src);
             if (cached) _thumbReplace(el, cached); else _thumbShowFailed(el);
             return;
         }
-        if (_thumbQueue.includes(el) || _thumbFetching.has(el)) return;
-        // Dir-thumbs are visibility-gated: only observe, don't queue yet.
-        // The IntersectionObserver callback adds them when they enter the
-        // viewport, preventing off-screen collage generation.
-        const isDirThumb = src.includes('/api/dir-thumbs?');
-        if (!isDirThumb) {
+        if (src.includes('/api/dir-thumbs?')) {
+            // Dir-thumbs: only observe for now; the pool picks them up when
+            // they become visible, or via _dirThumbEnqueueRemaining afterwards.
+            if (!_dirThumbActive.has(el) && !_dirThumbQueue.includes(el)) {
+                _thumbObserver.observe(el);
+            }
+        } else {
+            if (_thumbQueue.includes(el) || _thumbFetching.has(el)) return;
             _thumbQueue.push(el);
+            _thumbObserver.observe(el);
         }
-        _thumbObserver.observe(el);
     });
     _thumbRun();
 }
@@ -784,7 +799,7 @@ async function _thumbRun() {
         const src = el.dataset.thumbSrc;
         if (!src) continue;
         // Check cache (may have been filled by another element with the same URL).
-        // null = permanent failure (e.g. 422): skip without fetching again.
+        // null = permanent failure: skip without fetching again.
         if (_thumbCache.has(src)) {
             const cached = _thumbCache.get(src);
             if (cached) _thumbReplace(el, cached);
@@ -799,37 +814,22 @@ async function _thumbRun() {
                 const url = URL.createObjectURL(blob);
                 _thumbCache.set(src, url);
                 if (el.isConnected) _thumbReplace(el, url);
-            } else if (resp.status === 202 || resp.status === 503) {
-                // 202: server is still generating the collage in the background.
-                // 503: server busy. Retry after a short delay, up to a cap.
-                // Do NOT cache the response — it is not an image.
-                const retries = parseInt(el.dataset.thumbRetry || '0', 10);
-                if (retries >= 24) {
-                    // Give up after ~12 seconds total (24 × 500 ms).
-                    if (el.isConnected) _thumbShowFailed(el);
-                } else {
-                    el.dataset.thumbRetry = String(retries + 1);
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    if (el.isConnected) {
-                        _thumbQueue.push(el);
-                        _thumbObserver.observe(el);
-                    }
+            } else if (resp.status === 503) {
+                // Server busy: re-queue at back with a short delay.
+                await new Promise(resolve => setTimeout(resolve, 250));
+                if (el.isConnected) {
+                    _thumbQueue.push(el);
+                    _thumbObserver.observe(el);
                 }
             } else if (resp.status === 204) {
-                // No thumbnail available for this URL. Cache that result for
-                // the current page session so unsupported files are not refetched.
-                // Directory contents can change while the app is open, so folder
-                // misses stay retryable on the next render.
-                if (!src.includes('/api/dir-thumbs?')) _thumbCache.set(src, null);
+                // No content: cache the miss so this file is not refetched.
+                _thumbCache.set(src, null);
                 if (el.isConnected) _thumbShowFailed(el);
             } else {
-                // Other failures can be transient (tool not ready, stale cache,
-                // corrupt sampled candidate). Show the placeholder for this DOM
-                // node but do not cache failure globally; future renders may retry.
+                // Other failures: show placeholder but don't cache globally.
                 if (el.isConnected) _thumbShowFailed(el);
             }
         } catch (_) {
-            // Network error: show placeholder so shimmer does not run forever.
             if (el.isConnected) _thumbShowFailed(el);
         } finally {
             _thumbFetching.delete(el);
@@ -838,10 +838,90 @@ async function _thumbRun() {
     _thumbBusy = false;
 }
 
+// ---------------------------------------------------------------------------
+// Dir-thumb parallel pool
+// ---------------------------------------------------------------------------
+
+/** Collect not-yet-queued dir-thumb elements and append them to _dirThumbQueue
+ *  sorted by distance from the viewport midpoint (nearest first). */
+function _dirThumbEnqueueRemaining() {
+    const mid = window.scrollY + window.innerHeight / 2;
+    const pending = [...document.querySelectorAll('.card-icon[data-thumb-src]')]
+        .filter(el => {
+            const src = el.dataset.thumbSrc || '';
+            return src.includes('/api/dir-thumbs?')
+                && !_dirThumbActive.has(el)
+                && !_dirThumbQueue.includes(el);
+        });
+    if (pending.length === 0) return;
+    pending.sort((a, b) => {
+        const ay = a.getBoundingClientRect().top + window.scrollY + a.offsetHeight / 2;
+        const by = b.getBoundingClientRect().top + window.scrollY + b.offsetHeight / 2;
+        return Math.abs(ay - mid) - Math.abs(by - mid);
+    });
+    _dirThumbQueue.push(...pending);
+}
+
+/** Fill free slots in the parallel dir-thumb pool from _dirThumbQueue. */
+function _dirThumbSchedule() {
+    // If queue is empty, try to find remaining off-screen elements.
+    if (_dirThumbQueue.length === 0) _dirThumbEnqueueRemaining();
+    while (_dirThumbActive.size < DIR_THUMB_CONCURRENCY && _dirThumbQueue.length > 0) {
+        const el = _dirThumbQueue.shift();
+        if (!el.isConnected || !el.dataset.thumbSrc || _dirThumbActive.has(el)) continue;
+        _dirThumbActive.add(el);
+        _dirThumbFetch(el).finally(() => {
+            _dirThumbActive.delete(el);
+            _dirThumbSchedule();
+        });
+    }
+}
+
+/** Fetch one dir-thumb, retrying on 202 (generation in progress) or 503. */
+async function _dirThumbFetch(el) {
+    const src = el.dataset.thumbSrc;
+    if (!src) return;
+    for (let attempt = 0; attempt < 24; attempt++) {
+        if (!el.isConnected) return;
+        if (_thumbCache.has(src)) {
+            const cached = _thumbCache.get(src);
+            if (cached && el.isConnected) _thumbReplace(el, cached);
+            return;
+        }
+        try {
+            const resp = await fetch(src);
+            if (!el.isConnected) return;
+            if (resp.status === 200) {
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                _thumbCache.set(src, url);
+                if (el.isConnected) _thumbReplace(el, url);
+                return;
+            } else if (resp.status === 202 || resp.status === 503) {
+                // Server still generating; wait and retry (slot stays occupied).
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } else if (resp.status === 204) {
+                if (el.isConnected) _thumbShowFailed(el);
+                return;
+            } else {
+                if (el.isConnected) _thumbShowFailed(el);
+                return;
+            }
+        } catch (_) {
+            if (el.isConnected) _thumbShowFailed(el);
+            return;
+        }
+    }
+    // Exhausted retries (~12 s total); give up.
+    if (el.isConnected) _thumbShowFailed(el);
+}
+
 function _thumbClearCache() {
     for (const url of _thumbCache.values()) URL.revokeObjectURL(url);
     _thumbCache.clear();
     _thumbQueue.length = 0;
+    _dirThumbQueue.length = 0;
+    // _dirThumbActive: in-flight fetches bail when el.isConnected becomes false.
     _trickplayCache.clear();
 }
 
