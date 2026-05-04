@@ -233,6 +233,7 @@ let _cvNavTimer  = null;
 let _cvScrollRafPending = false;
 let _cvScrollAnimTarget = null;  // absolute pixel target for the RAF animation
 let _cvScrollAnimRafId  = null;  // requestAnimationFrame handle
+let _cvScrollAnimSelf   = false; // true while RAF is calling scrollTo (suppress user-scroll cancel)
 
 // Smooth-easing scroll animation for keyboard navigation.
 // Calling this repeatedly (e.g. held arrow key) just updates the target;
@@ -248,7 +249,9 @@ function _cvAnimateScrollTo(stage, isH, pos) {
         const cur  = stage[prop];
         const dist = _cvScrollAnimTarget - cur;
         if (Math.abs(dist) < 1) {
+            _cvScrollAnimSelf = true;
             stage.scrollTo({ [isH ? 'left' : 'top']: _cvScrollAnimTarget, behavior: 'instant' });
+            _cvScrollAnimSelf = false;
             _cvScrollAnimRafId  = null;
             _cvScrollAnimTarget = null;
             clearTimeout(_cvNavTimer);
@@ -258,7 +261,9 @@ function _cvAnimateScrollTo(stage, isH, pos) {
         }
         // Use scrollTo({ behavior:'instant' }) rather than direct scrollTop assignment
         // so the CSS scroll-behavior:smooth on the stage does not re-animate each step.
+        _cvScrollAnimSelf = true;
         stage.scrollTo({ [isH ? 'left' : 'top']: cur + dist * 0.085, behavior: 'instant' });
+        _cvScrollAnimSelf = false;
         _cvScrollAnimRafId = requestAnimationFrame(step);
     };
     _cvScrollAnimRafId = requestAnimationFrame(step);
@@ -387,6 +392,13 @@ function cvBuildScrollView() {
     // centre is geometrically closest to the viewport midpoint, which always
     // gives a stable, intuitive result – including for the first and last page.
     const _cvScrollHandler = () => {
+        // If the user is physically scrolling (not our RAF), cancel any running
+        // intra-page animation so the mouse/touchpad is never blocked.
+        if (!_cvScrollAnimSelf && _cvScrollAnimRafId !== null && _cvNavTarget === null) {
+            cancelAnimationFrame(_cvScrollAnimRafId);
+            _cvScrollAnimRafId  = null;
+            _cvScrollAnimTarget = null;
+        }
         if (_cvScrollRafPending) return;
         _cvScrollRafPending = true;
         requestAnimationFrame(() => {
@@ -883,15 +895,15 @@ function _cvScrollNav(dir) {
 
     if (dir > 0) {
         // Intra-page forward scroll (only when no page-jump is queued).
-        // Use the actual scroll position (not the animation target) so that
-        // pressing the key while the animation is still running toward the
-        // page end queues another intra-page step rather than jumping to the
-        // next page prematurely.
+        // Accumulate against the animation target (not the actual scroll position)
+        // so rapid keypresses add up correctly even while the animation is running.
+        // Transition to the next page only once the animation target has already
+        // reached the page end — never prematurely.
         if (_cvNavTarget === null) {
             const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
-                const scrollPos = stage[sProp];
+                const scrollPos = _cvScrollAnimTarget ?? stage[sProp];
                 if (sz > vSize + 2 && scrollPos < off + sz - vSize - 2) {
                     doScroll(Math.min(scrollPos + vSize * 0.85, off + sz - vSize));
                     return;
@@ -911,7 +923,7 @@ function _cvScrollNav(dir) {
             const cur = stage.querySelector(`img.cv-page[data-page="${baseIdx}"]`);
             if (cur) {
                 const off = absPos(cur), sz = isH ? cur.clientWidth : cur.clientHeight;
-                const scrollPos = stage[sProp];
+                const scrollPos = _cvScrollAnimTarget ?? stage[sProp];
                 if (sz > vSize + 2 && scrollPos > off + 2) {
                     doScroll(Math.max(scrollPos - vSize * 0.85, off));
                     return;
