@@ -256,7 +256,7 @@ function _cvAnimateScrollTo(stage, isH, pos) {
             _cvDetectPageFromScroll();
             return;
         }
-        stage[prop] = cur + dist * 0.25;  // ease-out: ~20 frames to settle
+        stage[prop] = cur + dist * 0.3;   // ease-out: ~10 frames to settle
         _cvScrollAnimRafId = requestAnimationFrame(step);
     };
     _cvScrollAnimRafId = requestAnimationFrame(step);
