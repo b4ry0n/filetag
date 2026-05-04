@@ -1258,6 +1258,15 @@ function renderDetail() {
     }
     initDetailVHandle(document.getElementById('detail-v-handle'));
 
+    // Picture-in-Picture event listeners: hide surrounding UI while PiP is active
+    if (type_ === 'video') {
+        const vid = panel.querySelector('.detail-preview video');
+        if (vid) {
+            vid.addEventListener('enterpictureinpicture', () => panel.classList.add('pip-active'));
+            vid.addEventListener('leavepictureinpicture', () => panel.classList.remove('pip-active'));
+        }
+    }
+
     // Face detection overlay (images only)
     if (typeof faceOnDetailRendered === 'function' && (type_ === 'image' || type_ === 'raw')) {
         faceOnDetailRendered(f.path, type_);
