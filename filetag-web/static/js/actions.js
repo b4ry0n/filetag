@@ -437,6 +437,7 @@ function toggleSubjectInput(subject) {
     const input = document.getElementById('tag-subject');
     if (!input) return;
     input.value = input.value.trim() === subject ? '' : subject;
+    _updateSubjectLabelHighlight();
 }
 
 function attachTagAutocomplete(inputEl, submitFn) {

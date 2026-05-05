@@ -536,6 +536,20 @@
 .subject-label:hover {
     color: var(--accent, #5b9cf6);
 }
+.subject-label--active {
+    color: var(--accent, #5b9cf6);
+}
+.subject-label--active::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    margin-right: 3px;
+    vertical-align: middle;
+    margin-bottom: 1px;
+}
 .subject-remove {
     background: none;
     border: none;

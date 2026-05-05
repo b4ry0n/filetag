@@ -1003,6 +1003,14 @@ function _renderAiBtn(f, type_, covered) {
 
 /// Partial update: refresh only the tag chips and AI button row in the
 /// detail panel, without touching the preview element (keeps video playing).
+function _updateSubjectLabelHighlight() {
+    const input = document.getElementById('tag-subject');
+    const activeSubj = input ? input.value.trim() : '';
+    document.querySelectorAll('#detail .subject-group .subject-label').forEach(el => {
+        el.classList.toggle('subject-label--active', !!activeSubj && el.textContent.trim() === activeSubj);
+    });
+}
+
 function renderDetailTagsSectionOnly() {
     if (!state.selectedFile) return;
     const f = state.selectedFile;
@@ -1010,6 +1018,7 @@ function renderDetailTagsSectionOnly() {
 
     const tagsEl = document.querySelector('#detail .detail-tags');
     if (tagsEl) tagsEl.innerHTML = renderFileTagChips(f, covered);
+    _updateSubjectLabelHighlight();
 
     const zipEntry = parseZipEntryPath(f.path);
     const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
@@ -1303,7 +1312,9 @@ function renderDetail() {
         </div>`;
     if (covered) {
         attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
-        attachSubjectAutocomplete(document.getElementById('tag-subject'), collectSingleFileSubjects);
+        const subjInput = document.getElementById('tag-subject');
+        attachSubjectAutocomplete(subjInput, collectSingleFileSubjects);
+        if (subjInput) subjInput.addEventListener('input', _updateSubjectLabelHighlight);
     }
     initDetailVHandle(document.getElementById('detail-v-handle'));
 
