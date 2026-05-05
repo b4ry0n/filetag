@@ -934,7 +934,17 @@ function _renderSubjectsInline() {
 
     // In picker mode: always show expanded (user needs to pick a subject).
     if (state.tagPickerMode) {
+        const noSubjActive = state.tagPickerSubject === null;
+        const noSubjCls = 'tag-item picker-no-subject-zone' + (noSubjActive ? ' picker-checked' : '');
+        const noSubjIndicator = noSubjActive
+            ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>'
+            : '<span class="tag-check-placeholder"></span>';
+        const noSubjZone = `<button class="${noSubjCls}"
+            onclick="toggleSubjectPick(null)"
+            ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="pickerDropNoSubject(event)"
+            title="No subject (drop a tag here to unassign its subject)">${noSubjIndicator}— no subject —</button>`;
         return `<div class="subjects-section-divider">Subjects</div>`
+            + noSubjZone
             + renderSubjectTreeNodes(tree, 0);
     }
 
@@ -1049,6 +1059,17 @@ function toggleSubjectGroup(fullPath) {
 function toggleSubjectPick(subjectName) {
     state.tagPickerSubject = state.tagPickerSubject === subjectName ? null : subjectName;
     renderTags();
+}
+
+// In picker mode: drop a tag onto the "no subject" zone to clear the subject.
+function pickerDropNoSubject(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('tag-drag-over');
+    const draggedTag = event.dataTransfer.getData('text/filetag-tag');
+    if (draggedTag && state.tagPickerMode) {
+        state.tagPickerSubject = null;
+        renderTags();
+    }
 }
 
 async function doSubjectSearch(subject) {
@@ -1311,6 +1332,16 @@ async function tagDrop(event, tagName) {
 async function subjectDrop(event, subjectName) {
     event.preventDefault();
     event.currentTarget.classList.remove('tag-drag-over');
+
+    // In picker mode: dragging a tag onto a subject → select that subject + check the tag.
+    const draggedTag = event.dataTransfer.getData('text/filetag-tag');
+    if (draggedTag && state.tagPickerMode) {
+        state.tagPickerSubject = subjectName;
+        state.tagPickerPicks.add(draggedTag);
+        renderTags();
+        return;
+    }
+
     const raw = event.dataTransfer.getData('text/filetag-paths');
     if (!raw) return;
     const paths = JSON.parse(raw);

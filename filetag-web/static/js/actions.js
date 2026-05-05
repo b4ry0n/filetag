@@ -304,6 +304,46 @@ async function doRemoveTag(path, tagStr, subject) {
     renderDetailTagsOnly();
 }
 
+// ---------------------------------------------------------------------------
+// Detail panel: drag tag chips between subject groups
+// ---------------------------------------------------------------------------
+
+function detailChipDragStart(event, path, tagStr, subject) {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/filetag-detail-tag', JSON.stringify({ path, tagStr, subject: subject || null }));
+}
+
+function detailSubjectDragOver(event) {
+    if (!event.dataTransfer.types.includes('text/filetag-detail-tag')) return;
+    event.preventDefault();
+    event.currentTarget.classList.add('subject-drag-over');
+}
+
+function detailSubjectDragLeave(event) {
+    event.currentTarget.classList.remove('subject-drag-over');
+}
+
+async function detailSubjectDrop(event, filePath, newSubject) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('subject-drag-over');
+    const raw = event.dataTransfer.getData('text/filetag-detail-tag');
+    if (!raw) return;
+    const { path, tagStr, subject: oldSubject } = JSON.parse(raw);
+    if (path !== filePath) return;
+    const normNew = newSubject || null;
+    const normOld = oldSubject || null;
+    if (normNew === normOld) return; // no change
+
+    const dir = currentAbsDir();
+    await apiPost('/api/untag', { path, tags: [tagStr], dir, ...(normOld ? { subject: normOld } : {}) });
+    await apiPost('/api/tag',   { path, tags: [tagStr], dir, ...(normNew ? { subject: normNew } : {}) });
+    await loadFileDetail(path);
+    await loadTags();
+    renderDetailTagsOnly();
+    renderTags();
+}
+
 async function doRemoveSubject(path, subject) {
     const f = state.selectedFilesData.get(path) || state.selectedFile;
     if (!f) return;

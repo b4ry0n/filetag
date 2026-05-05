@@ -426,6 +426,22 @@ mark.tag-filter-match {
     background: var(--primary-light);
 }
 
+/* "No subject" drop zone in picker mode (sidebar subjects section) */
+.picker-no-subject-zone {
+    padding-left: 22px;
+    font-style: italic;
+    color: var(--text-secondary);
+    font-size: 12px;
+    width: 100%;
+    text-align: left;
+}
+.picker-no-subject-zone.picker-checked {
+    color: var(--primary);
+    font-weight: 500;
+    background: var(--primary-light);
+    font-style: normal;
+}
+
 /* "Tag files" toggle button active state */
 .sidebar-tag-picker-btn,
 .detail-tag-picker-btn {

@@ -1362,13 +1362,17 @@ function renderFileTagChips(f, covered) {
                 aiPromoteTag('${jesc(f.path)}','${jesc(tag.name)}','${jesc(tag.value || '')}', subj);
             })()\">&uarr;</button>`
             : '';
-        return `<span class="tag-chip"${chipColor}>${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}',${subjArg})">&times;</button></span>`;
+        return `<span class="tag-chip"${chipColor} draggable="true" ondragstart="detailChipDragStart(event,'${jesc(f.path)}','${jesc(tagStr)}',${subjArg})">${esc(tagStr)}${promoteBtn}<button class="remove" onclick="doRemoveTag('${jesc(f.path)}','${jesc(tagStr)}',${subjArg})">&times;</button></span>`;
     }
 
     let html = '';
-    // Render no-subject tags first.
+    // Render no-subject tags first — wrapped in a drop zone.
     const noSubj = groups.get('');
-    if (noSubj) html += noSubj.map(chipHtml).join('');
+    if (noSubj) {
+        html += `<div class="no-subject-zone" ondragover="detailSubjectDragOver(event)" ondragleave="detailSubjectDragLeave(event)" ondrop="detailSubjectDrop(event,'${jesc(f.path)}',null)">`;
+        html += noSubj.map(chipHtml).join('');
+        html += `</div>`;
+    }
 
     // Render subject groups.
     for (const [subj, tags] of groups) {
@@ -1378,7 +1382,7 @@ function renderFileTagChips(f, covered) {
         const hasExplicit = explicitTags.length > 0;
         const hasImplicit = implicitTags.length > 0;
         if (!hasExplicit && !hasImplicit) continue;
-        html += `<div class="subject-group">`;
+        html += `<div class="subject-group" ondragover="detailSubjectDragOver(event)" ondragleave="detailSubjectDragLeave(event)" ondrop="detailSubjectDrop(event,'${jesc(f.path)}','${jesc(subj)}')">`;
         html += `<span class="subject-label" title="Click to fill subject field" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}</span>`;
         html += explicitTags.map(chipHtml).join('');
         if (hasImplicit) {

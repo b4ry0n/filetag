@@ -502,6 +502,26 @@
     border-radius: var(--radius-sm, 4px);
     padding: 3px 6px 3px 4px;
     margin: 2px 0;
+    transition: outline .1s, background .1s;
+}
+/* Drop-target highlight when dragging a tag chip onto a subject group */
+.subject-group.subject-drag-over {
+    outline: 2px solid var(--primary, #5b9cf6);
+    outline-offset: 1px;
+    background: var(--primary-light, rgba(91,156,246,.12));
+}
+
+/* No-subject drop zone in the detail panel */
+.no-subject-zone {
+    display: inline;
+    transition: outline .1s, background .1s;
+    border-radius: 4px;
+    padding: 1px 0;
+}
+.no-subject-zone.subject-drag-over {
+    outline: 2px dashed var(--primary, #5b9cf6);
+    outline-offset: 2px;
+    background: var(--primary-light, rgba(91,156,246,.08));
 }
 .subject-label {
     font-size: 10px;
