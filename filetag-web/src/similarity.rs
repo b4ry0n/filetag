@@ -1,9 +1,14 @@
-//! Visual similarity search via perceptual hashing (dHash).
+//! Visual similarity search via perceptual hashing.
 //!
-//! A 64-bit fingerprint is computed from a 9×8 greyscale thumbnail.
-//! Hamming distance between two hashes is a fast proxy for visual
-//! similarity and works well for near-duplicates and lightly edited
-//! variants.  CPU-only, no external service required.
+//! **Images** use a spatial dHash: 64-bit fingerprint from a 9×8 greyscale
+//! thumbnail.  Adjacent pixels are compared per row; the result is a `u64`.
+//!
+//! **Videos** use a temporal dHash: 65 evenly-spaced frames are sampled and
+//! each reduced to a single 1×1 greyscale pixel.  The brightness sequence is
+//! differenced the same way to produce a `u64` that captures the *luma rhythm*
+//! of the video — robust to re-encoding, colour grading, and resolution changes.
+//!
+//! Both hash types are stored identically and compared with Hamming distance.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -97,60 +102,79 @@ fn open_db(db_path: &Path) -> Result<rusqlite::Connection, AppError> {
     Ok(conn)
 }
 
-/// Extract a single representative frame from a video file via ffmpeg and
-/// return the decoded image.  Returns `None` when ffmpeg is unavailable or
-/// the file cannot be decoded.
-async fn video_frame_image(abs: &Path) -> Option<image::DynamicImage> {
+/// Compute a temporal dHash for a video file.
+///
+/// 65 evenly-spaced frames are sampled and each is reduced to a single
+/// 1×1 greyscale pixel by ffmpeg.  The resulting luma sequence is treated
+/// as a 1-D signal and hashed exactly like a spatial dHash row: bit i is
+/// set when `luma[i] < luma[i+1]`.
+///
+/// This captures the *brightness rhythm* of the video rather than any
+/// single frame, making it robust to re-encoding, colour grading and
+/// resolution changes.
+async fn video_temporal_dhash(abs: &Path) -> Option<u64> {
+    // Determine duration with ffprobe.
+    let probe = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(abs)
+        .output()
+        .await
+        .ok()?;
+    let duration: f64 = std::str::from_utf8(&probe.stdout)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    if duration <= 0.0 {
+        return None;
+    }
+
+    // Sample 65 frames evenly across the video.  Cap fps so very short clips
+    // don't produce thousands of frames; ffmpeg will still output up to 65.
+    let n_frames = 65usize;
+    let fps = (n_frames as f64 / duration).min(30.0);
+    let vf = format!("fps={fps:.6},scale=1:1,format=gray");
+
     let output = tokio::process::Command::new("nice")
-        .args(["-n", "10", "ffmpeg", "-ss", "00:00:05", "-i"])
+        .args(["-n", "10", "ffmpeg", "-i"])
         .arg(abs)
         .args([
-            "-frames:v",
-            "1",
             "-vf",
-            "scale=128:-2",
-            "-q:v",
-            "5",
+            &vf,
+            "-frames:v",
+            "65",
             "-f",
-            "image2pipe",
+            "rawvideo",
             "-vcodec",
-            "mjpeg",
-            "pipe:1",
+            "rawvideo",
             "-loglevel",
             "error",
+            "pipe:1",
         ])
         .output()
         .await
         .ok()?;
-    if !output.status.success() || output.stdout.is_empty() {
-        // Try again from the very start (some videos are < 5 s).
-        let output2 = tokio::process::Command::new("nice")
-            .args(["-n", "10", "ffmpeg", "-i"])
-            .arg(abs)
-            .args([
-                "-frames:v",
-                "1",
-                "-vf",
-                "scale=128:-2",
-                "-q:v",
-                "5",
-                "-f",
-                "image2pipe",
-                "-vcodec",
-                "mjpeg",
-                "pipe:1",
-                "-loglevel",
-                "error",
-            ])
-            .output()
-            .await
-            .ok()?;
-        if !output2.status.success() || output2.stdout.is_empty() {
-            return None;
-        }
-        return image::load_from_memory(&output2.stdout).ok();
+
+    if !output.status.success() || output.stdout.len() < 2 {
+        return None;
     }
-    image::load_from_memory(&output.stdout).ok()
+
+    let lumas = &output.stdout;
+    let n = lumas.len().min(65);
+    let mut hash: u64 = 0;
+    for i in 0..n.saturating_sub(1).min(64) {
+        if lumas[i] < lumas[i + 1] {
+            hash |= 1u64 << i;
+        }
+    }
+    Some(hash)
 }
 
 // ---------------------------------------------------------------------------
@@ -432,7 +456,7 @@ pub async fn api_index_phash(
             continue;
         }
 
-        // Decode image or extract a video frame — no DB conn held across await.
+        // Compute hash — no DB conn held across await.
         let is_video = {
             let ext = abs
                 .extension()
@@ -442,20 +466,21 @@ pub async fn api_index_phash(
             VIDEO_EXTS.contains(&ext.as_str())
         };
 
-        let img_result: Option<image::DynamicImage> = if is_video {
-            video_frame_image(&abs).await
+        // Videos use a temporal dHash (luma rhythm across 65 frames).
+        // Images use the standard spatial dHash (9×8 greyscale thumbnail).
+        let hash_opt: Option<u64> = if is_video {
+            video_temporal_dhash(&abs).await
         } else {
             tokio::task::spawn_blocking({
                 let p = abs.clone();
-                move || image::open(&p).ok()
+                move || image::open(&p).ok().map(|img| dhash(&img))
             })
             .await
             .unwrap_or(None)
         };
 
-        match img_result {
-            Some(img) => {
-                let hash = dhash(&img);
+        match hash_opt {
+            Some(hash) => {
                 let conn = match open_db(&db_path) {
                     Ok(c) => c,
                     Err(_) => {
