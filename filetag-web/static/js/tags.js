@@ -749,6 +749,15 @@ function renderTags() {
         return;
     }
 
+    // Preserve scroll positions of all scrollable section bodies before re-render.
+    const _scrollSave = {};
+    el.querySelectorAll('[data-section-key]').forEach(panel => {
+        const body = panel.querySelector(
+            '.tags-section-body,.subjects-section-body,.people-section-body,.ai-section-body,.dist-panel,.picker-scroll-wrap'
+        );
+        if (body && body.scrollTop > 0) _scrollSave[panel.dataset.sectionKey] = body.scrollTop;
+    });
+
     // Update clear-button visibility for the tag search filter
     const tagSearchClear = document.getElementById('tag-search-clear');
     if (tagSearchClear) tagSearchClear.hidden = !state.tagFilter;
@@ -887,6 +896,19 @@ function renderTags() {
         };
         const orderedHtml = state.sectionOrder.map(k => sectionMap[k] || '').join('');
         el.innerHTML = activeChipsHtml + orderedHtml;
+
+        // Restore scroll positions after re-render.
+        if (Object.keys(_scrollSave).length) {
+            el.querySelectorAll('[data-section-key]').forEach(panel => {
+                const saved = _scrollSave[panel.dataset.sectionKey];
+                if (!saved) return;
+                const body = panel.querySelector(
+                    '.tags-section-body,.subjects-section-body,.people-section-body,.ai-section-body,.dist-panel,.picker-scroll-wrap'
+                );
+                if (body) body.scrollTop = saved;
+            });
+        }
+
         requestAnimationFrame(_initSectionResize);
 
     }
