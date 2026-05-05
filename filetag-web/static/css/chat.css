@@ -185,10 +185,31 @@
 
 .chat-msg {
     display: flex;
+    align-items: flex-end;
+    gap: 4px;
 }
 
 .chat-msg-user      { justify-content: flex-end; }
 .chat-msg-assistant { justify-content: flex-start; }
+
+/* Edit button on user messages — only visible on hover */
+.chat-edit-btn {
+    order: -1;   /* appears to the left of the bubble */
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-tertiary, #bbb);
+    font-size: 12px;
+    padding: 2px 3px;
+    border-radius: 4px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity .15s, color .15s;
+    align-self: center;
+    margin-bottom: 1px;
+}\n.chat-msg:hover .chat-edit-btn { opacity: 1; }
+.chat-edit-btn:hover { color: var(--primary); background: var(--primary-light); }
 
 .chat-bubble {
     max-width: 85%;

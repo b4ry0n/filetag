@@ -225,12 +225,30 @@ function _renderChatMessages() {
         el.innerHTML = '<p class="chat-hint">Ask anything about the selected file(s).</p>';
         return;
     }
-    el.innerHTML = _chatMessages.map(m => {
+    el.innerHTML = _chatMessages.map((m, i) => {
         const cls  = m.role === 'user' ? 'chat-msg-user' : 'chat-msg-assistant';
         const html = esc(m.content).replace(/\n/g, '<br>');
-        return `<div class="chat-msg ${cls}"><div class="chat-bubble">${html}</div></div>`;
+        const editBtn = m.role === 'user' && !_chatSending
+            ? `<button class="chat-edit-btn" title="Edit message" onclick="editChatMessage(${i})">&#9998;</button>`
+            : '';
+        return `<div class="chat-msg ${cls}">${editBtn}<div class="chat-bubble">${html}</div></div>`;
     }).join('');
     el.scrollTop = el.scrollHeight;
+}
+
+function editChatMessage(index) {
+    if (_chatSending) return;
+    // Remove this message and everything after it from the history.
+    const text = _chatMessages[index].content;
+    _chatMessages = _chatMessages.slice(0, index);
+    // Put the text back in the input.
+    const input = document.getElementById('chat-input');
+    input.value = text;
+    _renderChatMessages();
+    _updateChatVideoBar();
+    input.focus();
+    // Place cursor at end.
+    input.selectionStart = input.selectionEnd = input.value.length;
 }
 
 async function sendChatMessage() {
