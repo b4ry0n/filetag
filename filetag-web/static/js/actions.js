@@ -1270,8 +1270,8 @@ async function aiClearTags(paths) {
         await apiPost('/api/ai/clear-tags', { paths, dir: currentAbsDir() });
         await loadTags();
         renderTags();
-        await refreshSelectedFilesData();
-        renderDetail();
+        if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+        renderDetailTagsSectionOnly();
         _updateCardTagBadges();
         dismissToast(toast);
         showToast(t('toast.ai-tags-removed'));
@@ -1319,7 +1319,7 @@ async function aiAcceptAllTags(paths) {
 
         await loadTags();
         renderTags();
-        renderDetail();
+        renderDetailTagsSectionOnly();
         _updateCardTagBadges();
         dismissToast(toast);
         showToast(accepted > 0 ? t('toast.accepted', {n: accepted, plural: accepted !== 1 ? t('toast.accepted-plural') : ''}) : t('toast.no-ai-tags'));
@@ -1332,8 +1332,8 @@ async function aiAcceptAllTags(paths) {
 async function aiAnalyseSingle(path) {
     if (state.aiAnalysing.has(path)) return; // already running
     state.aiAnalysing.add(path);
-    // Re-render so the button shows "Analysing…" immediately (also persists on navigate-away & back)
-    if (state.selectedFile?.path === path) renderDetail();
+    // Update button to "Analysing…" without rebuilding the video element.
+    if (state.selectedFile?.path === path) renderDetailTagsSectionOnly();
     const toast = showToast(t('toast.ai-analysing'), 0);
     const autoFramesEl = document.getElementById('ai-frames-auto');
     if (autoFramesEl) aiSetVideoFramesAuto(autoFramesEl.checked);
@@ -1369,7 +1369,7 @@ async function aiAnalyseSingle(path) {
         showToast(t('toast.ai-error', {err: e.message}));
     } finally {
         state.aiAnalysing.delete(path);
-        if (state.selectedFile?.path === path) renderDetail();
+        if (state.selectedFile?.path === path) renderDetailTagsSectionOnly();
     }
 }
 

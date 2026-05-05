@@ -243,11 +243,10 @@
     position: relative;
 }
 
-/* Picture-in-Picture mode: hide our UI so Chrome's gray PiP placeholder
-   doesn't show. visibility:hidden on the entire detail-top keeps the tags
-   section visible below while making the video element itself invisible,
-   which also suppresses Chrome's own PiP placeholder overlay. */
-.detail.pip-active .detail-top {
+/* Picture-in-Picture mode: hide only the preview area so Chrome's gray PiP
+   placeholder is invisible, while keeping the header (title, buttons) and
+   tags section fully visible and interactive. */
+.detail.pip-active .detail-preview {
     visibility: hidden;
     pointer-events: none;
 }

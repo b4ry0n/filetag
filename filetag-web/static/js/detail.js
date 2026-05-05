@@ -971,6 +971,63 @@ function _cardThumbError(img) {
 // Render: Detail panel
 // ---------------------------------------------------------------------------
 
+/// Build the AI analyse/accept/clear button row HTML for a single file.
+/// Returns empty string if the file is not analysable and has no AI tags.
+/// Called by renderDetail() and renderDetailTagsSectionOnly().
+function _renderAiBtn(f, type_, covered) {
+    const hasAiTags = covered && f.tags.some(tag => tag.name.startsWith('ai/'));
+    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip' || type_ === 'video');
+    if (!isAnalysable && !hasAiTags) return '';
+    const isAnalysing = state.aiAnalysing.has(f.path);
+    const aiAcceptBtn = hasAiTags
+        ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(['${jesc(f.path)}'])">${esc(t('ai.accept-all'))}</button>`
+        : '';
+    const aiClearBtn = hasAiTags
+        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">${esc(t('ai.clear-tags'))}</button>`
+        : '';
+    return `<div class="ai-analyse-row" id="ai-analyse-row">
+            ${isAnalysable ? `
+            <div class="ai-analyse-controls">
+                <div class="ai-analyse-btn-row">
+                    <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? esc(t('ai.analysing')) : esc(t('ai.analyse-btn'))}</button>
+                    ${type_ === 'video' ? `
+                    <label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label>
+                    <label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" onchange="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>
+                    ` : ''}
+                </div>
+            </div>
+            <small class="ai-analyse-note">${type_ === 'video' ? esc(t('ai.video-note')) : ''}</small>` : ''}
+            ${(aiAcceptBtn || aiClearBtn) ? `<div class="ai-action-row">${aiAcceptBtn}${aiClearBtn}</div>` : ''}
+           </div>`;
+}
+
+/// Partial update: refresh only the tag chips and AI button row in the
+/// detail panel, without touching the preview element (keeps video playing).
+function renderDetailTagsSectionOnly() {
+    if (!state.selectedFile) return;
+    const f = state.selectedFile;
+    const covered = f.covered !== false;
+
+    const tagsEl = document.querySelector('#detail .detail-tags');
+    if (tagsEl) tagsEl.innerHTML = renderFileTagChips(f, covered);
+
+    const zipEntry = parseZipEntryPath(f.path);
+    const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
+    const type_ = zipEntry ? fileType(zipEntry.entryName) : fileType(name);
+    const newAiHtml = _renderAiBtn(f, type_, covered);
+    const existingAiRow = document.getElementById('ai-analyse-row');
+    if (existingAiRow) {
+        if (newAiHtml) {
+            existingAiRow.outerHTML = newAiHtml;
+        } else {
+            existingAiRow.remove();
+        }
+    } else if (newAiHtml) {
+        const tagsSection = document.querySelector('#detail .detail-tags-section');
+        if (tagsSection) tagsSection.insertAdjacentHTML('beforeend', newAiHtml);
+    }
+}
+
 function renderDetail() {
     const panel = document.getElementById('detail');
 
@@ -1195,30 +1252,7 @@ function renderDetail() {
             </div>`
         : `<div class="uncovered-notice">${esc(t('detail.uncovered'))}</div>`;
 
-    const isAnalysable = covered && (type_ === 'image' || type_ === 'raw' || type_ === 'zip' || type_ === 'video');
-    const isAnalysing = state.aiAnalysing.has(f.path);
-    const aiAcceptBtn = hasAiTags
-        ? `<button class="ai-clear-btn" onclick="aiAcceptAllTags(['${jesc(f.path)}'])">${esc(t('ai.accept-all'))}</button>`
-        : '';
-    const aiClearBtn = hasAiTags
-        ? `<button class="ai-clear-btn" onclick="aiClearTags(['${jesc(f.path)}'])">${esc(t('ai.clear-tags'))}</button>`
-        : '';
-    const aiBtn = isAnalysable || hasAiTags
-        ? `<div class="ai-analyse-row">
-            ${isAnalysable ? `
-            <div class="ai-analyse-controls">
-                <div class="ai-analyse-btn-row">
-                    <button class="ai-analyse-btn" id="ai-analyse-single-btn" onclick="aiAnalyseSingle('${jesc(f.path)}')" ${isAnalysing ? 'disabled' : ''}>${isAnalysing ? esc(t('ai.analysing')) : esc(t('ai.analyse-btn'))}</button>
-                    ${type_ === 'video' ? `
-                    <label class="ai-frames-label" title="${esc(t('ai.frames-auto-title'))}"><input type="checkbox" id="ai-frames-auto" ${state.aiVideoFramesAuto ? 'checked' : ''} onchange="aiSetVideoFramesAuto(this.checked)"><span>${esc(t('ai.frames-auto-label'))}</span></label>
-                    <label class="ai-frames-label" title="${esc(t('ai.frames-title'))}"><input type="number" id="ai-frames-input" class="ai-frames-input" value="${state.aiVideoFrames}" min="2" max="256" step="1" onchange="aiSetVideoFrames(this.value)" ${state.aiVideoFramesAuto ? 'disabled' : ''}><span>${esc(t('ai.frames-label'))}</span></label>
-                    ` : ''}
-                </div>
-            </div>
-            <small class="ai-analyse-note">${type_ === 'video' ? esc(t('ai.video-note')) : ''}</small>` : ''}
-            ${(aiAcceptBtn || aiClearBtn) ? `<div class="ai-action-row">${aiAcceptBtn}${aiClearBtn}</div>` : ''}
-           </div>`
-        : '';
+    const aiBtn = _renderAiBtn(f, type_, covered);
 
     const viewerBtnRow = '';
 
