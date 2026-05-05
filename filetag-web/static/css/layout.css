@@ -249,9 +249,11 @@ mark.tag-filter-match {
 :root {
     --tree-row-h:    22px;   /* row height — same as VS Code explorer */
     --tree-indent:   12px;   /* per-level indent applied by JS/containers */
-    --tree-toggle-w: 22px;   /* chevron / check zone */
+    --tree-toggle-w: 22px;   /* check/radio indicator zone (leaf rows) */
     --tree-icon-w:   16px;   /* color-dot / icon zone */
     --tree-base-pl:   4px;   /* base left breathing room */
+    /* Note: group chevron (twistie) is hardcoded to 16px + translateX(3px)
+       matching VSCode tree.css .monaco-tl-twistie geometry. */
 }
 
 /* ── Shared base: every interactive row ─────────────────────────── */
@@ -278,10 +280,14 @@ mark.tag-filter-match {
 .tag-item.active .count,
 .tag-group-label.active .count    { color: var(--primary); opacity: 0.75; }
 
-/* ── TOGGLE zone (22px): chevron for group rows ─────────────────── */
+/* ── TOGGLE zone: chevron for group rows ─────────────────────────
+   VSCode .monaco-tl-twistie: width:16px, flex-shrink:0, display:flex,
+   align-items+justify:center, transform:translateX(3px) (tree.css MIT).
+   We keep the outer padding-left (var(--tree-base-pl) on the row) and
+   match the 16px twistie width exactly.                                    */
 .tag-group-chevron {
     flex-shrink: 0;
-    width: var(--tree-toggle-w);
+    width: 16px;
     height: var(--tree-row-h);
     display: flex;
     align-items: center;
@@ -291,6 +297,7 @@ mark.tag-filter-match {
     background: transparent;
     border: none;
     cursor: pointer;
+    transform: translateX(3px);
 }
 /* Chevron arrow icon */
 .chevron-icon {
@@ -337,7 +344,28 @@ mark.tag-filter-match {
 }
 
 .tag-group-items          { display: none; }
-.tag-group-items.open     { display: block; }
+.tag-group-items.open     { display: block; position: relative; }
+
+/* Indent guide — vertical line below the parent chevron, shown on hover.
+   Mirrors VSCode's .monaco-tl-indent > .indent-guide pattern (tree.css MIT):
+     position:absolute, border-left:1px solid transparent, opacity:0,
+     transition:opacity 0.1s linear.
+   Chevron is 16px wide starting at tree-base-pl (4px).
+   Visual centre with translateX(3px) = 4 + 8 + 3 = 15px = base-pl + 11px.  */
+.tag-group-items.open::before {
+    content: '';
+    position: absolute;
+    left: calc(var(--tree-base-pl) + 11px);
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+    opacity: 0;
+    transition: opacity 0.1s linear;
+    pointer-events: none;
+}
+/* Show guide when hovering the group or any of its children */
+.tag-group:hover > .tag-group-items.open::before { opacity: 0.5; }
 
 /* ── TOGGLE zone (22px): check/radio indicator for leaf rows ─────── */
 .tag-check,
@@ -1467,34 +1495,42 @@ mark.tag-filter-match {
 /* Empty container — subjects are now rendered inline inside #tag-list. */
 .sidebar-subject-section { display: none; }
 
-/* Section divider between tags and subjects */
+/* Section divider — non-interactive (e.g. "Subjects" label above subject tree) */
 .subjects-section-divider {
-    padding: 10px 16px 3px;
+    display: flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px 0 var(--tree-base-pl);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-tertiary);
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
     border-top: 1px solid var(--border);
-    margin-top: 4px;
     user-select: none;
 }
 
-/* AI tags section — collapsible, same visual language as subjects divider */
+/* AI / collapsible section headers — VSCode pane-header style:
+   - exactly 22px (same as a tree row)
+   - font-size 11px, weight 700, uppercase — matches monaco pane-header h3.title
+   - transparent background (blends with sidebar)
+   - thin border-top as separator between panels
+   - hover reveals via transition, not background change                        */
 .ai-section-divider {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 16px 3px 10px;
+    gap: 2px;
+    height: 22px;
+    padding: 0 4px 0 var(--tree-base-pl);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-tertiary);
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
     border-top: 1px solid var(--border);
     cursor: pointer;
     user-select: none;
-    background: var(--bg-surface);
+    background: transparent;
 }
 
 /* No border-top on the first section panel */
@@ -1503,7 +1539,7 @@ mark.tag-filter-match {
     border-top: none;
 }
 
-.ai-section-divider:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.ai-section-divider:hover { background: var(--bg-hover); color: var(--text); }
 
 .ai-section-divider.active { color: var(--primary); }
 
@@ -1516,14 +1552,15 @@ mark.tag-filter-match {
     transition: opacity 0.12s;
     cursor: grab;
     flex-shrink: 0;
-    margin-right: -2px;
 }
-.ai-section-divider:hover .section-drag-handle { opacity: 0.7; }
+.ai-section-divider:hover .section-drag-handle { opacity: 0.6; }
 .ai-section-divider.section-dragging { opacity: 0.45; }
 .ai-section-divider.section-drag-over-before { box-shadow: inset 0 2px 0 var(--primary); }
 .ai-section-divider.section-drag-over-after  { box-shadow: inset 0 -2px 0 var(--primary); }
 
-/* Chevron button inside section header — resets button chrome */
+/* Chevron button inside section header — VSCode .monaco-tl-twistie geometry:
+   width:16px, flex-shrink:0, display:flex, align-items+justify:center,
+   transform:translateX(3px) — all taken from tree.css (MIT).              */
 .section-chevron-btn {
     display: flex;
     align-items: center;
@@ -1535,9 +1572,10 @@ mark.tag-filter-match {
     color: inherit;
     flex-shrink: 0;
     border-radius: 3px;
-    width: 18px;
-    height: 18px;
-    margin-right: -2px;
+    width: 16px;
+    height: 16px;
+    transform: translateX(3px);
+    margin-right: 0;
 }
 .section-chevron-btn:hover { background: var(--bg-hover); color: var(--text); }
 
@@ -1571,8 +1609,7 @@ mark.tag-filter-match {
 
 .ai-section-divider .chevron-icon {
     flex-shrink: 0;
-    color: var(--text-tertiary);
-    transition: transform 0.18s;
+    transition: transform 0.15s;
     transform: rotate(0deg); /* expanded = pointing down */
 }
 
@@ -1585,6 +1622,7 @@ mark.tag-filter-match {
     font-weight: 400;
     text-transform: none;
     letter-spacing: 0;
+    padding-right: 4px;
 }
 
 .ai-section-divider.active .count { color: var(--primary); }
