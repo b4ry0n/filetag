@@ -229,87 +229,172 @@ mark.tag-filter-match {
     overflow-y: auto;
 }
 
-.tag-group { margin-bottom: 2px; }
+.tag-group { margin-bottom: 1px; }
 
+/* ===================================================================
+   SIDEBAR TREE ROW SYSTEM — VSCode-style unified layout
+   ===================================================================
+   Row anatomy (left → right):
+     [4px base-indent] [TOGGLE 22px] [ICON 16px] [LABEL flex-1] [COUNT auto] [right: 8px]
+
+   TOGGLE  = chevron button (groups) | check/radio indicator (leaves)
+   ICON    = color-dot | empty 16px slot | "=" for k=v value rows
+   LABEL   = tag name / subject / value text (overflows via ellipsis)
+   COUNT   = item count badge, right-aligned, muted
+
+   Depth indent: applied as `margin-left: var(--tree-indent)` on
+     .tag-group wrappers (groups) and directly on leaf buttons (JS).
+   =================================================================== */
+
+:root {
+    --tree-row-h:    22px;   /* row height — same as VS Code explorer */
+    --tree-indent:   12px;   /* per-level indent applied by JS/containers */
+    --tree-toggle-w: 22px;   /* chevron / check zone */
+    --tree-icon-w:   16px;   /* color-dot / icon zone */
+    --tree-base-pl:   4px;   /* base left breathing room */
+}
+
+/* ── Shared base: every interactive row ─────────────────────────── */
+.tag-item,
 .tag-group-label {
     display: flex;
     align-items: center;
+    min-height: var(--tree-row-h);
     width: 100%;
+    padding: 0 8px 0 var(--tree-base-pl);
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 400;
     color: var(--text);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    border-radius: 0;
+    box-sizing: border-box;
 }
+.tag-item:hover,
+.tag-group-label:hover            { background: var(--bg-hover); }
+.tag-item.active,
+.tag-group-label.active           { background: var(--primary-light); color: var(--primary); }
+.tag-item.active .count,
+.tag-group-label.active .count    { color: var(--primary); opacity: 0.75; }
 
-.tag-group-label:hover { background: var(--bg-hover); }
-.tag-group-label.active { background: var(--primary-light); color: var(--primary); }
-
+/* ── TOGGLE zone (22px): chevron for group rows ─────────────────── */
 .tag-group-chevron {
     flex-shrink: 0;
-    padding: 5px 2px 5px 4px;
-    color: var(--text-tertiary);
-    line-height: 1;
+    width: var(--tree-toggle-w);
+    height: var(--tree-row-h);
     display: flex;
     align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--text-tertiary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
 }
-
+/* Chevron arrow icon */
 .chevron-icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     display: block;
-    transition: transform 0.18s;
-    transform: rotate(-90deg);
+    transition: transform 0.15s;
+    transform: rotate(-90deg);   /* collapsed: pointing right */
 }
-
 .tag-group-label.expanded .chevron-icon { transform: rotate(0deg); }
 
+/* Chevron and name buttons must NOT add their own hover/active background;
+   the outer .tag-group-label row is the single hover target. */
+.tag-group-chevron:hover,
+.tag-group-name:hover { background: transparent; }
+
+/* ── Group name: fills remaining width ──────────────────────────── */
 .tag-group-name {
     flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
-    padding: 6px 16px 6px 2px;
-    text-align: left;
+    min-height: var(--tree-row-h);
+    padding: 0;
     font-size: 13px;
     font-weight: 500;
     color: inherit;
+    text-align: left;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    overflow: hidden;
 }
 
-.tag-group-name .count {
+/* Count badge — shared by .tag-group-name and .tag-item */
+.tag-group-name .count,
+.tag-item .count {
     margin-left: auto;
+    flex-shrink: 0;
+    padding-left: 6px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.tag-group-items          { display: none; }
+.tag-group-items.open     { display: block; }
+
+/* ── TOGGLE zone (22px): check/radio indicator for leaf rows ─────── */
+.tag-check,
+.tag-check-placeholder {
+    flex-shrink: 0;
+    width: var(--tree-toggle-w);
+    height: var(--tree-row-h);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    color: var(--primary);
+}
+
+/* ── ICON zone (16px): color dot ────────────────────────────────── */
+.tag-color-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;   /* 8px gap: dot(8) + margin(8) = 16px icon zone */
+}
+.tag-color-dot-empty {
+    background: transparent;
+    border: 1.5px solid var(--text-tertiary);
+    opacity: 0.45;
+}
+
+/* ── Leaf item: padding override (toggle zone provides left indent) */
+/* .tag-standalone was the old class for depth-0 leaves; no longer needed
+   for padding, kept for any JS-side class checks that may remain. */
+.tag-standalone { /* no override — inherits .tag-item */ }
+
+/* ── k/v equals sign occupies the ICON zone ─────────────────────── */
+.tag-kv-eq {
+    flex-shrink: 0;
+    width: var(--tree-icon-w);
+    text-align: center;
     font-size: 11px;
     color: var(--text-tertiary);
+    font-style: italic;
+}
+
+/* k=v value rows: smaller text, muted colour */
+.tag-kv-value {
+    color: var(--text-secondary);
+    font-size: 12px;
     font-weight: 400;
 }
 
-.tag-group-label.active .tag-group-name .count { color: var(--primary); }
-
-.tag-group-items { display: none; }
-.tag-group-items.open { display: block; }
-
-.tag-item {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    padding: 5px 16px 5px 22px;
-    font-size: 13px;
-    font-weight: 500;
-    text-align: left;
-    color: var(--text);
-    border-radius: 0;
-}
-
-.tag-item:hover { background: var(--bg-hover); color: var(--text); }
-.tag-item.active { background: var(--primary-light); color: var(--primary); font-weight: 500; }
-
-.tag-item .count {
-    margin-left: auto;
-    font-size: 11px;
+/* Loading placeholder inside a group */
+.tag-item-loading {
     color: var(--text-tertiary);
-}
-
-.tag-standalone {
-    /* padding-left: 6px → check-placeholder(12) + margin-right(4) = 22px for colorDot,
-       matching the 22px start of group label text (chevron 20px + name padding 2px). */
-    padding-left: 6px;
+    font-size: 12px;
+    font-weight: 400;
+    font-style: italic;
+    padding-left: calc(var(--tree-base-pl) + var(--tree-toggle-w) + var(--tree-icon-w));
 }
 
 /* Active filter bar \u2014 compact single line at top of scrollable list */
@@ -428,7 +513,6 @@ mark.tag-filter-match {
 
 /* "No subject" drop zone in picker mode (sidebar subjects section) */
 .picker-no-subject-zone {
-    padding-left: 22px;
     font-style: italic;
     color: var(--text-secondary);
     font-size: 12px;
@@ -464,34 +548,10 @@ mark.tag-filter-match {
     background: var(--primary-light);
 }
 
-/* Checkmark shown on active tags; placeholder keeps alignment when inactive */
-.tag-check {
-    flex-shrink: 0;
-    margin-right: 4px;
-    color: var(--primary);
-}
+/* Checkmark shown on active tags; placeholder keeps alignment when inactive —
+   both defined in the tree-row system above. */
 
-.tag-check-placeholder {
-    display: inline-block;
-    width: 12px;
-    flex-shrink: 0;
-    margin-right: 4px;
-}
-
-/* Tag color dots */
-.tag-color-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-    margin-right: 6px;
-}
-
-.tag-color-dot-empty {
-    background: transparent;
-    border: 1.5px solid var(--text-tertiary);
-}
+/* Tag color dots — defined in the tree-row system above. */
 
 /* Tag context menu */
 .tag-context-menu {
@@ -694,30 +754,8 @@ mark.tag-filter-match {
     margin-bottom: 2px;
 }
 
-.tag-kv-eq {
-    display: inline-block;
-    width: 12px;
-    text-align: center;
-    flex-shrink: 0;
-    font-size: 11px;
-    color: var(--text-tertiary);
-    margin-right: 6px;
-    font-style: italic;
-}
-
-.tag-kv-value {
-    padding: 5px 16px 5px 22px;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 400;
-}
-
-.tag-item-loading {
-    padding: 5px 16px 5px 22px;
-    font-size: 12px;
-    color: var(--text-tertiary);
-    font-style: italic;
-}
+/* k=v inline values, eq sign, value rows, loading placeholder —
+   all defined in the tree-row system above. */
 
 /* ------------------------------------------------------------------ */
 /* Sidebar: Manage Tags button                                         */

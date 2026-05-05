@@ -611,6 +611,8 @@ function renderTagTreeNode(node, depth) {
     const { segment, fullPath, tag, children } = node;
     const hasChildren = children.size > 0;
     // Each sub-group level adds 12 px of left margin (accumulated through nesting).
+    // Groups use this on their wrapper div; leaf items get it as inline style so
+    // that both sit at the same visual indent (VSCode-style unified row system).
     const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
 
     // --- Leaf node ---
@@ -621,7 +623,7 @@ function renderTagTreeNode(node, depth) {
         const active = state.activeTags.has(fullPath) ? ' active' : '';
         const synBadge = (tag.synonyms || []).length
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms || []).map(esc).join(', ')}">&#8801;</span>` : '';
-        const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
+        const cls = 'tag-item';   // depth-0 items no longer need special padding
 
         if (state.tagPickerMode) {
             const checked = state.tagPickerPicks.has(fullPath);
@@ -629,11 +631,11 @@ function renderTagTreeNode(node, depth) {
             const checkIcon = checked
                 ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
                 : '<span class="tag-check-placeholder"></span>';
-            return `<button class="${cls}${checkedCls}" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
+            return `<button class="${cls}${checkedCls}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
         }
 
         const check = active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>';
-        return `<button class="${cls}${active}" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node (has children; may also have a tag at this exact path) ---
@@ -1013,8 +1015,9 @@ function renderSubjectTreeNode(node, depth) {
                 : '<span class="tag-check-placeholder"></span>')
             : '';
         const pickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
-        const subjectPadding = 22 + depth * 12;
-        return `<button class="tag-item tag-subject-item${activeClass}${pickedCls}" style="padding-left:${subjectPadding}px"
+        // Depth indent: same mechanism as tag leaf items — margin-left on the element itself.
+        const indentStyle = depth > 0 ? ' style="margin-left:12px"' : '';
+        return `<button class="tag-item tag-subject-item${activeClass}${pickedCls}"${indentStyle}
             onclick="${clickFn}"
             ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')"
             title="subject:${esc(fullPath)}">${indicator}${esc(segment)}${count}</button>`;
