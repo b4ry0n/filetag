@@ -1294,6 +1294,16 @@ function renderDetail() {
             <div class="detail-tags">${tagChips}</div>
             ${tagAddSection}
             ${aiBtn}
+            <div class="detail-similar-section" id="detail-similar">
+                <div class="detail-similar-header">
+                    <button class="detail-similar-toggle" onclick="toggleSimilarSection('${jesc(f.path)}')">Vergelijkbaar</button>
+                    <div class="detail-similar-methods">
+                        <button class="detail-similar-method active" data-method="phash" onclick="switchSimilarMethod('phash','${jesc(f.path)}')">Visueel</button>
+                        <button class="detail-similar-method" data-method="embedding" onclick="switchSimilarMethod('embedding','${jesc(f.path)}')">Semantisch</button>
+                    </div>
+                </div>
+                <div class="detail-similar-results" id="detail-similar-results" hidden></div>
+            </div>
         </div>`;
     if (covered) {
         attachTagAutocomplete(document.getElementById('tag-input'), () => doAddTag());
@@ -1601,4 +1611,48 @@ function render() {
     _thumbInit();
     _dirThumbInit();
     _kbRestoreFocus();
+}
+
+// ---------------------------------------------------------------------------
+// Similar-files section
+// ---------------------------------------------------------------------------
+
+async function toggleSimilarSection(path) {
+    const results = document.getElementById('detail-similar-results');
+    if (!results) return;
+    if (!results.hidden) { results.hidden = true; return; }
+    results.hidden = false;
+    const method = document.querySelector('.detail-similar-method.active')?.dataset.method || 'phash';
+    _loadSimilarResults(path, method, results);
+}
+
+function switchSimilarMethod(method, path) {
+    document.querySelectorAll('.detail-similar-method').forEach(b => {
+        b.classList.toggle('active', b.dataset.method === method);
+    });
+    const results = document.getElementById('detail-similar-results');
+    if (!results || results.hidden) return;
+    _loadSimilarResults(path, method, results);
+}
+
+async function _loadSimilarResults(path, method, resultsEl) {
+    resultsEl.innerHTML = '<div class="detail-similar-loading">Zoeken…</div>';
+    try {
+        const data = await loadSimilarFiles(path, method, 20);
+        if (!data.results?.length) {
+            resultsEl.innerHTML = '<div class="detail-similar-empty">Geen vergelijkbare bestanden gevonden.</div>';
+            return;
+        }
+        resultsEl.innerHTML = `<div class="detail-similar-grid">${data.results.map(r => {
+            const p = r.abs_path || r.path;
+            const thumbUrl = '/thumb/' + encodePath(p) + dirParam('?');
+            const score = Math.round((r.score || 0) * 100);
+            return `<div class="detail-similar-item" onclick="selectFile('${jesc(p)}',null)" title="${esc(p)} (${score}%)">
+                <img src="${thumbUrl}" loading="lazy" onerror="this.style.display='none'">
+                <span class="detail-similar-score">${score}%</span>
+            </div>`;
+        }).join('')}</div>`;
+    } catch (e) {
+        resultsEl.innerHTML = `<div class="detail-similar-empty">Fout: ${esc(String(e))}</div>`;
+    }
 }

@@ -216,6 +216,8 @@ function openSettings(tab = 'general') {
             document.getElementById('ai-tag-prefix').value = cfg.tag_prefix || 'ai/';
             document.getElementById('ai-max-tokens').value = cfg.max_tokens || 512;
             document.getElementById('ai-chat-max-tokens').value = cfg.chat_max_tokens || 2048;
+            const embedModelEl = document.getElementById('ai-embed-model');
+            if (embedModelEl) embedModelEl.value = cfg.embed_model || '';
             document.getElementById('ai-subject').value = cfg.subject || '';
             document.getElementById('ai-prompt-image').value = cfg.prompt_image || '';
             document.getElementById('ai-prompt-image').placeholder = cfg.default_prompt_image || '';
@@ -1215,6 +1217,7 @@ async function aiSaveSettings() {
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
         chat_max_tokens: parseInt(document.getElementById('ai-chat-max-tokens').value, 10) || 2048,
+        embed_model: (document.getElementById('ai-embed-model') || {}).value?.trim() || '',
         format: document.getElementById('ai-format').value,
         video_mode: 'sprite',
         video_sheet_max_frames: parseInt(document.getElementById('ai-video-sheet-max-frames').value, 10) || 16,
@@ -1229,6 +1232,47 @@ async function aiSaveSettings() {
     } catch (e) {
         alert('Save failed: ' + e.message);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Similarity index helpers
+// ---------------------------------------------------------------------------
+
+async function indexPhash() {
+    const btn = document.getElementById('index-phash-btn');
+    const statusEl = document.getElementById('similarity-status');
+    if (btn) { btn.disabled = true; btn.textContent = 'Indexing…'; }
+    try {
+        const res = await apiPost('/api/similar/index-phash', { dir: currentAbsDir() });
+        if (statusEl) statusEl.textContent = `pHash: ${res.indexed} indexed, ${res.skipped} skipped, ${res.errors} errors (${res.total} total)`;
+        showToast(`pHash: ${res.indexed} indexed`);
+    } catch (e) {
+        showToast(String(e), 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Index pHash (visual)'; }
+    }
+}
+
+async function indexEmbeddings() {
+    const btn = document.getElementById('index-embed-btn');
+    const statusEl = document.getElementById('similarity-status');
+    if (btn) { btn.disabled = true; btn.textContent = 'Indexing…'; }
+    try {
+        const res = await apiPost('/api/similar/index-embedding', { dir: currentAbsDir() });
+        if (res.error) { showToast(res.error, 'error'); return; }
+        if (statusEl) statusEl.textContent = `Embeddings: ${res.indexed} indexed, ${res.errors} errors (${res.total} total)`;
+        showToast(`Embeddings: ${res.indexed} indexed`);
+    } catch (e) {
+        showToast(String(e), 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Index embeddings (semantic)'; }
+    }
+}
+
+async function loadSimilarFiles(path, method = 'phash', n = 20) {
+    const dir = currentAbsDir();
+    const params = new URLSearchParams({ path, dir, method, n });
+    return await api('/api/similar?' + params);
 }
 
 async function aiTestConnection() {

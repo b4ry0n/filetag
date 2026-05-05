@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -294,6 +294,29 @@ fn migrate(conn: &Connection) -> Result<()> {
              CREATE INDEX IF NOT EXISTS idx_face_detections_subject
                  ON face_detections(subject_name);",
         )?
+    }
+    if version < 12 {
+        // Perceptual hash (dHash) for fast visual similarity search.
+        // file_embeddings stores AI text-embedding vectors for semantic similarity.
+        conn.execute_batch(
+            "ALTER TABLE files ADD COLUMN phash TEXT;
+             CREATE TABLE IF NOT EXISTS file_embeddings (
+                 file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                 model      TEXT NOT NULL DEFAULT '',
+                 embedding  BLOB NOT NULL,
+                 indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );",
+        )
+        .ok(); // ok() because ALTER TABLE fails on fresh DBs that already have the column
+        // Ensure the table exists even on fresh DBs.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS file_embeddings (
+                 file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                 model      TEXT NOT NULL DEFAULT '',
+                 embedding  BLOB NOT NULL,
+                 indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );",
+        )?;
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
@@ -1727,4 +1750,137 @@ pub fn delete_face_detections_for_file(conn: &Connection, file_id: i64) -> Resul
         params![file_id],
     )?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// File similarity: pHash + text embeddings
+// ---------------------------------------------------------------------------
+
+/// Store a 64-bit dHash for a file (by internal file id).
+pub fn store_phash(conn: &Connection, file_id: i64, phash: u64) -> Result<()> {
+    conn.execute(
+        "UPDATE files SET phash = ?1 WHERE id = ?2",
+        params![format!("{:016x}", phash), file_id],
+    )?;
+    Ok(())
+}
+
+/// Return every `(file_id, rel_path, phash)` row that has a hash stored.
+pub fn all_phashes(conn: &Connection) -> Result<Vec<(i64, String, u64)>> {
+    let mut stmt = conn.prepare("SELECT id, path, phash FROM files WHERE phash IS NOT NULL")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, path, hex) = row?;
+        if let Ok(h) = u64::from_str_radix(&hex, 16) {
+            out.push((id, path, h));
+        }
+    }
+    Ok(out)
+}
+
+/// Return the stored pHash (if any) for a file by relative path.
+pub fn get_phash_by_path(conn: &Connection, rel_path: &str) -> Result<Option<(i64, u64)>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT id, phash FROM files WHERE path = ?1 AND phash IS NOT NULL",
+        params![rel_path],
+        |row| {
+            let id: i64 = row.get(0)?;
+            let hex: String = row.get(1)?;
+            Ok((id, hex))
+        },
+    )
+    .optional()
+    .map_err(anyhow::Error::from)?
+    .map(|(id, hex): (i64, String)| {
+        u64::from_str_radix(&hex, 16)
+            .map(|h| (id, h))
+            .map_err(|e| anyhow::anyhow!("invalid phash hex: {e}"))
+    })
+    .transpose()
+}
+
+/// Store a text-embedding vector for a file (keyed by file_id).
+/// Embeddings are stored as little-endian f32 bytes.
+pub fn store_embedding(
+    conn: &Connection,
+    file_id: i64,
+    model: &str,
+    embedding: &[f32],
+) -> Result<()> {
+    let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+    conn.execute(
+        "INSERT OR REPLACE INTO file_embeddings (file_id, model, embedding) VALUES (?1, ?2, ?3)",
+        params![file_id, model, bytes],
+    )?;
+    Ok(())
+}
+
+/// Return the stored embedding (if any) for a file by its internal id.
+pub fn get_embedding(conn: &Connection, file_id: i64) -> Result<Option<(String, Vec<f32>)>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT model, embedding FROM file_embeddings WHERE file_id = ?1",
+        params![file_id],
+        |row| {
+            let model: String = row.get(0)?;
+            let bytes: Vec<u8> = row.get(1)?;
+            Ok((model, bytes))
+        },
+    )
+    .optional()
+    .map_err(anyhow::Error::from)?
+    .map(|(model, bytes): (String, Vec<u8>)| {
+        let floats: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        Ok::<_, anyhow::Error>((model, floats))
+    })
+    .transpose()
+}
+
+/// Return every `(file_id, rel_path, embedding)` row from `file_embeddings`.
+pub fn all_embeddings(conn: &Connection) -> Result<Vec<(i64, String, Vec<f32>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT fe.file_id, f.path, fe.embedding
+         FROM file_embeddings fe
+         JOIN files f ON f.id = fe.file_id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Vec<u8>>(2)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, path, bytes) = row?;
+        let floats: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        out.push((id, path, floats));
+    }
+    Ok(out)
+}
+
+/// Return the internal `files.id` for a relative path, or `None` if not indexed.
+pub fn file_id_by_path(conn: &Connection, rel_path: &str) -> Result<Option<i64>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT id FROM files WHERE path = ?1",
+        params![rel_path],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .map_err(Into::into)
 }

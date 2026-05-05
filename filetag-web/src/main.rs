@@ -6,6 +6,7 @@ mod extract;
 mod face;
 mod preview;
 mod saliency;
+mod similarity;
 mod state;
 mod types;
 mod video;
@@ -347,6 +348,20 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/face/models/status", get(face::api_face_models_status))
         .route("/api/face/subjects", get(face::api_face_subjects))
         .route("/api/face/files", get(face::api_face_files))
+        // Similarity routes
+        .route("/api/similar", get(similarity::api_similar))
+        .route(
+            "/api/similar/status",
+            get(similarity::api_similarity_status),
+        )
+        .route(
+            "/api/similar/index-phash",
+            post(similarity::api_index_phash),
+        )
+        .route(
+            "/api/similar/index-embedding",
+            post(similarity::api_index_embedding),
+        )
         // Saliency model routes
         .route("/api/saliency/status", get(saliency::api_saliency_status))
         .route(
