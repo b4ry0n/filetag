@@ -1762,11 +1762,22 @@ function openCacheManager() {
     if (menu) menu.hidden = true;
     document.getElementById('cache-manager-modal').hidden = false;
     document.getElementById('cm-status').textContent = '';
+    switchCmTab('cache');
     loadCacheInfo();
 }
 
 function closeCacheManager() {
     document.getElementById('cache-manager-modal').hidden = true;
+}
+
+function switchCmTab(tab) {
+    ['cache', 'db'].forEach(name => {
+        const panel = document.getElementById('cm-tab-' + name);
+        const btn = document.getElementById('cm-tab-' + name + '-btn');
+        if (panel) panel.hidden = name !== tab;
+        if (btn) btn.classList.toggle('active', name === tab);
+    });
+    document.getElementById('cm-status').textContent = '';
 }
 
 async function loadCacheInfo() {
@@ -1861,6 +1872,31 @@ async function doCacheClearSubdir(subdir) {
         await loadCacheInfo();
     } catch (e) {
         if (statusEl) statusEl.textContent = e.message || String(e);
+    }
+}
+
+async function doPurgeMissing() {
+    if (state.currentBasePath == null) return;
+    const btn = document.getElementById('cm-purge-btn');
+    const statusEl = document.getElementById('cm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = t('cm.loading');
+    try {
+        const resp = await fetch('/api/db/purge-missing' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await resp.json();
+        const n = data.removed || 0;
+        if (statusEl) statusEl.textContent = n === 0
+            ? t('cm.purge-none')
+            : t('cm.purged-db', { n, plural: n !== 1 ? t('cm.purged-plural') : '' });
+        if (n > 0) { _thumbClearCache(); refreshCurrentDir(); }
+    } catch (e) {
+        if (statusEl) statusEl.textContent = e.message || String(e);
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 

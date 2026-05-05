@@ -281,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/cache/info", get(api::api_cache_info))
         .route("/api/cache/prune", post(api::api_cache_prune))
         .route("/api/cache/clear-subdir", post(api::api_cache_clear_subdir))
+        .route("/api/db/purge-missing", post(api::api_db_purge_missing))
         .route("/api/tags", get(api::api_tags))
         .route("/api/tag-values", get(api::api_tag_values))
         .route("/api/subjects", get(api::api_subjects))

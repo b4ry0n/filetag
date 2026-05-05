@@ -538,6 +538,65 @@ pub async fn api_cache_clear_subdir(
 }
 
 // ---------------------------------------------------------------------------
+// Database maintenance
+// ---------------------------------------------------------------------------
+
+/// `POST /api/db/purge-missing` — remove `files` records whose path no longer
+/// exists on disk.
+///
+/// Scans every record in the `files` table of the active root, resolves the
+/// absolute path, and deletes the row (cascading to `file_tags`) when the file
+/// is absent from the filesystem.
+///
+/// Returns `{ removed: usize, vacuum: bool }`.  A SQLite `VACUUM` is run after
+/// removal to reclaim space.
+pub async fn api_db_purge_missing(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let root = db_root.root.clone();
+    let db_path = db_root.db_path.clone();
+
+    // Collect all file paths from DB (synchronous — not across await).
+    let rel_paths: Vec<(i64, String)> = {
+        let conn = open_conn(db_root).map_err(AppError)?;
+        let mut stmt = conn
+            .prepare("SELECT id, path FROM files")
+            .map_err(|e| AppError(e.into()))?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| AppError(e.into()))?
+            .flatten()
+            .collect()
+    };
+
+    // Check existence and collect IDs to delete (pure I/O, no DB conn held).
+    let missing_ids: Vec<i64> = rel_paths
+        .into_iter()
+        .filter(|(_, rel)| !root.join(rel).exists())
+        .map(|(id, _)| id)
+        .collect();
+
+    let removed = missing_ids.len();
+
+    if !missing_ids.is_empty() {
+        let conn = rusqlite::Connection::open(&db_path).map_err(|e| AppError(e.into()))?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")
+            .map_err(|e| AppError(e.into()))?;
+        for id in missing_ids {
+            conn.execute("DELETE FROM files WHERE id = ?1", [id])
+                .map_err(|e| AppError(e.into()))?;
+        }
+        conn.execute_batch("VACUUM;")
+            .map_err(|e| AppError(e.into()))?;
+    }
+
+    Ok(Json(
+        serde_json::json!({ "removed": removed, "vacuumed": removed > 0 }),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Tags list
 // ---------------------------------------------------------------------------
 

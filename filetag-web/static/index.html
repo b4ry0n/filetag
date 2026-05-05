@@ -244,36 +244,55 @@
         </div>
     </div>
     <div id="toast-container"></div>
-    <!-- Cache Manager modal -->
+    <!-- Maintenance modal (cache + database) -->
     <div id="cache-manager-modal" class="modal-overlay" hidden onclick="if(event.target===this)closeCacheManager()">
         <div class="modal cache-manager-modal">
             <div class="modal-header">
-                <h3 data-i18n="cm.title">Cache manager</h3>
+                <h3 data-i18n="cm.title">Maintenance</h3>
                 <button class="modal-close" onclick="closeCacheManager()">&times;</button>
             </div>
+            <nav class="modal-tabs">
+                <button class="modal-tab-btn active" id="cm-tab-cache-btn" onclick="switchCmTab('cache')" data-i18n="cm.tab.cache">Cache</button>
+                <button class="modal-tab-btn" id="cm-tab-db-btn" onclick="switchCmTab('db')" data-i18n="cm.tab.db">Database</button>
+            </nav>
             <div class="modal-body">
-                <div class="cm-actions">
-                    <div class="cm-action-row">
-                        <div class="cm-action-info">
-                            <strong data-i18n="cm.prune-title">Remove unlinked cache files</strong>
-                            <span class="cm-action-desc" data-i18n="cm.prune-desc">Removes cache files whose source file no longer exists on disk.</span>
+                <!-- Cache tab -->
+                <div id="cm-tab-cache" class="modal-tab-panel">
+                    <div class="cm-actions">
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.prune-title">Remove unlinked cache files</strong>
+                                <span class="cm-action-desc" data-i18n="cm.prune-desc">Removes cache files whose source file no longer exists on disk.</span>
+                            </div>
+                            <button class="cm-btn" id="cm-prune-btn" onclick="doCachePrune()" data-i18n="cm.prune-btn">Clean up</button>
                         </div>
-                        <button class="cm-btn" id="cm-prune-btn" onclick="doCachePrune()" data-i18n="cm.prune-btn">Clean up</button>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.clear-all-title">Clear entire cache</strong>
+                                <span class="cm-action-desc" data-i18n="cm.clear-all-desc">Deletes all cached previews and thumbnails. They will be regenerated on demand.</span>
+                            </div>
+                            <button class="cm-btn cm-btn-warn" onclick="clearCache(true).then(loadCacheInfo)" data-i18n="cm.clear-all">Clear all</button>
+                        </div>
                     </div>
-                    <div class="cm-action-row">
-                        <div class="cm-action-info">
-                            <strong data-i18n="cm.clear-all-title">Clear entire cache</strong>
-                            <span class="cm-action-desc" data-i18n="cm.clear-all-desc">Deletes all cached previews and thumbnails. They will be regenerated on demand.</span>
-                        </div>
-                        <button class="cm-btn cm-btn-warn" onclick="clearCache(true).then(loadCacheInfo)" data-i18n="cm.clear-all">Clear all</button>
+                    <div class="cm-section-label" data-i18n="cm.per-dir">Cache by folder</div>
+                    <div id="cm-subdir-list" class="cm-subdir-list">
+                        <div class="cm-loading" data-i18n="cm.loading">Loading&hellip;</div>
+                    </div>
+                    <div class="cm-footer">
+                        <span id="cm-total-label" class="cm-total"></span>
                     </div>
                 </div>
-                <div class="cm-section-label" data-i18n="cm.per-dir">Cache by folder</div>
-                <div id="cm-subdir-list" class="cm-subdir-list">
-                    <div class="cm-loading" data-i18n="cm.loading">Loading&hellip;</div>
-                </div>
-                <div class="cm-footer">
-                    <span id="cm-total-label" class="cm-total"></span>
+                <!-- Database tab -->
+                <div id="cm-tab-db" class="modal-tab-panel" hidden>
+                    <div class="cm-actions">
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.purge-title">Remove deleted files</strong>
+                                <span class="cm-action-desc" data-i18n="cm.purge-desc">Removes database records for files that no longer exist on disk. Their tags are also removed.</span>
+                            </div>
+                            <button class="cm-btn cm-btn-warn" id="cm-purge-btn" onclick="doPurgeMissing()" data-i18n="cm.purge-btn">Clean up</button>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div id="cm-status" class="cm-status"></div>
