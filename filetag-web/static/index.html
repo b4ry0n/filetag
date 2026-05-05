@@ -402,10 +402,6 @@
                     <label>Model
                         <input type="text" id="ai-model" placeholder="e.g. qwen2.5-vl">
                     </label>
-                    <label>Embedding model (similarity)
-                        <small class="settings-desc-inline">Model for /v1/embeddings (e.g. nomic-embed-text). Used for tag-based semantic similarity search. Leave empty to disable.</small>
-                        <input type="text" id="ai-embed-model" placeholder="e.g. nomic-embed-text">
-                    </label>
                     <label>API key (optional)
                         <input type="password" id="ai-api-key" placeholder="Leave empty for local models">
                     </label>
@@ -445,10 +441,9 @@
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
                     <div class="modal-section">
                         <div class="modal-section-title">Similarity index</div>
-                        <small>Pre-compute visual hashes (pHash) and semantic embeddings for all files.</small>
+                        <small>Pre-compute visual hashes (pHash) for all image files.</small>
                         <div class="modal-actions" style="margin-top:6px">
                             <button id="index-phash-btn" onclick="indexPhash()">Index pHash (visual)</button>
-                            <button id="index-embed-btn" onclick="indexEmbeddings()">Index embeddings (semantic)</button>
                         </div>
                         <div id="similarity-status" style="font-size:.85em;opacity:.7;margin-top:4px"></div>
                     </div>

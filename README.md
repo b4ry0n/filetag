@@ -72,6 +72,7 @@ A web interface is included for browsing, previewing, searching, and tagging thr
 - Grid and list file browser with tag sidebar, colour-coded tags, and right-click context menu.
 - Image, video, PDF, and archive previews. Trickplay hover animation for video.
 - Optional AI analysis (OpenAI-compatible or Ollama) to auto-tag images, videos, and archives.
+- Visual and semantic similarity search: find near-duplicate or thematically related files.
 - Optional password authentication.
 
 ## Install
@@ -408,6 +409,7 @@ Double-clicking a file in the grid or list opens a preview. Supported types:
   - *ImageMagick* — enables `magick`/`convert` for exotic image formats (PSD, XCF, EPS, ...) and `sips` (macOS built-in) for HEIC/HEIF files including HEVC-encoded dynamic wallpapers. Also enables `dcraw` as a RAW extraction fallback.
   - *PDF thumbnails* — enables `pdftoppm` (poppler) or ImageMagick+Ghostscript for PDF thumbnail generation.
 - **AI:** connection settings for the optional AI image analysis feature. Configure the endpoint URL, API format, model, API key, tag prefix, and max tokens here. Use the "Test connection" button to verify the setup. Accessible via the "Analyse images (AI)" option in the cache drop-down.
+  - *Embedding model* — a separate model name used only for the similarity-search embedding index (e.g. `nomic-embed-text`). Leave empty if you do not use semantic similarity. The endpoint URL and API key are shared with the VLM settings above.
 - **Prompts:** customise how the AI interprets your files.
   - *Collection description* — free-text description of what this collection contains (e.g. "Family photos and videos, 2010–present" or "Bird photography: species identification, behaviour, and habitat"). Injected into every analysis prompt as context.
   - *Type instructions* — per-type opening sentence sent before the output-format instruction. Separate overrides for images, videos, and archives. Leave empty to use the built-in defaults. Use the "Use default" button to restore a type's default.
@@ -431,6 +433,19 @@ filetag-web can send files to any OpenAI-compatible or Ollama VLM endpoint and a
 | ZIP / CBZ / RAR / 7z | The archive's file listing plus up to five sample images extracted from it are sent together |
 
 The model is instructed to return a JSON array of tags (`["tag1", "key=value", …]`). The configured tag prefix (default `ai/`) is prepended to each returned tag before it is applied to the file. Use "Clear AI tags" to remove all tags with that prefix from the current directory.
+
+### Similarity search
+
+The file detail panel shows a **Similar** section at the bottom. Click the header to expand it. Clicking a result thumbnail navigates to that file.
+
+Similarity is computed using a perceptual hash (dHash): the image is resized to 9×8 greyscale pixels and a 64-bit fingerprint is computed by comparing each pixel with its right neighbour. Two files with a Hamming distance ≤ 16 bits (similarity ≥ 0.75) are considered similar. Fast, CPU-only, no configuration required.
+
+**Before using similarity search,** pre-compute the index from the AI settings panel:
+
+1. Open Settings → **AI** tab.
+2. Click **Index pHash (visual)**. All image files in the database are hashed. Non-image files are skipped. Progress (total / indexed / skipped / errors) is shown below the button.
+
+The index is incremental by default: only files without an existing hash are processed. It is stored in the `files.phash` column of the database and persists across server restarts. Up to 20 results are shown per query (configurable in the API, max 100).
 
 ### Image and comic viewer
 

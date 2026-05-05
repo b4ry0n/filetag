@@ -1646,8 +1646,6 @@ pub(crate) struct AiConfigRequest {
     video_frame_selection: Option<String>,
     enabled: Option<bool>,
     dir: Option<String>,
-    /// Model name for `/v1/embeddings` (semantic similarity). Separate from the VLM model.
-    embed_model: Option<String>,
 }
 
 /// Save AI configuration to the database settings table.
@@ -1746,9 +1744,6 @@ pub async fn api_ai_config_set(
     }
     if let Some(v) = body.enabled {
         db::set_setting(&conn, "ai.enabled", if v { "1" } else { "0" }).map_err(AppError)?;
-    }
-    if let Some(v) = &body.embed_model {
-        db::set_setting(&conn, "ai.embed_model", v).map_err(AppError)?;
     }
 
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -1854,7 +1849,6 @@ pub async fn api_ai_config_get(
         "default_prompt_archive": AI_ARCHIVE_INTRO,
         "output_format": g("ai.output_format"),
         "default_output_format": AI_OUTPUT_FORMAT,
-        "embed_model": g("ai.embed_model"),
     })))
 }
 

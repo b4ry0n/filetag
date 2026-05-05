@@ -1,18 +1,9 @@
-//! Visual and semantic similarity search.
+//! Visual similarity search via perceptual hashing (dHash).
 //!
-//! Two methods are supported:
-//!
-//! * **pHash** (dHash): a 64-bit perceptual fingerprint computed from a
-//!   9×8 greyscale thumbnail.  Hamming distance between hashes is a fast
-//!   proxy for visual similarity and works well for near-duplicates and
-//!   lightly edited variants.  CPU-only, no external service required.
-//!
-//! * **Text embeddings**: a float vector obtained by sending the file's tag
-//!   list to an OpenAI-compatible `/v1/embeddings` endpoint.  Cosine
-//!   similarity between vectors captures semantic relatedness (e.g. two
-//!   unrelated photos of sunsets both tagged `golden-hour` will score
-//!   highly, even if their pixel content differs).  Requires `ai.embed_model`
-//!   to be configured.
+//! A 64-bit fingerprint is computed from a 9×8 greyscale thumbnail.
+//! Hamming distance between two hashes is a fast proxy for visual
+//! similarity and works well for near-duplicates and lightly edited
+//! variants.  CPU-only, no external service required.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -65,24 +56,6 @@ pub fn phash_similarity(a: u64, b: u64) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// Cosine similarity for embeddings
-// ---------------------------------------------------------------------------
-
-/// Cosine similarity between two equal-length float slices, clamped to `[0, 1]`.
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 {
-        return 0.0;
-    }
-    (dot / (na * nb)).clamp(0.0, 1.0)
-}
-
-// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -104,49 +77,6 @@ fn open_db(db_path: &Path) -> Result<rusqlite::Connection, AppError> {
 }
 
 // ---------------------------------------------------------------------------
-// Embedding API call
-// ---------------------------------------------------------------------------
-
-async fn call_embedding_api(
-    endpoint: &str,
-    model: &str,
-    api_key: Option<&str>,
-    text: &str,
-) -> Result<Vec<f32>> {
-    let url = format!("{}/v1/embeddings", endpoint.trim_end_matches('/'));
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
-
-    let mut req = client.post(&url).json(&serde_json::json!({
-        "model": model,
-        "input": text,
-    }));
-
-    if let Some(key) = api_key
-        && !key.is_empty()
-    {
-        req = req.header("Authorization", format!("Bearer {key}"));
-    }
-
-    let resp = req.send().await?.error_for_status()?;
-    let body: serde_json::Value = resp.json().await?;
-
-    let embedding: Vec<f32> = body["data"][0]["embedding"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("invalid embedding response shape"))?
-        .iter()
-        .filter_map(|v| v.as_f64().map(|f| f as f32))
-        .collect();
-
-    if embedding.is_empty() {
-        anyhow::bail!("empty embedding returned from API");
-    }
-    Ok(embedding)
-}
-
-// ---------------------------------------------------------------------------
 // GET /api/similar
 // ---------------------------------------------------------------------------
 
@@ -157,8 +87,6 @@ pub struct SimilarQuery {
     /// Absolute path of any file in the current directory (used to find the
     /// database root when `path` is outside the indexed tree).
     pub dir: Option<String>,
-    /// `"phash"` (default) or `"embedding"`.
-    pub method: Option<String>,
     /// Number of results to return (default 20, max 100).
     pub n: Option<usize>,
 }
@@ -181,12 +109,8 @@ pub async fn api_similar(
 
     let n = q.n.unwrap_or(20).min(100);
     let abs_path = PathBuf::from(&q.path);
-    let method = q.method.as_deref().unwrap_or("phash").to_owned();
 
-    match method.as_str() {
-        "embedding" => similar_by_embedding(&db_path, &rel_path, n).await,
-        _ => similar_by_phash(&db_path, &root_path, &abs_path, &rel_path, n).await,
-    }
+    similar_by_phash(&db_path, &root_path, &abs_path, &rel_path, n).await
 }
 
 /// Find similar files by perceptual hash.
@@ -294,65 +218,6 @@ async fn similar_by_phash(
     })))
 }
 
-/// Find similar files by tag-list embedding (cosine similarity).
-///
-/// No async work is done here; the function is `async` only to satisfy the
-/// call site's pattern.  All DB access is synchronous and dropped before any
-/// await point.
-async fn similar_by_embedding(
-    db_path: &Path,
-    rel_path: &str,
-    n: usize,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let (file_id, query_vec): (i64, Vec<f32>) = {
-        let conn = open_db(db_path)?;
-        let fid = db::file_id_by_path(&conn, rel_path)?.ok_or_else(|| {
-            AppError(anyhow::anyhow!(
-                "file not in database — add a tag first to index it"
-            ))
-        })?;
-        let (_, vec) = db::get_embedding(&conn, fid)?.ok_or_else(|| {
-            AppError(anyhow::anyhow!(
-                "no embedding stored — run 'Index embeddings' first"
-            ))
-        })?;
-        (fid, vec)
-        // conn dropped here
-    };
-
-    let all_embeddings: Vec<(i64, String, Vec<f32>)> = {
-        let conn = open_db(db_path)?;
-        db::all_embeddings(&conn)?
-        // conn dropped here
-    };
-
-    let mut results: Vec<(f32, String)> = all_embeddings
-        .into_iter()
-        .filter(|(fid, _, _)| *fid != file_id)
-        .map(|(_, path, emb)| (cosine_similarity(&query_vec, &emb), path))
-        .filter(|(score, _)| *score >= 0.4)
-        .collect();
-
-    results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    results.truncate(n);
-
-    let items: Vec<_> = results
-        .iter()
-        .map(|(score, path)| {
-            serde_json::json!({
-                "path": path,
-                "score": score,
-                "method": "embedding",
-            })
-        })
-        .collect();
-
-    Ok(Json(serde_json::json!({
-        "method": "embedding",
-        "results": items,
-    })))
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/similar/index-phash
 // ---------------------------------------------------------------------------
@@ -442,107 +307,6 @@ pub async fn api_index_phash(
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/similar/index-embedding
-// ---------------------------------------------------------------------------
-
-pub async fn api_index_embedding(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<IndexRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let (db_path, endpoint, embed_model, api_key) = {
-        let root = root_for_dir(&state, Path::new(&req.dir))
-            .ok_or_else(|| anyhow::anyhow!("No database root found"))?;
-        let conn = open_db(&root.db_path)?;
-        let ep = db::get_setting(&conn, "ai.endpoint")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let model = db::get_setting(&conn, "ai.embed_model")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let key = db::get_setting(&conn, "ai.api_key").ok().flatten();
-        let dp = root.db_path.clone();
-        (dp, ep, model, key)
-        // root borrow + conn dropped here
-    };
-
-    if endpoint.is_empty() || embed_model.is_empty() {
-        return Ok(Json(serde_json::json!({
-            "error": "No embedding model configured. Set ai.endpoint and ai.embed_model in the AI settings.",
-            "indexed": 0,
-        })));
-    }
-
-    let force = req.force.unwrap_or(false);
-
-    // Load files that need embeddings — connection dropped before any await.
-    let files_and_tags: Vec<(i64, String)> = {
-        let conn = open_db(&db_path)?;
-        let query = if force {
-            "SELECT f.id,
-                    COALESCE(GROUP_CONCAT(
-                        t.name || CASE WHEN ft.value != '' THEN '=' || ft.value ELSE '' END,
-                    ', '), '')
-             FROM files f
-             LEFT JOIN file_tags ft ON ft.file_id = f.id
-             LEFT JOIN tags t ON t.id = ft.tag_id
-             GROUP BY f.id"
-        } else {
-            "SELECT f.id,
-                    COALESCE(GROUP_CONCAT(
-                        t.name || CASE WHEN ft.value != '' THEN '=' || ft.value ELSE '' END,
-                    ', '), '')
-             FROM files f
-             LEFT JOIN file_tags ft ON ft.file_id = f.id
-             LEFT JOIN tags t ON t.id = ft.tag_id
-             WHERE NOT EXISTS (SELECT 1 FROM file_embeddings fe WHERE fe.file_id = f.id)
-             GROUP BY f.id"
-        };
-        let mut stmt = conn.prepare(query)?;
-        stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1).unwrap_or_default(),
-            ))
-        })?
-        .filter_map(|r| r.ok())
-        .filter(|(_, tags)| !tags.is_empty())
-        .collect()
-        // conn dropped here
-    };
-
-    let total = files_and_tags.len();
-    let mut indexed = 0usize;
-    let mut errors = 0usize;
-
-    for (file_id, tags) in files_and_tags {
-        // No DB conn held across this await.
-        match call_embedding_api(&endpoint, &embed_model, api_key.as_deref(), &tags).await {
-            Ok(embedding) => {
-                // Open fresh connection after the await to store the embedding.
-                let conn = open_db(&db_path)?;
-                if db::store_embedding(&conn, file_id, &embed_model, &embedding).is_ok() {
-                    indexed += 1;
-                } else {
-                    errors += 1;
-                }
-                // conn dropped here
-            }
-            Err(_) => {
-                errors += 1;
-            }
-        }
-    }
-
-    Ok(Json(serde_json::json!({
-        "total": total,
-        "indexed": indexed,
-        "errors": errors,
-    })))
-}
-
-// ---------------------------------------------------------------------------
 // GET /api/similar/status
 // ---------------------------------------------------------------------------
 
@@ -572,18 +336,9 @@ pub async fn api_similarity_status(
             |r| r.get(0),
         )
         .unwrap_or(0);
-    let embed_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM file_embeddings", [], |r| r.get(0))
-        .unwrap_or(0);
-    let embed_model = db::get_setting(&conn, "ai.embed_model")
-        .ok()
-        .flatten()
-        .unwrap_or_default();
 
     Ok(Json(serde_json::json!({
         "total_files": total,
         "phash_indexed": phash_count,
-        "embedding_indexed": embed_count,
-        "embed_model": embed_model,
     })))
 }

@@ -1101,9 +1101,19 @@ async function doSubjectSearch(subject) {
     render();
 }
 
+function _quoteSimpleToken(s) {
+    if (/^[A-Za-z0-9_./:*:-]+$/.test(s)) return s;
+    return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
+
 function quoteQueryToken(value) {
-    if (/^[A-Za-z0-9_./:*:-]+$/.test(value)) return value;
-    return '"' + String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    // key=value tag filter: quote each part separately so the query parser
+    // sees a TagValue comparison rather than a single quoted tag name.
+    const eqIdx = value.indexOf('=');
+    if (eqIdx > 0) {
+        return _quoteSimpleToken(value.slice(0, eqIdx)) + '=' + _quoteSimpleToken(value.slice(eqIdx + 1));
+    }
+    return _quoteSimpleToken(value);
 }
 
 async function applySubjectToSelection(subjectName) {

@@ -358,10 +358,6 @@ async fn main() -> anyhow::Result<()> {
             "/api/similar/index-phash",
             post(similarity::api_index_phash),
         )
-        .route(
-            "/api/similar/index-embedding",
-            post(similarity::api_index_embedding),
-        )
         // Saliency model routes
         .route("/api/saliency/status", get(saliency::api_saliency_status))
         .route(

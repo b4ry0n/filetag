@@ -1296,11 +1296,7 @@ function renderDetail() {
             ${aiBtn}
             <div class="detail-similar-section" id="detail-similar">
                 <div class="detail-similar-header">
-                    <button class="detail-similar-toggle" onclick="toggleSimilarSection('${jesc(f.path)}')">Vergelijkbaar</button>
-                    <div class="detail-similar-methods">
-                        <button class="detail-similar-method active" data-method="phash" onclick="switchSimilarMethod('phash','${jesc(f.path)}')">Visueel</button>
-                        <button class="detail-similar-method" data-method="embedding" onclick="switchSimilarMethod('embedding','${jesc(f.path)}')">Semantisch</button>
-                    </div>
+                    <button class="detail-similar-toggle" onclick="toggleSimilarSection('${jesc(f.path)}')">Similar</button>
                 </div>
                 <div class="detail-similar-results" id="detail-similar-results" hidden></div>
             </div>
@@ -1622,23 +1618,13 @@ async function toggleSimilarSection(path) {
     if (!results) return;
     if (!results.hidden) { results.hidden = true; return; }
     results.hidden = false;
-    const method = document.querySelector('.detail-similar-method.active')?.dataset.method || 'phash';
-    _loadSimilarResults(path, method, results);
+    _loadSimilarResults(path, results);
 }
 
-function switchSimilarMethod(method, path) {
-    document.querySelectorAll('.detail-similar-method').forEach(b => {
-        b.classList.toggle('active', b.dataset.method === method);
-    });
-    const results = document.getElementById('detail-similar-results');
-    if (!results || results.hidden) return;
-    _loadSimilarResults(path, method, results);
-}
-
-async function _loadSimilarResults(path, method, resultsEl) {
-    resultsEl.innerHTML = '<div class="detail-similar-loading">Zoeken…</div>';
+async function _loadSimilarResults(path, resultsEl) {
+    resultsEl.innerHTML = '<div class="detail-similar-loading">Searching…</div>';
     try {
-        const data = await loadSimilarFiles(path, method, 20);
+        const data = await loadSimilarFiles(path, 20);
         if (!data.results?.length) {
             resultsEl.innerHTML = '<div class="detail-similar-empty">Geen vergelijkbare bestanden gevonden.</div>';
             return;
