@@ -295,7 +295,7 @@ mark.tag-filter-match {
     background: transparent;
     border: none;
     cursor: pointer;
-    transform: translateX(3px);    /* VSCode-accurate: icon shifted slightly right */
+    transform: translateX(-1px);   /* subtle left shift to align with other icons */
 }
 
 /* Chevron SVG icon — collapsed: points right, expanded: points down.
@@ -1576,7 +1576,7 @@ mark.tag-filter-match {
 .ai-section-divider.section-drag-over-after  { box-shadow: inset 0 -2px 0 var(--primary); }
 
 /* Section header chevron btn — same geometry as .tag-group-chevron.
-   translateX(3px) matches .tag-group-chevron for visual consistency. */
+   translateX(-1px) matches .tag-group-chevron for visual consistency. */
 .section-chevron-btn {
     display: flex;
     align-items: center;
@@ -1589,7 +1589,7 @@ mark.tag-filter-match {
     flex-shrink: 0;
     width: var(--tree-toggle-w);
     height: var(--tree-row-h);
-    transform: translateX(3px);
+    transform: translateX(-1px);
     margin: 0;
 }
 .section-chevron-btn:hover { background: transparent; }
