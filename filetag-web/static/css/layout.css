@@ -235,25 +235,21 @@ mark.tag-filter-match {
    SIDEBAR TREE ROW SYSTEM — VSCode-style unified layout
    ===================================================================
    Row anatomy (left → right):
-     [4px base-indent] [TOGGLE 16px+3px] [LABEL flex-1] [COLOR-DOT?] [BADGES] [COUNT] [right: 8px]
+     [4px base-indent] [TOGGLE 22px] [LABEL flex-1] [COLOR-DOT?] [BADGES] [COUNT auto] [8px]
 
-   TOGGLE  = chevron button (groups) | check/radio indicator (leaves)
-   LABEL   = tag name / subject / value text (overflows via ellipsis)
-   COLOR-DOT = only rendered when tag has a colour (after label)
-   COUNT   = item count badge, right-aligned, muted
+   TOGGLE = 22px zone — chevron (groups) or check/radio placeholder (leaves)
+   Both groups and leaves ALWAYS have the same 22px toggle zone so their
+   label text starts at the same pixel (4 + 22 = 26px from container edge).
 
-   Depth indent: applied as `margin-left: var(--tree-indent)` on
-     .tag-group wrappers (groups) and directly on leaf buttons (JS).
+   Depth indent: the .tag-group WRAPPER receives margin-left:12px per level.
+   This is additive (each wrapper is inside its parent's .tag-group-items).
    =================================================================== */
 
 :root {
-    --tree-row-h:    22px;   /* row height — same as VS Code explorer */
-    --tree-indent:   12px;   /* per-level indent applied by JS/containers */
-    --tree-toggle-w: 16px;   /* check/radio indicator zone + chevron zone */
-    --tree-icon-w:   16px;   /* kv-eq icon zone (kept for kv rows) */
-    --tree-base-pl:   4px;   /* base left breathing room */
-    /* Note: group chevron (twistie) is hardcoded to 16px + translateX(3px)
-       matching VSCode tree.css .monaco-tl-twistie geometry. */
+    --tree-row-h:    22px;  /* row height — matches VS Code explorer */
+    --tree-indent:   12px;  /* per-level indent via .tag-group wrapper margin */
+    --tree-toggle-w: 22px;  /* UNIFIED toggle zone — same for chevron and check */
+    --tree-base-pl:   4px;  /* row left-edge breathing room */
 }
 
 /* ── Shared base: every interactive row ─────────────────────────── */
@@ -261,7 +257,7 @@ mark.tag-filter-match {
 .tag-group-label {
     display: flex;
     align-items: center;
-    min-height: var(--tree-row-h);
+    height: var(--tree-row-h);
     width: 100%;
     padding: 0 8px 0 var(--tree-base-pl);
     font-size: 13px;
@@ -270,8 +266,10 @@ mark.tag-filter-match {
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
-    border-radius: 0;
     box-sizing: border-box;
+    background: transparent;
+    border: none;
+    text-align: left;
 }
 .tag-item:hover,
 .tag-group-label:hover            { background: var(--bg-hover); }
@@ -280,14 +278,13 @@ mark.tag-filter-match {
 .tag-item.active .count,
 .tag-group-label.active .count    { color: var(--primary); opacity: 0.75; }
 
-/* ── TOGGLE zone: chevron for group rows ─────────────────────────
-   VSCode .monaco-tl-twistie: width:16px, flex-shrink:0, display:flex,
-   align-items+justify:center, transform:translateX(3px) (tree.css MIT).
-   We keep the outer padding-left (var(--tree-base-pl) on the row) and
-   match the 16px twistie width exactly.                                    */
+/* ── TOGGLE zone — chevron for group rows ────────────────────────
+   Exactly 22px wide, matching the check/placeholder zone of leaf rows.
+   VSCode tree.css .monaco-tl-twistie uses width:16px + translateX(3px);
+   we use a clean 22px without the translateX trick for predictable layout.  */
 .tag-group-chevron {
     flex-shrink: 0;
-    width: 16px;
+    width: var(--tree-toggle-w);
     height: var(--tree-row-h);
     display: flex;
     align-items: center;
@@ -297,25 +294,23 @@ mark.tag-filter-match {
     background: transparent;
     border: none;
     cursor: pointer;
-    transform: translateX(3px);
-    opacity: 0.5;
-    transition: opacity 0.1s;
 }
-.tag-group-label:hover .tag-group-chevron,
-.tag-group-label.active .tag-group-chevron,
-.tag-group-label.expanded .tag-group-chevron { opacity: 1; }
-/* Chevron arrow icon */
+
+/* Chevron SVG icon — collapsed: points right, expanded: points down */
 .chevron-icon {
     width: 16px;
     height: 16px;
     display: block;
-    transition: transform 0.15s;
-    transform: rotate(-90deg);   /* collapsed: pointing right */
+    flex-shrink: 0;
+    opacity: 0.55;
+    transition: transform 0.12s, opacity 0.1s;
+    transform: rotate(-90deg);
 }
 .tag-group-label.expanded .chevron-icon { transform: rotate(0deg); }
+.tag-group-label:hover .chevron-icon    { opacity: 1; }
+.tag-group-label.active .chevron-icon   { opacity: 1; }
 
-/* Chevron and name buttons must NOT add their own hover/active background;
-   the outer .tag-group-label row is the single hover target. */
+/* Group name button and chevron button must NOT add their own hover background */
 .tag-group-chevron:hover,
 .tag-group-name:hover { background: transparent; }
 
@@ -325,19 +320,20 @@ mark.tag-filter-match {
     min-width: 0;
     display: flex;
     align-items: center;
-    min-height: var(--tree-row-h);
+    height: var(--tree-row-h);
     padding: 0;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 400;
     color: inherit;
     text-align: left;
     background: transparent;
     border: none;
     cursor: pointer;
     overflow: hidden;
+    white-space: nowrap;
 }
 
-/* Count badge — shared by .tag-group-name and .tag-item */
+/* Count badge — right-aligned, muted */
 .tag-group-name .count,
 .tag-item .count {
     margin-left: auto;
@@ -351,12 +347,10 @@ mark.tag-filter-match {
 .tag-group-items          { display: none; }
 .tag-group-items.open     { display: block; position: relative; }
 
-/* Indent guide — vertical line below the parent chevron, shown on hover.
-   Mirrors VSCode's .monaco-tl-indent > .indent-guide pattern (tree.css MIT):
-     position:absolute, border-left:1px solid transparent, opacity:0,
-     transition:opacity 0.1s linear.
-   Chevron is 16px wide starting at tree-base-pl (4px).
-   Visual centre with translateX(3px) = 4 + 8 + 3 = 15px = base-pl + 11px.  */
+/* Indent guide — vertical line left of children, revealed on hover.
+   Mirrors VSCode .monaco-tl-indent > .indent-guide (tree.css MIT):
+   opacity:0 → visible on hover, transition:0.1s linear.
+   Positioned at: base-pl(4) + half of toggle-w(11) = 15px from container. */
 .tag-group-items.open::before {
     content: '';
     position: absolute;
@@ -369,14 +363,13 @@ mark.tag-filter-match {
     transition: opacity 0.1s linear;
     pointer-events: none;
 }
-/* Show guide when hovering the group or any of its children */
 .tag-group:hover > .tag-group-items.open::before { opacity: 0.5; }
 
-/* ── TOGGLE zone (22px): check/radio indicator for leaf rows ─────── */
+/* ── TOGGLE zone — check/radio indicator for leaf rows ───────────── */
 .tag-check,
 .tag-check-placeholder {
     flex-shrink: 0;
-    width: var(--tree-toggle-w);
+    width: var(--tree-toggle-w);  /* 22px — same as chevron zone */
     height: var(--tree-row-h);
     display: flex;
     align-items: center;
@@ -385,44 +378,54 @@ mark.tag-filter-match {
     color: var(--primary);
 }
 
-/* ── Color dot: trailing indicator after the label ─────────────── */
+/* ── Color dot: trailing indicator after the label ──────────────── */
 .tag-color-dot {
     flex-shrink: 0;
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-left: 5px;   /* after text, before count */
+    margin-left: 5px;
 }
 
-/* ── Leaf item: padding override (toggle zone provides left indent) */
-/* .tag-standalone was the old class for depth-0 leaves; no longer needed
-   for padding, kept for any JS-side class checks that may remain. */
-.tag-standalone { /* no override — inherits .tag-item */ }
+/* ── k/v value rows ─────────────────────────────────────────────── */
+/* These rows show "= value" without a leading placeholder.
+   padding-left aligns the "=" at the same x as child item labels. */
+.tag-item.tag-kv-value {
+    padding-left: calc(var(--tree-base-pl) + var(--tree-toggle-w));
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.tag-item.tag-kv-value .tag-kv-eq {
+    width: auto;
+    margin-right: 4px;
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}
 
-/* ── k/v equals sign occupies the ICON zone ─────────────────────── */
+/* k/v equals sign (kept for CSS target, width overridden for kv-value rows above) */
 .tag-kv-eq {
     flex-shrink: 0;
-    width: var(--tree-icon-w);
+    width: 16px;
     text-align: center;
     font-size: 11px;
     color: var(--text-tertiary);
     font-style: italic;
 }
 
-/* k=v value rows: smaller text, muted colour */
-.tag-kv-value {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 400;
-}
+/* ── Leaf item legacy class (no special override needed) ─────────── */
+.tag-standalone { /* inherits .tag-item */ }
 
 /* Loading placeholder inside a group */
 .tag-item-loading {
     color: var(--text-tertiary);
     font-size: 12px;
-    font-weight: 400;
     font-style: italic;
     padding-left: calc(var(--tree-base-pl) + var(--tree-toggle-w));
+    height: var(--tree-row-h);
+    display: flex;
+    align-items: center;
 }
 
 /* Active filter bar \u2014 compact single line at top of scrollable list */
@@ -1505,17 +1508,13 @@ mark.tag-filter-match {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-secondary);
+    color: var(--text);
     border-top: 1px solid var(--border);
     user-select: none;
 }
 
 /* AI / collapsible section headers — VSCode pane-header style:
-   - exactly 22px (same as a tree row)
-   - font-size 11px, weight 700, uppercase — matches monaco pane-header h3.title
-   - transparent background (blends with sidebar)
-   - thin border-top as separator between panels
-   - hover reveals via transition, not background change                        */
+   height 22px, 11px bold uppercase, full text color (not muted).             */
 .ai-section-divider {
     display: flex;
     align-items: center;
@@ -1526,7 +1525,7 @@ mark.tag-filter-match {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-secondary);
+    color: var(--text);
     border-top: 1px solid var(--border);
     cursor: pointer;
     user-select: none;
@@ -1539,7 +1538,8 @@ mark.tag-filter-match {
     border-top: none;
 }
 
-.ai-section-divider:hover { background: var(--bg-hover); color: var(--text); }
+.ai-section-divider:hover { background: var(--bg-hover); }
+.ai-section-divider:hover .chevron-icon { opacity: 1; }
 
 .ai-section-divider.active { color: var(--primary); }
 
@@ -1558,9 +1558,8 @@ mark.tag-filter-match {
 .ai-section-divider.section-drag-over-before { box-shadow: inset 0 2px 0 var(--primary); }
 .ai-section-divider.section-drag-over-after  { box-shadow: inset 0 -2px 0 var(--primary); }
 
-/* Chevron button inside section header — VSCode .monaco-tl-twistie geometry:
-   width:16px, flex-shrink:0, display:flex, align-items+justify:center,
-   transform:translateX(3px) — all taken from tree.css (MIT).              */
+/* Section header chevron btn — same geometry as .tag-group-chevron,
+   same .chevron-icon opacity rules apply via .ai-section-divider:hover. */
 .section-chevron-btn {
     display: flex;
     align-items: center;
@@ -1571,13 +1570,12 @@ mark.tag-filter-match {
     cursor: pointer;
     color: inherit;
     flex-shrink: 0;
-    border-radius: 3px;
-    width: 16px;
-    height: 16px;
-    transform: translateX(3px);
-    margin-right: 0;
+    width: var(--tree-toggle-w);
+    height: var(--tree-row-h);
+    transform: none;
+    margin: 0;
 }
-.section-chevron-btn:hover { background: var(--bg-hover); color: var(--text); }
+.section-chevron-btn:hover { background: transparent; }
 
 /* Resize handle between expanded section panels */
 .section-resize-handle {

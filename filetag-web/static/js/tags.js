@@ -196,7 +196,7 @@ function _renderDistributionPanel() {
             onclick="openSectionExclusive('distribution', event)"
             ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'distribution')">
             ${_sectionDragHandle('distribution')}
-            <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             Distribution
         </div>`;
     }
@@ -235,7 +235,7 @@ function _renderDistributionPanel() {
         onclick="openSectionExclusive('distribution', event)"
         ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'distribution')">
         ${_sectionDragHandle('distribution')}
-        <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         Distribution
     </div><div class="dist-panel">${bars}</div>`;
 }
@@ -632,7 +632,7 @@ function renderTagTreeNode(node, depth) {
             return `<button class="${cls}${checkedCls}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
         }
 
-        const check = active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>';
+        const check = '<span class="tag-check-placeholder"></span>'; // active state shown via CSS background
         return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
@@ -678,7 +678,7 @@ function renderTagTreeNode(node, depth) {
                     onclick="toggleTagFilter('${jesc(valFilter)}')"
                     oncontextmenu="showKvValueMenu(event,'${jesc(fullPath)}','${jesc(v.value)}')"
                     title="${esc(fullPath)}=${esc(v.value)}">
-                    <span class="tag-check-placeholder"></span><span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
+                    <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
                 </button>`;
             }
         } else {
@@ -729,7 +729,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                     onclick="toggleTagFilter('${jesc(valFilter)}')"
                     oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
                     title="${esc(tag.name)}=${esc(v.value)}">
-                    <span class="tag-check-placeholder"></span><span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
+                    <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
                 </button>`;
             }
         } else {
@@ -822,7 +822,7 @@ function renderTags() {
                 onclick="openSectionExclusive('ai', event)"
                 ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'ai')">
                 ${_sectionDragHandle('ai')}
-                <button class="section-chevron-btn" onclick="sectionChevronClick('ai',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="section-chevron-btn" onclick="sectionChevronClick('ai',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 AI Tags<span class="count">${aiTotal}</span>
             </div>${aiExpanded ? `<div class="ai-section-body">${aiBodyHtml}</div>` : ''}`;
         }
@@ -842,7 +842,7 @@ function renderTags() {
                 onclick="openSectionExclusive('people', event)"
                 ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'people')">
                 ${_sectionDragHandle('people')}
-                <button class="section-chevron-btn" onclick="sectionChevronClick('people',event)" title="Toggle independently"><svg class="chevron-icon${peopleCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="section-chevron-btn" onclick="sectionChevronClick('people',event)" title="Toggle independently"><svg class="chevron-icon${peopleCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 People<span class="count">${namedCount}</span>
             </div>${peopleCollapsed ? '' : `<div class="people-section-body">${peopleBodyHtml}</div>`}`;
         }
@@ -860,7 +860,7 @@ function renderTags() {
                 onclick="openSectionExclusive('tags', event)"
                 ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'tags')">
                 ${_sectionDragHandle('tags')}
-                <button class="section-chevron-btn" onclick="sectionChevronClick('tags',event)" title="Toggle independently"><svg class="chevron-icon${tagsChevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button class="section-chevron-btn" onclick="sectionChevronClick('tags',event)" title="Toggle independently"><svg class="chevron-icon${tagsChevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 Tags<span class="count">${tagCount}</span>
             </div>${tagsBody ? `<div class="tags-section-body">${tagsBody}</div>` : ''}`;
         }
@@ -959,7 +959,7 @@ function _renderSubjectsInline() {
         onclick="openSectionExclusive('subjects', event)"
         ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'subjects')">
         ${_sectionDragHandle('subjects')}
-        <button class="section-chevron-btn" onclick="sectionChevronClick('subjects',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="section-chevron-btn" onclick="sectionChevronClick('subjects',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         Subjects<span class="count">${totalCount}</span>
     </div>${collapsed ? '' : `<div class="subjects-section-body">${bodyHtml}</div>`}`;
 }
@@ -995,7 +995,7 @@ function renderSubjectTreeNodes(nodeMap, depth) {
 
 function renderSubjectTreeNode(node, depth) {
     const { segment, fullPath, tag, children } = node;
-    const marginStyle = depth > 0 ? ` style="margin-left:${depth * 12}px"` : '';
+    const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
     const isActive = state.mode === 'search' && state.searchQuery === ('subject:' + quoteTag(fullPath));
 
     if (!children.size) {
