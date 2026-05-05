@@ -1533,6 +1533,7 @@ function tmToggleGroup(prefix) {
 let _tmTab = 'tags'; // 'tags' | 'subjects'
 let _tmSelectedSubject = null;
 let _tmSubjectSearch = '';
+let _tmSubjectExpandedGroups = new Set(); // subject group fullPaths that are expanded in TM
 
 function showTagManager(selectTag) {
     if (document.getElementById('tag-manager-overlay')) return;
@@ -1573,16 +1574,11 @@ function showTagManager(selectTag) {
                 </div>
             </div>
             <div class="tm-body" id="tm-body-subjects" style="display:none">
-                <div class="tm-list" id="tm-subject-list">
-                    <div class="tm-new-row">
-                        <input id="tm-new-subject-input" class="tm-input" type="text"
-                            placeholder="New subject name\u2026"
-                            onkeydown="if(event.key==='Enter') tmCreateSubject()">
-                        <button class="tm-btn" onclick="tmCreateSubject()">+</button>
-                    </div>
+                <div class="tm-list-col">
+                    <div class="tm-list" id="tm-subject-list"></div>
                 </div>
                 <div class="tm-detail" id="tm-subject-detail">
-                    <div class="tm-detail-placeholder">Select a subject to edit it.</div>
+                    <div class="tm-detail-placeholder">Selecteer een subject om het te bewerken.</div>
                 </div>
             </div>
         </div>
@@ -1596,6 +1592,7 @@ function showTagManager(selectTag) {
     _tmCollapsedGroups = new Set();
     _tmSelectedSubject = null;
     _tmSubjectSearch = '';
+    _tmSubjectExpandedGroups = new Set();
     renderTmList();
     if (_tmSelectedTag) renderTmDetail(_tmSelectedTag);
 
@@ -2093,16 +2090,15 @@ function tmSubjectSearch(q) {
     renderTmSubjectList();
 }
 
+// ---------------------------------------------------------------------------
+// TM Subject list — hierarchical tree (same structure as TM tag list)
+// ---------------------------------------------------------------------------
+
 function renderTmSubjectList() {
     const el = document.getElementById('tm-subject-list');
     if (!el) return;
 
     const q = _tmSubjectSearch;
-    const filtered = q
-        ? state.subjects.filter(s => s.name.toLowerCase().includes(q))
-        : state.subjects;
-
-    // Preserve the new-subject input row (first child) if it exists
     const newRow = el.querySelector('.tm-new-row');
     const savedValue = newRow ? newRow.querySelector('input')?.value ?? '' : '';
 
@@ -2114,24 +2110,120 @@ function renderTmSubjectList() {
             <button class="tm-btn" onclick="tmCreateSubject()">+</button>
         </div>`;
 
+    const filtered = q
+        ? state.subjects.filter(s => s.name.toLowerCase().includes(q))
+        : state.subjects;
+
     if (!filtered.length) {
         html += '<div class="tm-empty">No subjects found.</div>';
     } else {
-        for (const s of [...filtered].sort((a, b) => a.name.localeCompare(b.name))) {
-            const sel = _tmSelectedSubject === s.name ? ' selected' : '';
-            html += `<div class="tm-tag-row tm-tag-standalone${sel}" onclick="tmSelectSubject('${jesc(s.name)}')">
-                ${esc(s.name)}
-                <span class="tm-count">${s.count}</span>
-            </div>`;
-        }
+        const subjectTags = filtered.map(s => ({
+            name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
+        }));
+        const tree = buildTagTree(subjectTags);
+        html += _renderTmSubjectTreeNodes(tree, 0, q);
     }
-    el.innerHTML = html;
 
-    // Restore typed value if user was mid-input
+    el.innerHTML = html;
     if (savedValue) {
         const inp = el.querySelector('#tm-new-subject-input');
         if (inp) inp.value = savedValue;
     }
+}
+
+function _renderTmSubjectTreeNodes(nodeMap, depth, q) {
+    const nodes = [...nodeMap.values()];
+    nodes.sort((a, b) => a.segment.localeCompare(b.segment));
+    return nodes.map(n => _renderTmSubjectTreeNode(n, depth, q)).join('');
+}
+
+function _renderTmSubjectTreeNode(node, depth, q) {
+    const { segment, fullPath, tag, children } = node;
+    const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
+
+    if (!children.size) {
+        if (!tag) return '';
+        const sel = _tmSelectedSubject === fullPath ? ' active' : '';
+        return `<button class="tag-item${sel}"${marginStyle}
+            onclick="tmSelectSubject('${jesc(fullPath)}')"
+            draggable="true"
+            ondragstart="tmSubjectDragStart(event,'${jesc(fullPath)}')"
+            ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)"
+            ondrop="tmSubjectDrop(event,'${jesc(fullPath)}')"
+            ><span class="tag-check-placeholder"></span>${_highlightMatch(segment, q)} <span class="count">${tag.count}</span></button>`;
+    }
+
+    const totalCount = tag ? tag.count : [...children.values()].reduce((s, c) => s + (c.tag ? c.tag.count : 0), 0);
+    const expanded = _tmSubjectExpandedGroups.has(fullPath) || !!q;
+    const expandedClass = expanded ? ' expanded' : '';
+    const sel = _tmSelectedSubject === fullPath ? ' active' : '';
+    return `<div class="tag-group"${marginStyle}>
+        <div class="tag-group-label${expandedClass}${sel}">
+            <button class="tag-group-chevron" onclick="tmToggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="tag-group-name"
+                onclick="${tag ? `tmSelectSubject('${jesc(fullPath)}')` : `tmToggleSubjectGroup('${jesc(fullPath)}')`}"
+                draggable="${tag ? 'true' : 'false'}"
+                ${tag ? `ondragstart="tmSubjectDragStart(event,'${jesc(fullPath)}')"` : ''}
+                ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)"
+                ondrop="tmSubjectDrop(event,'${jesc(fullPath)}')"
+                >${_highlightMatch(segment, q)} <span class="count">${totalCount}</span></button>
+        </div>
+        <div class="tag-group-items${expanded ? ' open' : ''}">
+            ${expanded ? _renderTmSubjectTreeNodes(children, depth + 1, q) : ''}
+        </div>
+    </div>`;
+}
+
+function tmToggleSubjectGroup(fullPath) {
+    if (_tmSubjectExpandedGroups.has(fullPath)) {
+        _tmSubjectExpandedGroups.delete(fullPath);
+    } else {
+        _tmSubjectExpandedGroups.add(fullPath);
+    }
+    renderTmSubjectList();
+}
+
+function tmSubjectDragStart(event, subjectName) {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/filetag-subject', subjectName);
+}
+
+async function tmSubjectDrop(event, targetSubject) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.classList.remove('tag-drag-over');
+
+    const draggedSubject = event.dataTransfer.getData('text/filetag-subject');
+    if (!draggedSubject || draggedSubject === targetSubject) return;
+    if (targetSubject.startsWith(draggedSubject + '/')) return; // can't nest under own descendant
+
+    const segment = draggedSubject.split('/').pop();
+    // Drop onto a leaf: move alongside it (use its parent prefix).
+    // Drop onto a group: move inside the group.
+    const targetHasChildren = state.subjects.some(s =>
+        s.name !== targetSubject && s.name.startsWith(targetSubject + '/'));
+    const targetIsGroup = targetHasChildren || !state.subjects.find(s => s.name === targetSubject);
+    let newName;
+    if (targetIsGroup) {
+        newName = targetSubject + '/' + segment;
+    } else {
+        // Sibling: use same prefix as target
+        const lastSlash = targetSubject.lastIndexOf('/');
+        const prefix = lastSlash >= 0 ? targetSubject.slice(0, lastSlash) : '';
+        newName = prefix ? prefix + '/' + segment : segment;
+    }
+    if (newName === draggedSubject) return;
+    if (!confirm(`Rename subject "${draggedSubject}" to "${newName}"?`)) return;
+    await apiPost('/api/rename-subject', { name: draggedSubject, new_name: newName, dir: currentAbsDir() });
+    showToast(`Moved "${draggedSubject}" \u2192 "${newName}".`);
+    await loadTags();
+    _tmSelectedSubject = newName;
+    renderTmSubjectList();
+    renderTmSubjectDetail(newName);
+    renderSubjects();
 }
 
 async function tmCreateSubject() {
@@ -2176,22 +2268,10 @@ async function renderTmSubjectDetail(name) {
         <div class="tm-detail-placeholder" style="padding:12px 16px">Loading\u2026</div>
     `;
 
-    // Load file-level tags and entity properties in parallel
-    const [subjTags, subjProps] = await Promise.all([
-        api('/api/subject/tags?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
-        api('/api/subject/props?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []),
-    ]);
+    // Load entity properties
+    const subjProps = await api('/api/subject/props?' + new URLSearchParams({ name }) + dirParam('&')).catch(() => []);
 
     if (document.getElementById('tm-subject-detail') !== panel) return; // closed meanwhile
-
-    const tagRows = subjTags.map(t => `
-        <div class="tm-val-row">
-            <span class="tm-val-name" onclick="tmSubjectTagSearch('${jesc(name)}','${jesc(t.value)}')"
-                title="Search ${esc(name)} and ${esc(t.value)}">${esc(t.value)}</span>
-            <span class="tm-val-count">${t.count}</span>
-            <button class="tm-val-rename" onclick="tmSubjectRemoveTag('${jesc(name)}','${jesc(t.value)}')"
-                title="Remove this tag from all files in subject">\u2715</button>
-        </div>`).join('');
 
     const propRows = subjProps.map(p => {
         const label = p.value ? `${esc(p.tag)} = ${esc(p.value)}` : esc(p.tag);
@@ -2199,7 +2279,7 @@ async function renderTmSubjectDetail(name) {
         <div class="tm-val-row">
             <span class="tm-val-name">${label}</span>
             <button class="tm-val-rename" onclick="tmSubjectRemoveProp('${jesc(name)}','${jesc(p.tag)}','${jesc(p.value)}')"
-                title="Remove property">\u2715</button>
+                title="Remove">\u2715</button>
         </div>`;
     }).join('');
 
@@ -2210,15 +2290,15 @@ async function renderTmSubjectDetail(name) {
         </div>
 
         <section class="tm-section">
-            <div class="tm-section-title">Properties
-                <span class="tm-section-hint">(describe what this subject <em>is</em>)</span>
+            <div class="tm-section-title">Kenmerken
+                <span class="tm-section-hint">(eigenschappen die dit subject beschrijven)</span>
             </div>
             ${subjProps.length
                 ? `<div class="tm-val-list">${propRows}</div>`
-                : `<div class="tm-empty-hint">No properties yet.</div>`}
+                : `<div class="tm-empty-hint">Geen kenmerken ingesteld.</div>`}
             <div class="tm-syn-add" style="margin-top:6px">
                 <input id="tm-subj-prop-tag" class="tm-input" type="text"
-                    placeholder="Property (e.g. geslacht, geboren\u2026)"
+                    placeholder="Kenmerk (bijv. geslacht, geboren\u2026)"
                     list="tm-subj-prop-datalist"
                     style="flex:1.5"
                     onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
@@ -2226,61 +2306,53 @@ async function renderTmSubjectDetail(name) {
                     ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
                 </datalist>
                 <input id="tm-subj-prop-val" class="tm-input" type="text"
-                    placeholder="Value (optional)"
+                    placeholder="Waarde (optioneel)"
                     style="flex:1"
                     onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
-                <button class="tm-btn" onclick="tmSubjectSetProp('${jesc(name)}')">Add</button>
-            </div>
-        </section>
-
-        <section class="tm-section">
-            <div class="tm-section-title">File tags
-                <span class="tm-section-hint">(tags on files under this subject; click to search, \u2715 to remove)</span>
-            </div>
-            ${subjTags.length
-                ? `<div class="tm-val-list">${tagRows}</div>`
-                : `<div class="tm-empty-hint">No tags assigned yet.</div>`}
-            <div class="tm-syn-add" style="margin-top:6px">
-                <input id="tm-subj-tag-input" class="tm-input" type="text"
-                    placeholder="Add tag to all files in subject\u2026"
-                    list="tm-subj-tag-datalist"
-                    onkeydown="if(event.key==='Enter') tmSubjectAddTag('${jesc(name)}')">
-                <datalist id="tm-subj-tag-datalist">
-                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
-                </datalist>
-                <button class="tm-btn" onclick="tmSubjectAddTag('${jesc(name)}')">Add</button>
+                <button class="tm-btn" onclick="tmSubjectSetProp('${jesc(name)}')">Toevoegen</button>
             </div>
         </section>
 
         <section class="tm-section tm-ops">
-            <div class="tm-section-title">Operations</div>
+            <div class="tm-section-title">Bewerken</div>
 
             <div class="tm-op-row">
-                <label class="tm-op-label">Rename to</label>
+                <label class="tm-op-label">Naam wijzigen naar</label>
                 <div class="tm-op-inputs">
                     <input id="tm-subj-rename-input" class="tm-input" type="text" value="${esc(name)}"
-                        placeholder="New name\u2026"
+                        placeholder="Nieuwe naam\u2026"
                         onkeydown="if(event.key==='Enter') tmDoRenameSubject('${jesc(name)}')">
-                    <button class="tm-btn" onclick="tmDoRenameSubject('${jesc(name)}')">Rename</button>
+                    <button class="tm-btn" onclick="tmDoRenameSubject('${jesc(name)}')">Naam wijzigen</button>
                 </div>
-                <div class="tm-op-hint">All tag assignments with this subject label are updated.</div>
+                <div class="tm-op-hint">Alle tag-koppelingen met dit subject worden bijgewerkt. Als de doelnaam al bestaat, worden de subjects samengevoegd.</div>
             </div>
 
             <div class="tm-op-row">
-                <label class="tm-op-label">Clone as</label>
+                <label class="tm-op-label">Verplaatsen naar groep</label>
+                <div class="tm-op-inputs">
+                    <input id="tm-subj-move-input" class="tm-input" type="text"
+                        placeholder="Prefix (bijv. persoon)"
+                        value="${esc(name.includes('/') ? name.split('/')[0] : '')}">
+                    <button class="tm-btn" onclick="tmDoMoveSubject('${jesc(name)}')">Verplaatsen</button>
+                </div>
+                <div class="tm-op-hint">Hernoemt naar <em>prefix/${esc(name.includes('/') ? name.slice(name.indexOf('/') + 1) : name)}</em>.</div>
+            </div>
+
+            <div class="tm-op-row">
+                <label class="tm-op-label">Kopiëren als</label>
                 <div class="tm-op-inputs">
                     <input id="tm-subj-clone-input" class="tm-input" type="text"
-                        placeholder="New subject name\u2026"
+                        placeholder="Nieuwe naam\u2026"
                         onkeydown="if(event.key==='Enter') tmCloneSubject('${jesc(name)}')">
-                    <button class="tm-btn" onclick="tmCloneSubject('${jesc(name)}')">Clone</button>
+                    <button class="tm-btn" onclick="tmCloneSubject('${jesc(name)}')">Kopiëren</button>
                 </div>
-                <div class="tm-op-hint">Copies all file tag assignments to a new subject name.</div>
+                <div class="tm-op-hint">Kopieert alle tag-koppelingen naar een nieuwe subjectnaam.</div>
             </div>
         </section>
 
         <div class="tm-danger-zone">
             <button class="tm-btn tm-btn-danger" onclick="tmDeleteSubject('${jesc(name)}')">
-                Remove subject (${subj.count} file${subj.count !== 1 ? 's' : ''})
+                Subject verwijderen (${subj.count} bestand${subj.count !== 1 ? 'en' : ''})
             </button>
         </div>
     `;
@@ -2383,9 +2455,27 @@ async function tmDoRenameSubject(oldName) {
     const input = document.getElementById('tm-subj-rename-input');
     const newName = input ? input.value.trim() : '';
     if (!newName || newName === oldName) return;
-    if (!confirm(`Rename subject "${oldName}" to "${newName}"?`)) return;
+    const existingTarget = state.subjects.find(s => s.name === newName);
+    if (!confirm(`Rename subject "${oldName}" to "${newName}"?${existingTarget ? '\n\nDoelsubject bestaat al — ze worden samengevoegd.' : ''}`)) return;
     await apiPost('/api/rename-subject', { name: oldName, new_name: newName, dir: currentAbsDir() });
-    showToast(`Renamed subject "${oldName}" to "${newName}".`);
+    if (existingTarget) showToast(`Samengevoegd in "${newName}".`);
+    else showToast(`Subject hernoemd naar "${newName}".`);
+    await loadTags();
+    _tmSelectedSubject = newName;
+    renderTmSubjectList();
+    renderTmSubjectDetail(newName);
+    renderSubjects();
+}
+
+async function tmDoMoveSubject(name) {
+    const input = document.getElementById('tm-subj-move-input');
+    const newPrefix = input ? input.value.trim() : '';
+    const suffix = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
+    const newName = newPrefix ? `${newPrefix}/${suffix}` : suffix;
+    if (newName === name) return;
+    if (!confirm(`Subject "${name}" verplaatsen naar "${newName}"?`)) return;
+    await apiPost('/api/rename-subject', { name, new_name: newName, dir: currentAbsDir() });
+    showToast(`Verplaatst naar "${newName}".`);
     await loadTags();
     _tmSelectedSubject = newName;
     renderTmSubjectList();
