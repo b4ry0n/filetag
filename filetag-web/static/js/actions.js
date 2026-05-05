@@ -443,7 +443,7 @@ function attachTagAutocomplete(inputEl, submitFn) {
     let _dropdown = null;
     let _activeIdx = -1;
 
-    function getMatches(query) {
+    function getTagMatches(query) {
         const q = query.toLowerCase();
         if (!q) {
             // Show top tags by count, excluding ones already on the selected file(s)
@@ -467,20 +467,57 @@ function attachTagAutocomplete(inputEl, submitFn) {
             .slice(0, 15);
     }
 
-    function buildDropdown(tags) {
+    // Return { type: 'tag', matches } or { type: 'value', key, matches }
+    async function getMatches(raw) {
+        const eqIdx = raw.indexOf('=');
+        if (eqIdx > 0) {
+            const key = raw.slice(0, eqIdx);
+            const valQuery = raw.slice(eqIdx + 1).toLowerCase();
+            // Load values lazily (same as sidebar)
+            if (!state.kvValueCache[key]) {
+                try {
+                    const values = await api(
+                        '/api/tag-values?' + new URLSearchParams({ name: key }) + dirParam('&')
+                    );
+                    state.kvValueCache[key] = values;
+                } catch (_) {
+                    state.kvValueCache[key] = [];
+                }
+            }
+            const allVals = state.kvValueCache[key] || [];
+            const matched = allVals
+                .filter(v => !valQuery || String(v.value).toLowerCase().includes(valQuery))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 15);
+            return { type: 'value', key, matches: matched };
+        }
+        return { type: 'tag', matches: getTagMatches(raw) };
+    }
+
+    async function buildDropdown(raw) {
+        const result = await getMatches(raw.trim());
         if (!_dropdown) {
             _dropdown = document.createElement('ul');
             _dropdown.className = 'tag-autocomplete';
             inputEl.parentElement.appendChild(_dropdown);
         }
         _activeIdx = -1;
-        if (!tags.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
-        _dropdown.innerHTML = tags.map(tag => {
-            const dot = tag.color
-                ? `<span class="tag-color-dot" style="background:${tag.color}"></span>`
-                : '';
-            return `<li data-tagname="${esc(tag.name)}">${dot}<span class="ac-name">${esc(tag.name)}</span><span class="ac-count">${tag.count}</span></li>`;
-        }).join('');
+        if (result.type === 'tag') {
+            const tags = result.matches;
+            if (!tags.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
+            _dropdown.innerHTML = tags.map(tag => {
+                const dot = tag.color
+                    ? `<span class="tag-color-dot" style="background:${tag.color}"></span>`
+                    : '';
+                return `<li data-tagname="${esc(tag.name)}">${dot}<span class="ac-name">${esc(tag.name)}</span><span class="ac-count">${tag.count}</span></li>`;
+            }).join('');
+        } else {
+            const { key, matches } = result;
+            if (!matches.length) { _dropdown.innerHTML = ''; _dropdown.hidden = true; return; }
+            _dropdown.innerHTML = matches.map(v =>
+                `<li data-tagname="${esc(key + '=' + v.value)}"><span class="ac-name">${esc(key + '=')}<strong>${esc(String(v.value))}</strong></span><span class="ac-count">${v.count}</span></li>`
+            ).join('');
+        }
         _dropdown.hidden = false;
         _dropdown.querySelectorAll('li').forEach(li => {
             li.addEventListener('mousedown', e => {
@@ -508,7 +545,7 @@ function attachTagAutocomplete(inputEl, submitFn) {
         }
     }
 
-    inputEl.addEventListener('input', () => buildDropdown(getMatches(inputEl.value.trim())));
+    inputEl.addEventListener('input', () => buildDropdown(inputEl.value));
 
     inputEl.addEventListener('blur', () => setTimeout(closeDropdown, 150));
 
@@ -517,7 +554,7 @@ function attachTagAutocomplete(inputEl, submitFn) {
         const count = items.length;
         if (e.key === 'ArrowDown') {
             e.preventDefault();
-            if (!_dropdown || _dropdown.hidden) buildDropdown(getMatches(inputEl.value.trim()));
+            if (!_dropdown || _dropdown.hidden) buildDropdown(inputEl.value);
             setActive(Math.min(_activeIdx + 1, count - 1));
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
@@ -525,14 +562,21 @@ function attachTagAutocomplete(inputEl, submitFn) {
         } else if (e.key === 'Escape') {
             e.preventDefault();
             closeDropdown();
-        } else if (e.key === 'Enter' || e.key === 'Tab') {
-            e.preventDefault();
-            if (_activeIdx >= 0 && !_dropdown.hidden) {
+        } else if (e.key === 'Tab') {
+            // Accept active completion, then let Tab naturally move focus.
+            // Do NOT submit — user explicitly wants Tab to only navigate fields.
+            if (_activeIdx >= 0 && _dropdown && !_dropdown.hidden) {
                 inputEl.value = items[_activeIdx].dataset.tagname;
-                closeDropdown();
-            } else {
-                closeDropdown();
+                e.preventDefault(); // prevent focus move after in-place completion
             }
+            closeDropdown();
+            // No submitFn() call — Enter or button submit only.
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (_activeIdx >= 0 && _dropdown && !_dropdown.hidden) {
+                inputEl.value = items[_activeIdx].dataset.tagname;
+            }
+            closeDropdown();
             submitFn();
         }
     });
