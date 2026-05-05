@@ -678,7 +678,7 @@ function renderTagTreeNode(node, depth) {
                     onclick="toggleTagFilter('${jesc(valFilter)}')"
                     oncontextmenu="showKvValueMenu(event,'${jesc(fullPath)}','${jesc(v.value)}')"
                     title="${esc(fullPath)}=${esc(v.value)}">
-                    <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
+                    <span class="tag-check-placeholder"></span><span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
                 </button>`;
             }
         } else {
@@ -720,7 +720,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
             </button>
         </div>`;
     if (expanded) {
-        html += `<div class="tag-group-items open">`;
+        html += `<div class="tag-kv-inline-values">`;
         if (values.length) {
             for (const v of values) {
                 const valFilter = `${tag.name}=${v.value}`;
@@ -729,7 +729,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                     onclick="toggleTagFilter('${jesc(valFilter)}')"
                     oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
                     title="${esc(tag.name)}=${esc(v.value)}">
-                    <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
+                    <span class="tag-check-placeholder"></span><span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
                 </button>`;
             }
         } else {
