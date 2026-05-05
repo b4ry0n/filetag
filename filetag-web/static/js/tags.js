@@ -196,7 +196,7 @@ function _renderDistributionPanel() {
             onclick="openSectionExclusive('distribution', event)"
             ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'distribution')">
             ${_sectionDragHandle('distribution')}
-            <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+            <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             Distribution
         </div>`;
     }
@@ -235,7 +235,7 @@ function _renderDistributionPanel() {
         onclick="openSectionExclusive('distribution', event)"
         ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'distribution')">
         ${_sectionDragHandle('distribution')}
-        <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+        <button class="section-chevron-btn" onclick="sectionChevronClick('distribution',event)" title="Toggle independently"><svg class="chevron-icon" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         Distribution
     </div><div class="dist-panel">${bars}</div>`;
 }
@@ -513,10 +513,8 @@ const TAG_COLORS = [
 // ---------------------------------------------------------------------------
 
 function colorDot(color) {
-    if (color) {
-        return `<span class="tag-color-dot" style="background:${color}"></span>`;
-    }
-    return `<span class="tag-color-dot tag-color-dot-empty"></span>`;
+    if (!color) return '';
+    return `<span class="tag-color-dot" style="background:${color}"></span>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -631,11 +629,11 @@ function renderTagTreeNode(node, depth) {
             const checkIcon = checked
                 ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
                 : '<span class="tag-check-placeholder"></span>';
-            return `<button class="${cls}${checkedCls}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
+            return `<button class="${cls}${checkedCls}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
         }
 
         const check = active ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '<span class="tag-check-placeholder"></span>';
-        return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node (has children; may also have a tag at this exact path) ---
@@ -692,9 +690,9 @@ function renderTagTreeNode(node, depth) {
     return `<div class="tag-group"${marginStyle}>
         <div class="tag-group-label${groupActiveClass}${expandedClass}">
             <button class="tag-group-chevron" onclick="toggleTagGroup('${jesc(fullPath)}')" title="Expand/collapse">
-                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name${groupPickedCls}" onclick="${groupNameClick}"${rootContextMenu}${groupDrag} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, f)}${synBadge}${kvBadge} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name${groupPickedCls}" onclick="${groupNameClick}"${rootContextMenu}${groupDrag} ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${_highlightMatch(segment, f)}${synBadge}${kvBadge}${colorDot(groupColor)} <span class="count">${totalCount}</span></button>
         </div>
         ${kvValuesHtml}
         <div class="tag-group-items${showOpen ? ' open' : ''}">
@@ -715,10 +713,10 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
     let html = `<div class="tag-group tag-kv-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${active}">
             <button class="tag-group-chevron" onclick="toggleKvExpand('${jesc(tag.name)}')" title="Show values">
-                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="tag-group-name" draggable="true" ondragstart="tagDragStart(event,'${jesc(tag.name)}')" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(tag.name)}')">
-                ${colorDot(tag.color)}${_highlightMatch(segment, f)}${synBadge} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
+                ${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
             </button>
         </div>`;
     if (expanded) {
@@ -824,7 +822,7 @@ function renderTags() {
                 onclick="openSectionExclusive('ai', event)"
                 ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'ai')">
                 ${_sectionDragHandle('ai')}
-                <button class="section-chevron-btn" onclick="sectionChevronClick('ai',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+                <button class="section-chevron-btn" onclick="sectionChevronClick('ai',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 AI Tags<span class="count">${aiTotal}</span>
             </div>${aiExpanded ? `<div class="ai-section-body">${aiBodyHtml}</div>` : ''}`;
         }
@@ -844,7 +842,7 @@ function renderTags() {
                 onclick="openSectionExclusive('people', event)"
                 ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'people')">
                 ${_sectionDragHandle('people')}
-                <button class="section-chevron-btn" onclick="sectionChevronClick('people',event)" title="Toggle independently"><svg class="chevron-icon${peopleCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+                <button class="section-chevron-btn" onclick="sectionChevronClick('people',event)" title="Toggle independently"><svg class="chevron-icon${peopleCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 People<span class="count">${namedCount}</span>
             </div>${peopleCollapsed ? '' : `<div class="people-section-body">${peopleBodyHtml}</div>`}`;
         }
@@ -862,7 +860,7 @@ function renderTags() {
                 onclick="openSectionExclusive('tags', event)"
                 ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'tags')">
                 ${_sectionDragHandle('tags')}
-                <button class="section-chevron-btn" onclick="sectionChevronClick('tags',event)" title="Toggle independently"><svg class="chevron-icon${tagsChevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+                <button class="section-chevron-btn" onclick="sectionChevronClick('tags',event)" title="Toggle independently"><svg class="chevron-icon${tagsChevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 Tags<span class="count">${tagCount}</span>
             </div>${tagsBody ? `<div class="tags-section-body">${tagsBody}</div>` : ''}`;
         }
@@ -961,7 +959,7 @@ function _renderSubjectsInline() {
         onclick="openSectionExclusive('subjects', event)"
         ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'subjects')">
         ${_sectionDragHandle('subjects')}
-        <button class="section-chevron-btn" onclick="sectionChevronClick('subjects',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="14" height="14"><polygon points="2,2.5 10,2.5 6,9" fill="currentColor"/></svg></button>
+        <button class="section-chevron-btn" onclick="sectionChevronClick('subjects',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         Subjects<span class="count">${totalCount}</span>
     </div>${collapsed ? '' : `<div class="subjects-section-body">${bodyHtml}</div>`}`;
 }
@@ -1008,12 +1006,12 @@ function renderSubjectTreeNode(node, depth) {
             ? `toggleSubjectPick('${jesc(fullPath)}')`
             : `doSubjectSearch('${jesc(fullPath)}')`;
         // In picker mode: radio-style indicator (filled circle = selected).
-        // In normal mode: no indicator (subjects have no checkmark column).
+        // In normal mode: empty placeholder for alignment with tag items.
         const indicator = state.tagPickerMode
             ? (state.tagPickerSubject === fullPath
                 ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>'
                 : '<span class="tag-check-placeholder"></span>')
-            : '';
+            : '<span class="tag-check-placeholder"></span>';
         const pickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
         // Depth indent: same mechanism as tag leaf items — margin-left on the element itself.
         const indentStyle = depth > 0 ? ' style="margin-left:12px"' : '';
@@ -1038,7 +1036,7 @@ function renderSubjectTreeNode(node, depth) {
     return `<div class="tag-group subject-tree-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${activeClass}">
             <button class="tag-group-chevron" onclick="toggleSubjectGroup('${jesc(fullPath)}')" title="Expand/collapse">
-                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="tag-group-name${groupPickedCls}" onclick="${groupClickFn}" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')">${esc(segment)} <span class="count">${totalCount}</span></button>
         </div>
@@ -1562,7 +1560,7 @@ function showTagManager(selectTag) {
                 <div class="tm-list-col">
                     <div class="tm-list-header">
                         <button class="sidebar-sort-btn active" id="tm-sort-btn" onclick="toggleTagSortMode()" title="Sort: groups first">
-                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="10" y2="8"/><line x1="2" y1="12" x2="6" y2="12"/>
                             </svg>
                             <span class="sort-label">Groups first</span>
@@ -1696,7 +1694,7 @@ function renderTmTagTreeNode(node, depth) {
         //   so tag-item (padding-left:22px) gives dot at 12+22+12+4 = 50px — same as sidebar.
         //   No extra margin or padding needed; the parent div handles the indentation.
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
-        return `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder"></span>${colorDot(tag.color)}${_highlightMatch(segment, q)}${kvBadge}${synBadge} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder"></span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node ---
@@ -1712,9 +1710,9 @@ function renderTmTagTreeNode(node, depth) {
     return `<div class="tag-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${sel}">
             <button class="tag-group-chevron" onclick="tmToggleGroup('${jesc(fullPath)}')" title="Expand/collapse">
-                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name"${groupDrag} onclick="tmSelectTag('${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${colorDot(groupColor)}${_highlightMatch(segment, q)}${kvBadge}${synBadge} <span class="count">${totalCount}</span></button>
+            <button class="tag-group-name"${groupDrag} onclick="tmSelectTag('${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(groupColor)} <span class="count">${totalCount}</span></button>
         </div>
         <div class="tag-group-items${expanded ? ' open' : ''}">
             ${expanded ? renderTmTagTreeNodes(children, depth + 1) : ''}

@@ -235,11 +235,11 @@ mark.tag-filter-match {
    SIDEBAR TREE ROW SYSTEM — VSCode-style unified layout
    ===================================================================
    Row anatomy (left → right):
-     [4px base-indent] [TOGGLE 22px] [ICON 16px] [LABEL flex-1] [COUNT auto] [right: 8px]
+     [4px base-indent] [TOGGLE 16px+3px] [LABEL flex-1] [COLOR-DOT?] [BADGES] [COUNT] [right: 8px]
 
    TOGGLE  = chevron button (groups) | check/radio indicator (leaves)
-   ICON    = color-dot | empty 16px slot | "=" for k=v value rows
    LABEL   = tag name / subject / value text (overflows via ellipsis)
+   COLOR-DOT = only rendered when tag has a colour (after label)
    COUNT   = item count badge, right-aligned, muted
 
    Depth indent: applied as `margin-left: var(--tree-indent)` on
@@ -249,8 +249,8 @@ mark.tag-filter-match {
 :root {
     --tree-row-h:    22px;   /* row height — same as VS Code explorer */
     --tree-indent:   12px;   /* per-level indent applied by JS/containers */
-    --tree-toggle-w: 22px;   /* check/radio indicator zone (leaf rows) */
-    --tree-icon-w:   16px;   /* color-dot / icon zone */
+    --tree-toggle-w: 16px;   /* check/radio indicator zone + chevron zone */
+    --tree-icon-w:   16px;   /* kv-eq icon zone (kept for kv rows) */
     --tree-base-pl:   4px;   /* base left breathing room */
     /* Note: group chevron (twistie) is hardcoded to 16px + translateX(3px)
        matching VSCode tree.css .monaco-tl-twistie geometry. */
@@ -298,7 +298,12 @@ mark.tag-filter-match {
     border: none;
     cursor: pointer;
     transform: translateX(3px);
+    opacity: 0.5;
+    transition: opacity 0.1s;
 }
+.tag-group-label:hover .tag-group-chevron,
+.tag-group-label.active .tag-group-chevron,
+.tag-group-label.expanded .tag-group-chevron { opacity: 1; }
 /* Chevron arrow icon */
 .chevron-icon {
     width: 16px;
@@ -380,18 +385,13 @@ mark.tag-filter-match {
     color: var(--primary);
 }
 
-/* ── ICON zone (16px): color dot ────────────────────────────────── */
+/* ── Color dot: trailing indicator after the label ─────────────── */
 .tag-color-dot {
     flex-shrink: 0;
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-right: 8px;   /* 8px gap: dot(8) + margin(8) = 16px icon zone */
-}
-.tag-color-dot-empty {
-    background: transparent;
-    border: 1.5px solid var(--text-tertiary);
-    opacity: 0.45;
+    margin-left: 5px;   /* after text, before count */
 }
 
 /* ── Leaf item: padding override (toggle zone provides left indent) */
@@ -422,7 +422,7 @@ mark.tag-filter-match {
     font-size: 12px;
     font-weight: 400;
     font-style: italic;
-    padding-left: calc(var(--tree-base-pl) + var(--tree-toggle-w) + var(--tree-icon-w));
+    padding-left: calc(var(--tree-base-pl) + var(--tree-toggle-w));
 }
 
 /* Active filter bar \u2014 compact single line at top of scrollable list */
