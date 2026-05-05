@@ -200,16 +200,24 @@ pub async fn api_similar(
 
     // Extract owned values from the borrowed root — the borrow must not cross
     // any `.await` point because `rusqlite::Connection` is `!Send`.
-    let (db_path, root_path, rel_path) = {
+    //
+    // `q.path` is always a DB-relative path sent from the frontend (e.g.
+    // `Manga/archive.cbz::entry.jpg`).  Do NOT call `relative_to_root` here
+    // because that function runs `std::fs::canonicalize` which fails for
+    // virtual archive-entry paths that contain `::`.
+    let (db_path, root_path) = {
         let root = root_for_dir(&state, Path::new(dir_path))
             .ok_or_else(|| anyhow::anyhow!("No database root found for this path"))?;
-        let abs = PathBuf::from(&q.path);
-        let rel = db::relative_to_root(&abs, &root.root)?;
-        (root.db_path.clone(), root.root.clone(), rel)
+        (root.db_path.clone(), root.root.clone())
     };
+    let rel_path = q.path.clone();
 
     let n = q.n.unwrap_or(20).min(100);
-    let abs_path = PathBuf::from(&q.path);
+    // Build an absolute path for on-the-fly hashing.  For archive entries
+    // (path contains `::`) this path won't exist on disk; `similar_by_phash`
+    // handles that gracefully by returning an empty result when no stored hash
+    // is found.
+    let abs_path = root_path.join(&rel_path);
 
     similar_by_phash(&db_path, &root_path, &abs_path, &rel_path, n).await
 }
@@ -235,6 +243,17 @@ async fn similar_by_phash(
     let query_hash: u64 = match existing {
         Some(h) => h,
         None => {
+            // Archive entries (paths containing `::`) cannot be opened
+            // directly as image files — they need to be extracted first.
+            // When no stored hash exists for an archive entry, return an
+            // empty result rather than attempting a doomed filesystem read.
+            if rel_path.contains("::") {
+                return Ok(Json(serde_json::json!({
+                    "method": "phash",
+                    "results": [],
+                })));
+            }
+
             // Compute hash asynchronously — no DB conn held here.
             let ext = abs_path
                 .extension()
