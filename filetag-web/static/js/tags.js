@@ -2290,12 +2290,12 @@ async function renderTmSubjectDetail(name) {
         </div>
 
         <section class="tm-section">
-            <div class="tm-section-title">Kenmerken
-                <span class="tm-section-hint">(eigenschappen die dit subject beschrijven)</span>
+            <div class="tm-section-title">Tags
+                <span class="tm-section-hint">(tags die dit subject beschrijven — kenmerken van het subject zelf)</span>
             </div>
             ${subjProps.length
                 ? `<div class="tm-val-list">${propRows}</div>`
-                : `<div class="tm-empty-hint">Geen kenmerken ingesteld.</div>`}
+                : `<div class="tm-empty-hint">Nog geen tags ingesteld.</div>`}
             <div class="tm-syn-add" style="margin-top:6px">
                 <input id="tm-subj-prop-tag" class="tm-input" type="text"
                     placeholder="Kenmerk (bijv. geslacht, geboren\u2026)"
