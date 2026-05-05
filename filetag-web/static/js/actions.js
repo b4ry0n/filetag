@@ -1237,17 +1237,58 @@ async function aiSaveSettings() {
 
 async function indexPhash() {
     const btn = document.getElementById('index-phash-btn');
+    const cancelBtn = document.getElementById('cancel-phash-btn');
     const statusEl = document.getElementById('similarity-status');
+    const barEl = document.getElementById('similarity-progress-bar');
+    const barFill = document.getElementById('similarity-progress-fill');
     if (btn) { btn.disabled = true; btn.textContent = 'Indexing…'; }
+    if (cancelBtn) cancelBtn.hidden = false;
+    if (barEl) barEl.hidden = false;
+
+    let pollId = null;
+    async function pollProgress() {
+        try {
+            const p = await api('/api/similar/index-phash/progress');
+            if (p && p.total > 0) {
+                const pct = Math.round((p.done / p.total) * 100);
+                if (barFill) barFill.style.width = pct + '%';
+                if (statusEl) statusEl.textContent =
+                    `${p.done} / ${p.total} (${pct}%)` +
+                    (p.current ? ` — ${p.current.split('/').pop()}` : '');
+            }
+            if (p && p.running) pollId = setTimeout(pollProgress, 400);
+        } catch (_) {}
+    }
+    pollId = setTimeout(pollProgress, 300);
+
     try {
         const res = await apiPost('/api/similar/index-phash', { dir: currentAbsDir() });
-        if (statusEl) statusEl.textContent = `pHash: ${res.indexed} indexed, ${res.skipped} skipped, ${res.errors} errors (${res.total} total)`;
-        showToast(`pHash: ${res.indexed} indexed`);
+        clearTimeout(pollId);
+        if (barFill) barFill.style.width = '100%';
+        if (res.cancelled) {
+            if (statusEl) statusEl.textContent =
+                `Cancelled — ${res.indexed} indexed, ${res.skipped} skipped, ${res.errors} errors`;
+            showToast('pHash scan cancelled', 'info');
+        } else {
+            if (statusEl) statusEl.textContent =
+                `Done — ${res.indexed} indexed, ${res.skipped} skipped, ${res.errors} errors (${res.total} total)`;
+            showToast(`pHash: ${res.indexed} indexed`);
+        }
     } catch (e) {
+        clearTimeout(pollId);
         showToast(String(e), 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Index pHash (visual)'; }
+        if (cancelBtn) cancelBtn.hidden = true;
     }
+}
+
+async function cancelPhash() {
+    try {
+        await apiPost('/api/similar/index-phash/cancel', {});
+    } catch (_) {}
+    const cancelBtn = document.getElementById('cancel-phash-btn');
+    if (cancelBtn) cancelBtn.disabled = true;
 }
 
 async function loadSimilarFiles(path, n = 20) {

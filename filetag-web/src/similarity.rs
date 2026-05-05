@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use walkdir::WalkDir;
 
@@ -16,10 +17,24 @@ use axum::{
     extract::{Query, State},
 };
 use image::imageops;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::state::{AppError, AppState, root_for_dir};
 use filetag_lib::db;
+
+// ---------------------------------------------------------------------------
+// Progress tracking
+// ---------------------------------------------------------------------------
+
+/// Progress snapshot for a running (or recently completed) pHash index job.
+#[derive(Default, Clone, Serialize)]
+pub struct PhashProgress {
+    pub running: bool,
+    pub done: usize,
+    pub total: usize,
+    pub current: Option<String>,
+    pub cancelled: bool,
+}
 
 // ---------------------------------------------------------------------------
 // dHash
@@ -65,6 +80,10 @@ const IMAGE_EXTS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "tiff", "tif", "bmp", "gif", "ico",
 ];
 
+const VIDEO_EXTS: &[&str] = &[
+    "mp4", "mkv", "mov", "avi", "webm", "m4v", "mpg", "mpeg", "ogv", "ts",
+];
+
 /// Open a SQLite connection with standard pragmas, given a path to the `.db` file.
 ///
 /// IMPORTANT: The returned `Connection` is `!Send`.  Never hold it across an
@@ -76,6 +95,62 @@ fn open_db(db_path: &Path) -> Result<rusqlite::Connection, AppError> {
     )
     .map_err(|e| AppError(e.into()))?;
     Ok(conn)
+}
+
+/// Extract a single representative frame from a video file via ffmpeg and
+/// return the decoded image.  Returns `None` when ffmpeg is unavailable or
+/// the file cannot be decoded.
+async fn video_frame_image(abs: &Path) -> Option<image::DynamicImage> {
+    let output = tokio::process::Command::new("nice")
+        .args(["-n", "10", "ffmpeg", "-ss", "00:00:05", "-i"])
+        .arg(abs)
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=128:-2",
+            "-q:v",
+            "5",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+            "-loglevel",
+            "error",
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        // Try again from the very start (some videos are < 5 s).
+        let output2 = tokio::process::Command::new("nice")
+            .args(["-n", "10", "ffmpeg", "-i"])
+            .arg(abs)
+            .args([
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=128:-2",
+                "-q:v",
+                "5",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+                "-loglevel",
+                "error",
+            ])
+            .output()
+            .await
+            .ok()?;
+        if !output2.status.success() || output2.stdout.is_empty() {
+            return None;
+        }
+        return image::load_from_memory(&output2.stdout).ok();
+    }
+    image::load_from_memory(&output.stdout).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +338,7 @@ pub async fn api_index_phash(
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            IMAGE_EXTS.contains(&ext.as_str())
+            IMAGE_EXTS.contains(&ext.as_str()) || VIDEO_EXTS.contains(&ext.as_str())
         })
         .filter_map(|e| {
             let rel = e
@@ -281,7 +356,40 @@ pub async fn api_index_phash(
     let mut skipped = 0usize;
     let mut errors = 0usize;
 
+    // Mark job as started and reset cancel flag.
+    state.phash_cancel.store(false, Ordering::Relaxed);
+    {
+        let mut prog = state.phash_progress.lock().unwrap();
+        *prog = PhashProgress {
+            running: true,
+            done: 0,
+            total,
+            current: None,
+            cancelled: false,
+        };
+    }
+
     for (abs, rel_path) in candidate_paths {
+        // Check for cancellation at the start of every iteration.
+        if state.phash_cancel.load(Ordering::Relaxed) {
+            let mut prog = state.phash_progress.lock().unwrap();
+            prog.running = false;
+            prog.cancelled = true;
+            prog.done = indexed + skipped + errors;
+            return Ok(Json(serde_json::json!({
+                "cancelled": true,
+                "total": total,
+                "indexed": indexed,
+                "skipped": skipped,
+                "errors": errors,
+            })));
+        }
+        // Update progress with the current file name.
+        {
+            let mut prog = state.phash_progress.lock().unwrap();
+            prog.current = Some(rel_path.clone());
+            prog.done = indexed + skipped + errors;
+        }
         // Index the file if not already in the DB, then check whether it
         // already has a pHash.  All synchronous DB work is done in a short
         // block so no connection is held across the await below.
@@ -324,15 +432,29 @@ pub async fn api_index_phash(
             continue;
         }
 
-        // Decode image — no DB conn held across this await.
-        let img_result = tokio::task::spawn_blocking({
-            let p = abs.clone();
-            move || image::open(&p)
-        })
-        .await;
+        // Decode image or extract a video frame — no DB conn held across await.
+        let is_video = {
+            let ext = abs
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            VIDEO_EXTS.contains(&ext.as_str())
+        };
+
+        let img_result: Option<image::DynamicImage> = if is_video {
+            video_frame_image(&abs).await
+        } else {
+            tokio::task::spawn_blocking({
+                let p = abs.clone();
+                move || image::open(&p).ok()
+            })
+            .await
+            .unwrap_or(None)
+        };
 
         match img_result {
-            Ok(Ok(img)) => {
+            Some(img) => {
                 let hash = dhash(&img);
                 let conn = match open_db(&db_path) {
                     Ok(c) => c,
@@ -348,10 +470,22 @@ pub async fn api_index_phash(
                 }
                 // conn dropped here
             }
-            _ => {
+            None => {
                 errors += 1;
             }
         }
+    }
+
+    // Mark job as complete.
+    {
+        let mut prog = state.phash_progress.lock().unwrap();
+        *prog = PhashProgress {
+            running: false,
+            done: total,
+            total,
+            current: None,
+            cancelled: false,
+        };
     }
 
     Ok(Json(serde_json::json!({
@@ -360,6 +494,24 @@ pub async fn api_index_phash(
         "skipped": skipped,
         "errors": errors,
     })))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/similar/index-phash/progress
+// ---------------------------------------------------------------------------
+
+pub async fn api_phash_progress(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let prog = state.phash_progress.lock().unwrap().clone();
+    Json(serde_json::json!(prog))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/similar/index-phash/cancel
+// ---------------------------------------------------------------------------
+
+pub async fn api_cancel_phash(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    state.phash_cancel.store(true, Ordering::Relaxed);
+    Json(serde_json::json!({ "ok": true }))
 }
 
 // ---------------------------------------------------------------------------

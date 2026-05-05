@@ -236,6 +236,8 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         roots,
         ai_progress: std::sync::Mutex::new(AiProgress::default()),
+        phash_progress: std::sync::Mutex::new(crate::similarity::PhashProgress::default()),
+        phash_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         face_progress: std::sync::Mutex::new(crate::face::FaceProgress::default()),
         model_download: std::sync::Mutex::new(crate::face::ModelDownloadProgress::default()),
         saliency_download: std::sync::Mutex::new(
@@ -357,6 +359,14 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/similar/index-phash",
             post(similarity::api_index_phash),
+        )
+        .route(
+            "/api/similar/index-phash/progress",
+            get(similarity::api_phash_progress),
+        )
+        .route(
+            "/api/similar/index-phash/cancel",
+            post(similarity::api_cancel_phash),
         )
         // Saliency model routes
         .route("/api/saliency/status", get(saliency::api_saliency_status))

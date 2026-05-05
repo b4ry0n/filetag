@@ -6,6 +6,8 @@
 //! correct child database.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Context;
 use axum::{
@@ -21,6 +23,7 @@ use rusqlite::Connection;
 use crate::ai::AiProgress;
 use crate::face::{FaceProgress, ModelDownloadProgress};
 use crate::saliency::SaliencyDownloadProgress;
+use crate::similarity::PhashProgress;
 
 // ---------------------------------------------------------------------------
 // Feature flags
@@ -111,6 +114,11 @@ pub struct AppState {
     pub roots: Vec<TagRoot>,
     /// Progress information for the current AI batch job (if any).
     pub ai_progress: std::sync::Mutex<AiProgress>,
+    /// Progress information for the current pHash index job (if any).
+    pub phash_progress: std::sync::Mutex<PhashProgress>,
+    /// Cancellation flag for the pHash index job.  Set to `true` to request
+    /// an early stop; reset to `false` at the start of each new job.
+    pub phash_cancel: Arc<AtomicBool>,
     /// Progress information for the current face-analysis batch (if any).
     pub face_progress: std::sync::Mutex<FaceProgress>,
     /// Progress for the model download (if active).

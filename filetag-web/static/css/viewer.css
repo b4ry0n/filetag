@@ -329,7 +329,7 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 20px;
 }
 
 .modal-body label {
@@ -392,6 +392,22 @@
     font-weight: 600;
     color: var(--fg);
     margin: 0 0 4px;
+}
+
+/* Progress bar (used for pHash indexing etc.) */
+.progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+}
+.progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent, #6ba3f7);
+    border-radius: 2px;
+    transition: width .3s ease;
 }
 
 .ai-test-result {

@@ -441,9 +441,13 @@
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
                     <div class="modal-section">
                         <div class="modal-section-title">Similarity index</div>
-                        <small>Pre-compute visual hashes (pHash) for all image files.</small>
-                        <div class="modal-actions" style="margin-top:6px">
+                        <small>Pre-compute visual hashes (pHash) for all image and video files.</small>
+                        <div class="modal-actions" style="margin-top:6px;display:flex;gap:6px;align-items:center">
                             <button id="index-phash-btn" onclick="indexPhash()">Index pHash (visual)</button>
+                            <button id="cancel-phash-btn" onclick="cancelPhash()" hidden style="color:var(--danger,#e05252)">Cancel</button>
+                        </div>
+                        <div id="similarity-progress-bar" class="progress-bar" hidden>
+                            <div id="similarity-progress-fill" class="progress-bar-fill"></div>
                         </div>
                         <div id="similarity-status" style="font-size:.85em;opacity:.7;margin-top:4px"></div>
                     </div>
