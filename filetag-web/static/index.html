@@ -123,8 +123,7 @@
                         </button>
                         <div class="toolbar-dropdown" id="more-menu" hidden>
                             <div class="toolbar-dropdown-section" data-i18n="toolbar.section-cache">Cache</div>
-                            <button onclick="clearCache(false)" data-i18n="toolbar.cache-page">Clear page cache</button>
-                            <button onclick="openCacheManager()" data-i18n="toolbar.cache-mgr">Cache manager&hellip;</button>
+                            <button onclick="clearCache(false)" data-i18n="toolbar.cache-page">Clear cache for this page</button>
                             <hr>
                             <div class="toolbar-dropdown-section" data-i18n="toolbar.section-video">Video</div>
                             <button id="pregen-sprites-btn" onclick="pregenSprites()" data-i18n="toolbar.sprites-gen">Generate video sprites</button>
@@ -136,6 +135,7 @@
                             <hr>
                             <div class="toolbar-dropdown-section" data-i18n="toolbar.section-app">App</div>
                             <button id="settings-btn" onclick="openSettings()" data-i18n="toolbar.settings">Settings&hellip;</button>
+                            <button onclick="openCacheManager()" data-i18n="toolbar.maintenance">Maintenance&hellip;</button>
                             <button id="logout-btn" onclick="doLogout()" data-i18n="toolbar.signout" hidden>Sign out</button>
                         </div>
                     </div>
