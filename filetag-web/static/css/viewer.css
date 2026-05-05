@@ -329,15 +329,15 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 14px;
 }
 
 .modal-body label {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
     font-size: 13px;
-    color: var(--fg-dim);
+    color: var(--fg);
 }
 
 .modal-body input,
@@ -356,7 +356,7 @@
 .modal-actions {
     display: flex;
     gap: 8px;
-    padding-top: 8px;
+    padding-top: 12px;
 }
 .modal-actions button {
     padding: 6px 14px;
@@ -380,6 +380,19 @@
     cursor: pointer;
 }
 .use-default-btn:hover { color: var(--fg); }
+
+/* Section headings inside modal body */
+.modal-section {
+    margin-top: 4px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+}
+.modal-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+    margin: 0 0 4px;
+}
 
 .ai-test-result {
     margin-top: 8px;

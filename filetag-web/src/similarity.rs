@@ -8,6 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use walkdir::WalkDir;
+
 use anyhow::Result;
 use axum::{
     Json,
@@ -241,39 +243,88 @@ pub async fn api_index_phash(
     };
     let force = req.force.unwrap_or(false);
 
-    // Collect files that need hashing — connection dropped before any await.
-    let files: Vec<(i64, String)> = {
-        let conn = open_db(&db_path)?;
-        let query = if force {
-            "SELECT id, path FROM files"
-        } else {
-            "SELECT id, path FROM files WHERE phash IS NULL"
-        };
-        let mut stmt = conn.prepare(query)?;
-        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(|r| r.ok())
-            .collect()
-        // conn dropped here
-    };
+    // Walk the filesystem to discover all image files under the root — this
+    // includes files not yet in the database.  We collect (abs_path, rel_path)
+    // pairs first so no DB connection is held during the filesystem scan.
+    let filetag_dir = root_path.join(".filetag");
+    let candidate_paths: Vec<(PathBuf, String)> = WalkDir::new(&root_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| {
+            // Skip everything inside .filetag/
+            !e.path().starts_with(&filetag_dir)
+        })
+        .filter(|e| {
+            let ext = e
+                .path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            IMAGE_EXTS.contains(&ext.as_str())
+        })
+        .filter_map(|e| {
+            let rel = e
+                .path()
+                .strip_prefix(&root_path)
+                .ok()?
+                .to_string_lossy()
+                .into_owned();
+            Some((e.into_path(), rel))
+        })
+        .collect();
 
-    let total = files.len();
+    let total = candidate_paths.len();
     let mut indexed = 0usize;
     let mut skipped = 0usize;
     let mut errors = 0usize;
 
-    for (file_id, rel_path) in files {
-        let abs = root_path.join(&rel_path);
-        let ext = abs
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if !IMAGE_EXTS.contains(&ext.as_str()) {
+    for (abs, rel_path) in candidate_paths {
+        // Index the file if not already in the DB, then check whether it
+        // already has a pHash.  All synchronous DB work is done in a short
+        // block so no connection is held across the await below.
+        let file_id_and_needs_hash: Option<(i64, bool)> = {
+            let conn = match open_db(&db_path) {
+                Ok(c) => c,
+                Err(_) => {
+                    errors += 1;
+                    continue;
+                }
+            };
+            match db::get_or_index_file(&conn, &rel_path, &root_path) {
+                Ok(rec) => {
+                    let has_hash: bool = conn
+                        .query_row("SELECT phash FROM files WHERE id = ?1", [rec.id], |r| {
+                            r.get::<_, Option<String>>(0)
+                        })
+                        .unwrap_or(None)
+                        .is_some();
+                    Some((rec.id, !has_hash || force))
+                }
+                Err(_) => {
+                    errors += 1;
+                    continue;
+                }
+            }
+            // conn dropped here
+        };
+
+        let (file_id, needs_hash) = match file_id_and_needs_hash {
+            Some(v) => v,
+            None => {
+                skipped += 1;
+                continue;
+            }
+        };
+
+        if !needs_hash {
             skipped += 1;
             continue;
         }
 
-        // No DB conn held across this await.
+        // Decode image — no DB conn held across this await.
         let img_result = tokio::task::spawn_blocking({
             let p = abs.clone();
             move || image::open(&p)
@@ -283,8 +334,13 @@ pub async fn api_index_phash(
         match img_result {
             Ok(Ok(img)) => {
                 let hash = dhash(&img);
-                // Open fresh connection after the await to store the hash.
-                let conn = open_db(&db_path)?;
+                let conn = match open_db(&db_path) {
+                    Ok(c) => c,
+                    Err(_) => {
+                        errors += 1;
+                        continue;
+                    }
+                };
                 if db::store_phash(&conn, file_id, hash).is_ok() {
                     indexed += 1;
                 } else {
