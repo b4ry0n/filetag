@@ -19,7 +19,7 @@ use crate::saliency::SalientPoint;
 use crate::state::Features;
 use crate::state::{AppState, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir};
 use crate::types::DirParam;
-use crate::video::{orient_to_vf_prefix, serve_transcoded_mp4, video_thumb_strip};
+use crate::video::{orient_to_vf_prefix, video_thumb_strip};
 
 // ---------------------------------------------------------------------------
 // WebP encoding helpers
@@ -179,13 +179,6 @@ pub async fn preview_handler(
         }
         "heic" | "heif" => preview_heic(&abs, &cache_root, features).await,
         // Formats browsers cannot decode natively: transcode to mp4 via ffmpeg
-        "avi" | "wmv" | "mkv" | "flv" | "mpg" | "mpeg" | "3gp" | "f4v" | "m4v" => {
-            if features.video {
-                serve_transcoded_mp4(&abs, &cache_root, &headers).await
-            } else {
-                serve_file_range(&abs, &headers).await
-            }
-        }
         _ => serve_file_range(&abs, &headers).await,
     }
 }

@@ -325,6 +325,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/zip/entries", get(archive::api_zip_entries))
         .route("/api/dir/images", get(archive::api_dir_images))
         .route("/preview/{*path}", get(preview::preview_handler))
+        .route("/transcode/{*path}", get(video::transcode_handler))
         .route("/thumb/{*path}", get(preview::thumb_handler))
         .route("/api/vthumbs", get(video::api_vthumbs))
         .route("/api/vthumbs/pregenerate", post(video::api_vthumbs_pregen))

@@ -564,6 +564,22 @@
 }
 .subject-remove:hover { opacity: 1; color: var(--danger, #e74c3c); }
 
+.transcode-btn {
+    margin-top: 8px;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm, 4px);
+    border: 1px solid var(--primary, #5b9cf6);
+    background: transparent;
+    color: var(--primary, #5b9cf6);
+    cursor: pointer;
+    font-size: .85em;
+    transition: background .15s, color .15s;
+}
+.transcode-btn:hover {
+    background: var(--primary, #5b9cf6);
+    color: #fff;
+}
+
 .tag-subject-input {
     min-width: 0;
 }

@@ -7,19 +7,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
-    body::{Body, Bytes},
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json, Response},
 };
 use serde::Deserialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
     AppState, THUMB_LIMITER, TRANSCODE_LIMITER, VTHUMB_LIMITER, load_features_for, resolve_preview,
     root_for_dir,
 };
+use crate::types::DirParam;
 
 // ---------------------------------------------------------------------------
 // Video cache eviction
@@ -189,19 +188,15 @@ pub fn orient_to_vf_prefix(orient: u8) -> &'static str {
     }
 }
 
-/// Transcode (or remux) a video to MP4 and stream it to the client.
+/// Transcode (or remux) a video to MP4 and serve the cached result.
 ///
-/// When a cached copy already exists the response uses full Range support so
-/// the browser can seek freely. On the first play we spawn a single ffmpeg
-/// process that outputs fragmented MP4 (`frag_keyframe+empty_moov`) to stdout.
-/// The output is streamed directly to the browser via chunked transfer encoding
-/// while simultaneously being written to a cache file.  This means playback
-/// starts within seconds (no need to wait for the full transcode) and
-/// subsequent plays are served instantly from cache.
+/// Fast path (H.264/HEVC/AV1 source in a non-MP4 container): container-only
+/// remux, completes in seconds, then served with full Range/seek support.
 ///
-/// Fast path (H.264 source): container-only remux, completes in seconds.
-/// Slow path (HEVC/other): fMP4 streaming while writing to cache. Seeking
-/// is disabled on first play only.
+/// Slow path (codec that browsers cannot decode, e.g. MPEG-4 part 2):
+/// re-encodes to H.264 using all available CPU threads, waits for the full
+/// encode to complete, then serves the seekable faststart MP4 from cache.
+/// Subsequent plays are served instantly from cache.
 pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap) -> Response {
     let cache_path = match file_cache_path(path, root, "video", "v7.mp4") {
         Some(p) => p,
@@ -274,124 +269,67 @@ pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap)
         }
     }
 
-    // Slow path: video re-encoding needed (e.g. HEVC → H.264).
-    // Stream fragmented MP4 to the browser while simultaneously writing to
-    // cache. Seeking is not available on the first play; subsequent plays
-    // are served from the seekable cache file.
+    // Slow path: video re-encoding needed (e.g. MPEG-4 part 2 / DivX).
+    // Encode fully to a tmp file first, then serve the seekable faststart result.
+    // Uses all available CPU threads (-threads 0) for best encoding speed.
     let mut cmd = tokio::process::Command::new("nice");
     cmd.args(["-n", "10", "ffmpeg", "-y"])
         .arg("-i")
         .arg(path)
         .args(["-map", "0:v:0", "-map", "0:a:0?"])
         .args([
-            "-c:v", c_video, "-preset", "fast", "-crf", "23", "-threads", "2",
+            "-c:v", c_video, "-preset", "fast", "-crf", "23", "-threads", "0",
         ])
         .args(["-c:a", c_audio]);
     if c_audio != "copy" {
         cmd.args(["-b:a", "128k"]);
     }
-    cmd.args([
-        "-sn",
-        "-movflags",
-        "frag_keyframe+empty_moov+default_base_moof",
-    ])
-    .args(["-f", "mp4", "pipe:1"])
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .kill_on_drop(true);
+    cmd.args(["-sn", "-movflags", "+faststart", "-f", "mp4"])
+        .arg(&tmp)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
 
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(_) => {
-            drop(permit);
-            return serve_file_range(path, headers).await;
+    let ok = cmd.status().await.map(|s| s.success()).unwrap_or(false);
+
+    drop(permit);
+
+    if ok {
+        let _ = tokio::fs::rename(&tmp, &cache_path).await;
+        if let Some(dir) = cache_path.parent() {
+            let dir = dir.to_path_buf();
+            tokio::spawn(evict_video_cache(dir, VIDEO_CACHE_MAX_BYTES));
         }
+        serve_file_range(&cache_path, headers).await
+    } else {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        serve_file_range(path, headers).await
+    }
+}
+
+/// Axum handler for `/transcode/{*path}`: always returns a transcoded/remuxed
+/// MP4.  The result is cached in `.filetag/cache/video/`.
+pub async fn transcode_handler(
+    AxumPath(rel_path): AxumPath<String>,
+    Query(rp): Query<DirParam>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(rp.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
-
-    let stdout = match child.stdout.take() {
-        Some(s) => s,
-        None => {
-            drop(permit);
-            return serve_file_range(path, headers).await;
-        }
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
-
-    let cache_final = cache_path.clone();
-    let tmp_clone = tmp.clone();
-
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
-
-    tokio::spawn(async move {
-        let mut stdout = stdout;
-        let mut file = tokio::fs::File::create(&tmp_clone).await.ok();
-        let mut buf = vec![0u8; 64 * 1024];
-
-        loop {
-            match stdout.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    let chunk = Bytes::copy_from_slice(&buf[..n]);
-                    if let Some(ref mut f) = file {
-                        let _ = f.write_all(&chunk).await;
-                    }
-                    if tx.send(Ok(chunk)).await.is_err() {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                    break;
-                }
-            }
-        }
-
-        if let Some(mut f) = file.take() {
-            let _ = f.flush().await;
-        }
-
-        drop(stdout);
-        let ok = child.wait().await.map(|s| s.success()).unwrap_or(false);
-        drop(permit);
-
-        if ok {
-            // Post-process the fragmented MP4 into a seekable file with
-            // faststart so that the second (and subsequent) plays have a
-            // full seekable timeline with correct duration.
-            let staging = tmp_clone.with_extension("staging.mp4");
-            if tokio::fs::rename(&tmp_clone, &staging).await.is_ok() {
-                let ok2 = tokio::process::Command::new("ffmpeg")
-                    .args(["-y", "-i"])
-                    .arg(&staging)
-                    .args(["-c", "copy", "-movflags", "+faststart"])
-                    .arg(&cache_final)
-                    .stderr(std::process::Stdio::null())
-                    .kill_on_drop(true)
-                    .status()
-                    .await
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                let _ = tokio::fs::remove_file(&staging).await;
-                if ok2 {
-                    if let Some(dir) = cache_final.parent() {
-                        evict_video_cache(dir.to_path_buf(), VIDEO_CACHE_MAX_BYTES).await;
-                    }
-                } else {
-                    let _ = tokio::fs::remove_file(&cache_final).await;
-                }
-            } else {
-                let _ = tokio::fs::remove_file(&tmp_clone).await;
-            }
-        } else {
-            let _ = tokio::fs::remove_file(&tmp_clone).await;
-        }
-    });
-
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "video/mp4")
-        .body(Body::from_stream(stream))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    let features = load_features_for(&state, &db_root.root);
+    if !features.video {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Video feature not enabled").into_response();
+    }
+    serve_transcoded_mp4(&abs, &cache_root, &headers).await
 }
 
 // ---------------------------------------------------------------------------

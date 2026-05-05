@@ -204,10 +204,36 @@ function _previewRawError(img) {
 
 function _previewVideoError(video) {
     const n = video.dataset.name || '';
+    const previewUrl = video.dataset.previewUrl || '';
+    const transcodeUrl = previewUrl.replace(/^\/preview\//, '/transcode/');
     const d = document.createElement('div');
     d.className = 'no-preview';
-    d.innerHTML = `${fileIcon(n)}<div class="preview-unavail-msg">Browser cannot play this format</div>`;
+    d.innerHTML = fileIcon(n) + '<div class="preview-unavail-msg">Browser kan dit formaat niet direct afspelen.</div>';
+    if (transcodeUrl && transcodeUrl !== previewUrl) {
+        const btn = document.createElement('button');
+        btn.className = 'transcode-btn';
+        btn.textContent = 'Transcoderen voor afspelen';
+        btn.addEventListener('click', () => _startTranscode(d, transcodeUrl, n));
+        d.appendChild(btn);
+    }
     video.replaceWith(d);
+}
+
+function _startTranscode(container, transcodeUrl, name) {
+    container.innerHTML = fileIcon(name) +
+        '<div class="preview-unavail-msg">Transcoderen\u2026 even geduld.</div>';
+    const vid = document.createElement('video');
+    vid.controls = true;
+    vid.preload = 'metadata';
+    vid.src = transcodeUrl;
+    vid.dataset.name = name;
+    vid.dataset.previewUrl = transcodeUrl;
+    vid.onerror = () => {
+        container.innerHTML = fileIcon(name) +
+            '<div class="preview-unavail-msg">Transcodering mislukt.</div>';
+        container.classList.add('no-preview');
+    };
+    container.replaceWith(vid);
 }
 
 // ---------------------------------------------------------------------------
@@ -1221,7 +1247,7 @@ function renderDetail() {
     } else if (type_ === 'audio') {
         preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></audio>`;
     } else if (type_ === 'video') {
-        preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}"` +
+        preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}" data-preview-url="${previewUrl}"` +
                   ` onerror="_previewVideoError(this)" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></video>`;
     } else if (type_ === 'pdf') {
         preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></iframe>` +
