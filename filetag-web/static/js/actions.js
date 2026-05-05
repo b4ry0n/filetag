@@ -1900,6 +1900,76 @@ async function doPurgeMissing() {
     }
 }
 
+async function doPurgeUnusedTags() {
+    if (state.currentBasePath == null) return;
+    const btn = document.getElementById('cm-unused-tags-btn');
+    const statusEl = document.getElementById('cm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = t('cm.loading');
+    try {
+        const resp = await fetch('/api/db/purge-unused-tags' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await resp.json();
+        const n = data.removed || 0;
+        if (statusEl) statusEl.textContent = n === 0
+            ? t('cm.unused-tags-none')
+            : t('cm.unused-tags-removed', { n, plural: n !== 1 ? t('cm.pruned-plural') : '' });
+        if (n > 0) refreshTags();
+    } catch (e) {
+        if (statusEl) statusEl.textContent = e.message || String(e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function doPurgeOrphanFileTags() {
+    if (state.currentBasePath == null) return;
+    const btn = document.getElementById('cm-orphan-ft-btn');
+    const statusEl = document.getElementById('cm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = t('cm.loading');
+    try {
+        const resp = await fetch('/api/db/purge-orphan-file-tags' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await resp.json();
+        const n = data.removed || 0;
+        if (statusEl) statusEl.textContent = n === 0
+            ? t('cm.orphan-ft-none')
+            : t('cm.orphan-ft-removed', { n, plural: n !== 1 ? t('cm.pruned-plural') : '' });
+        if (n > 0) { refreshCurrentDir(); refreshTags(); }
+    } catch (e) {
+        if (statusEl) statusEl.textContent = e.message || String(e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function doVacuum() {
+    if (state.currentBasePath == null) return;
+    const btn = document.getElementById('cm-vacuum-btn');
+    const statusEl = document.getElementById('cm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = t('cm.loading');
+    try {
+        await fetch('/api/db/vacuum' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        if (statusEl) statusEl.textContent = t('cm.vacuum-done');
+    } catch (e) {
+        if (statusEl) statusEl.textContent = e.message || String(e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 function setCardSize(size) {
     document.getElementById('content').style.setProperty('--card-size', size + 'px');
 }

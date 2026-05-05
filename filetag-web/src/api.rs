@@ -596,6 +596,68 @@ pub async fn api_db_purge_missing(
     ))
 }
 
+/// `POST /api/db/purge-unused-tags` — delete tags that have no associated files.
+///
+/// A tag is considered unused when it has no rows in `file_tags`.  The tag
+/// record itself is removed; `file_tags` has a foreign key back to `tags`, so
+/// any stale rows there are also gone (via CASCADE).
+///
+/// Returns `{ removed: usize }`.
+pub async fn api_db_purge_unused_tags(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let conn = open_conn(db_root).map_err(AppError)?;
+    conn.execute_batch("PRAGMA foreign_keys=ON;")
+        .map_err(|e| AppError(e.into()))?;
+    let removed = conn
+        .execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM file_tags)",
+            [],
+        )
+        .map_err(|e| AppError(e.into()))?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+/// `POST /api/db/purge-orphan-file-tags` — remove `file_tags` rows that have
+/// no corresponding entry in `files` or `tags`.
+///
+/// Under normal operation ON DELETE CASCADE prevents this, but legacy imports
+/// or manual edits can leave stale rows.
+///
+/// Returns `{ removed: usize }`.
+pub async fn api_db_purge_orphan_file_tags(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let conn = open_conn(db_root).map_err(AppError)?;
+    let removed = conn
+        .execute(
+            "DELETE FROM file_tags \
+             WHERE file_id NOT IN (SELECT id FROM files) \
+                OR tag_id  NOT IN (SELECT id FROM tags)",
+            [],
+        )
+        .map_err(|e| AppError(e.into()))?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+/// `POST /api/db/vacuum` — run SQLite VACUUM to compact the database file.
+///
+/// Returns `{ ok: true }`.
+pub async fn api_db_vacuum(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let conn = open_conn(db_root).map_err(AppError)?;
+    conn.execute_batch("VACUUM;")
+        .map_err(|e| AppError(e.into()))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ---------------------------------------------------------------------------
 // Tags list
 // ---------------------------------------------------------------------------

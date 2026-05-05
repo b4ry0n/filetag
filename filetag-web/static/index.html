@@ -292,6 +292,27 @@
                             </div>
                             <button class="cm-btn cm-btn-warn" id="cm-purge-btn" onclick="doPurgeMissing()" data-i18n="cm.purge-btn">Clean up</button>
                         </div>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.unused-tags-title">Remove unused tags</strong>
+                                <span class="cm-action-desc" data-i18n="cm.unused-tags-desc">Removes tags that have no associated files.</span>
+                            </div>
+                            <button class="cm-btn cm-btn-warn" id="cm-unused-tags-btn" onclick="doPurgeUnusedTags()" data-i18n="cm.unused-tags-btn">Remove</button>
+                        </div>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.orphan-ft-title">Remove orphaned tag links</strong>
+                                <span class="cm-action-desc" data-i18n="cm.orphan-ft-desc">Removes file–tag links whose file or tag record no longer exists. Should not occur under normal use.</span>
+                            </div>
+                            <button class="cm-btn cm-btn-warn" id="cm-orphan-ft-btn" onclick="doPurgeOrphanFileTags()" data-i18n="cm.orphan-ft-btn">Remove</button>
+                        </div>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.vacuum-title">Compact database</strong>
+                                <span class="cm-action-desc" data-i18n="cm.vacuum-desc">Runs SQLite VACUUM to reclaim free space after deletions.</span>
+                            </div>
+                            <button class="cm-btn" id="cm-vacuum-btn" onclick="doVacuum()" data-i18n="cm.vacuum-btn">Compact</button>
+                        </div>
                     </div>
                 </div>
             </div>

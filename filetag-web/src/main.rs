@@ -282,6 +282,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/cache/prune", post(api::api_cache_prune))
         .route("/api/cache/clear-subdir", post(api::api_cache_clear_subdir))
         .route("/api/db/purge-missing", post(api::api_db_purge_missing))
+        .route(
+            "/api/db/purge-unused-tags",
+            post(api::api_db_purge_unused_tags),
+        )
+        .route(
+            "/api/db/purge-orphan-file-tags",
+            post(api::api_db_purge_orphan_file_tags),
+        )
+        .route("/api/db/vacuum", post(api::api_db_vacuum))
         .route("/api/tags", get(api::api_tags))
         .route("/api/tag-values", get(api::api_tag_values))
         .route("/api/subjects", get(api::api_subjects))
