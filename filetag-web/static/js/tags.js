@@ -578,11 +578,10 @@ function _tagLeafIcon() {
         + '</svg>';
 }
 
-/** Person/entity icon shown in the toggle zone for leaf subject items (normal mode). */
+/** Entity/subject icon — neutral diamond shape, works for any kind of subject. */
 function _subjectLeafIcon() {
     return '<svg class="tree-item-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">'
-        + '<circle cx="6" cy="4.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.1"/>'
-        + '<path d="M1.5 10.5c0-2.5 9-2.5 9 0" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>'
+        + '<polygon points="6,1.5 10.5,6 6,10.5 1.5,6" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>'
         + '</svg>';
 }
 
