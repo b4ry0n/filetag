@@ -1716,7 +1716,7 @@ function renderTmTagTreeNode(node, depth) {
         //   so tag-item (padding-left:22px) gives dot at 12+22+12+4 = 50px — same as sidebar.
         //   No extra margin or padding needed; the parent div handles the indentation.
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
-        return `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder">${_tagLeafIcon()}</span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${sel}"${marginStyle} onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder">${_tagLeafIcon()}</span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node ---
