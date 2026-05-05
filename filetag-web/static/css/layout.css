@@ -381,6 +381,20 @@ mark.tag-filter-match {
     color: var(--primary);
 }
 
+/* ── Item icon inside toggle zone (tag / subject leaf icon) ──────── */
+/* Placed inside .tag-check-placeholder; matches chevron icon opacity. */
+.tree-item-icon {
+    display: block;
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    opacity: 0.5;
+    color: var(--text-secondary);
+    transition: opacity 0.1s;
+}
+.tag-item:hover .tree-item-icon  { opacity: 0.8; }
+.tag-item.active .tree-item-icon { opacity: 1; color: var(--primary); }
+
 /* ── Color dot: trailing indicator after the label ──────────────── */
 .tag-color-dot {
     flex-shrink: 0;

@@ -570,6 +570,22 @@ function _highlightMatch(text, f) {
         + esc(text.slice(idx + f.length));
 }
 
+/** Tag-label icon shown in the toggle zone for leaf tag items (normal mode). */
+function _tagLeafIcon() {
+    return '<svg class="tree-item-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">'
+        + '<path d="M2 3h5l3 3-3 3H2z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>'
+        + '<circle cx="3.5" cy="6" r="0.85" fill="currentColor"/>'
+        + '</svg>';
+}
+
+/** Person/entity icon shown in the toggle zone for leaf subject items (normal mode). */
+function _subjectLeafIcon() {
+    return '<svg class="tree-item-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">'
+        + '<circle cx="6" cy="4.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.1"/>'
+        + '<path d="M1.5 10.5c0-2.5 9-2.5 9 0" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>'
+        + '</svg>';
+}
+
 function _anyDescendantActive(nodeMap) {
     for (const node of nodeMap.values()) {
         if (node.tag && state.activeTags.has(node.fullPath)) return true;
@@ -632,7 +648,7 @@ function renderTagTreeNode(node, depth) {
             return `<button class="${cls}${checkedCls}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
         }
 
-        const check = '<span class="tag-check-placeholder"></span>'; // active state shown via CSS background
+        const check = '<span class="tag-check-placeholder">' + _tagLeafIcon() + '</span>';
         return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
@@ -1006,12 +1022,12 @@ function renderSubjectTreeNode(node, depth) {
             ? `toggleSubjectPick('${jesc(fullPath)}')`
             : `doSubjectSearch('${jesc(fullPath)}')`;
         // In picker mode: radio-style indicator (filled circle = selected).
-        // In normal mode: empty placeholder for alignment with tag items.
+        // In normal mode: subject icon for alignment with tag items.
         const indicator = state.tagPickerMode
             ? (state.tagPickerSubject === fullPath
                 ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>'
                 : '<span class="tag-check-placeholder"></span>')
-            : '<span class="tag-check-placeholder"></span>';
+            : '<span class="tag-check-placeholder">' + _subjectLeafIcon() + '</span>';
         const pickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
         // Depth indent: same mechanism as tag leaf items — margin-left on the element itself.
         const indentStyle = depth > 0 ? ' style="margin-left:12px"' : '';
@@ -1691,7 +1707,7 @@ function renderTmTagTreeNode(node, depth) {
         //   so tag-item (padding-left:22px) gives dot at 12+22+12+4 = 50px — same as sidebar.
         //   No extra margin or padding needed; the parent div handles the indentation.
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
-        return `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder"></span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder">${_tagLeafIcon()}</span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node ---
@@ -2150,7 +2166,7 @@ function _renderTmSubjectTreeNode(node, depth, q) {
             ondragstart="tmSubjectDragStart(event,'${jesc(fullPath)}')"
             ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)"
             ondrop="tmSubjectDrop(event,'${jesc(fullPath)}')"
-            ><span class="tag-check-placeholder"></span>${_highlightMatch(segment, q)} <span class="count">${tag.count}</span></button>`;
+            ><span class="tag-check-placeholder">${_subjectLeafIcon()}</span>${_highlightMatch(segment, q)} <span class="count">${tag.count}</span></button>`;
     }
 
     const totalCount = tag ? tag.count : [...children.values()].reduce((s, c) => s + (c.tag ? c.tag.count : 0), 0);
