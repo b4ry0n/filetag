@@ -2,6 +2,16 @@
 // File selection logic (single + multi-select)
 // ---------------------------------------------------------------------------
 
+// Loads file detail into selectedFilesData for paths not yet present.
+async function _loadMissingFilesData(paths) {
+    await Promise.all(paths.map(async p => {
+        if (!state.selectedFilesData.has(p)) {
+            const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
+            state.selectedFilesData.set(p, data);
+        }
+    }));
+}
+
 // Handles file selection (single and multi-select with shift/ctrl/cmd)
 async function selectFile(path, event) {
     // Multi-select with Ctrl/Cmd
@@ -11,7 +21,7 @@ async function selectFile(path, event) {
             state.selectedFilesData.delete(path);
         } else {
             state.selectedPaths.add(path);
-            // Optionally load file detail for aggregation
+            await _loadMissingFilesData([path]);
         }
         _updateCardSelection();
         renderDetail();
@@ -24,10 +34,13 @@ async function selectFile(path, event) {
         const idx2 = items.findIndex(el => el.getAttribute('data-path') === path);
         if (idx1 !== -1 && idx2 !== -1) {
             const [start, end] = idx1 < idx2 ? [idx1, idx2] : [idx2, idx1];
+            const newPaths = [];
             for (let i = start; i <= end; ++i) {
                 const p = items[i].getAttribute('data-path');
                 state.selectedPaths.add(p);
+                newPaths.push(p);
             }
+            await _loadMissingFilesData(newPaths);
             _updateCardSelection();
             renderDetail();
             _lastClickedPath = path;
