@@ -313,6 +313,20 @@
                             </div>
                             <button class="cm-btn" id="cm-vacuum-btn" onclick="doVacuum()" data-i18n="cm.vacuum-btn">Compact</button>
                         </div>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
+                                <strong data-i18n="cm.phash-title">Index visual hashes (pHash)</strong>
+                                <span class="cm-action-desc" data-i18n="cm.phash-desc">Pre-computes perceptual hashes for all image and video files. Used for the Similar feature.</span>
+                            </div>
+                            <div style="display:flex;gap:6px;align-items:center">
+                                <button class="cm-btn" id="cm-phash-btn" onclick="indexPhash()" data-i18n="cm.phash-btn">Index</button>
+                                <button class="cm-btn" id="cm-cancel-phash-btn" onclick="cancelPhash()" hidden style="color:var(--danger,#e05252)" data-i18n="cm.phash-cancel">Cancel</button>
+                            </div>
+                        </div>
+                        <div id="cm-phash-progress-bar" class="progress-bar" hidden style="margin-top:4px">
+                            <div id="cm-phash-progress-fill" class="progress-bar-fill"></div>
+                        </div>
+                        <div id="cm-phash-status" style="font-size:.85em;opacity:.7;margin-top:4px"></div>
                     </div>
                 </div>
             </div>
@@ -479,18 +493,6 @@
                         <button onclick="closeSettings()">Cancel</button>
                     </div>
                     <div id="ai-test-result" class="ai-test-result" hidden></div>
-                    <div class="modal-section">
-                        <div class="modal-section-title">Similarity index</div>
-                        <small>Pre-compute visual hashes (pHash) for all image and video files.</small>
-                        <div class="modal-actions" style="margin-top:6px;display:flex;gap:6px;align-items:center">
-                            <button id="index-phash-btn" onclick="indexPhash()">Index pHash (visual)</button>
-                            <button id="cancel-phash-btn" onclick="cancelPhash()" hidden style="color:var(--danger,#e05252)">Cancel</button>
-                        </div>
-                        <div id="similarity-progress-bar" class="progress-bar" hidden>
-                            <div id="similarity-progress-fill" class="progress-bar-fill"></div>
-                        </div>
-                        <div id="similarity-status" style="font-size:.85em;opacity:.7;margin-top:4px"></div>
-                    </div>
                     </div><!-- #ai-settings-fields -->
                 </div>
                 <div id="settings-tab-face" class="modal-tab-panel" hidden>

@@ -1236,12 +1236,12 @@ async function aiSaveSettings() {
 // ---------------------------------------------------------------------------
 
 async function indexPhash() {
-    const btn = document.getElementById('index-phash-btn');
-    const cancelBtn = document.getElementById('cancel-phash-btn');
-    const statusEl = document.getElementById('similarity-status');
-    const barEl = document.getElementById('similarity-progress-bar');
-    const barFill = document.getElementById('similarity-progress-fill');
-    if (btn) { btn.disabled = true; btn.textContent = 'Indexing…'; }
+    const btn = document.getElementById('cm-phash-btn');
+    const cancelBtn = document.getElementById('cm-cancel-phash-btn');
+    const statusEl = document.getElementById('cm-phash-status');
+    const barEl = document.getElementById('cm-phash-progress-bar');
+    const barFill = document.getElementById('cm-phash-progress-fill');
+    if (btn) { btn.disabled = true; btn.textContent = t('cm.phash-indexing'); }
     if (cancelBtn) cancelBtn.hidden = false;
     if (barEl) barEl.hidden = false;
 
@@ -1266,19 +1266,17 @@ async function indexPhash() {
         clearTimeout(pollId);
         if (barFill) barFill.style.width = '100%';
         if (res.cancelled) {
-            if (statusEl) statusEl.textContent =
-                `Cancelled — ${res.indexed} indexed, ${res.skipped} skipped, ${res.errors} errors`;
-            showToast('pHash scan cancelled', 'info');
+            if (statusEl) statusEl.textContent = t('cm.phash-cancelled', { indexed: res.indexed, skipped: res.skipped, errors: res.errors });
+            showToast(t('cm.phash-cancelled-toast'), 'info');
         } else {
-            if (statusEl) statusEl.textContent =
-                `Done — ${res.indexed} indexed, ${res.skipped} skipped, ${res.errors} errors (${res.total} total)`;
-            showToast(`pHash: ${res.indexed} indexed`);
+            if (statusEl) statusEl.textContent = t('cm.phash-done', { indexed: res.indexed, skipped: res.skipped, errors: res.errors, total: res.total });
+            showToast(t('cm.phash-done-toast', { indexed: res.indexed }));
         }
     } catch (e) {
         clearTimeout(pollId);
         showToast(String(e), 'error');
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Index pHash (visual)'; }
+        if (btn) { btn.disabled = false; btn.textContent = t('cm.phash-btn'); }
         if (cancelBtn) cancelBtn.hidden = true;
     }
 }
@@ -1287,7 +1285,7 @@ async function cancelPhash() {
     try {
         await apiPost('/api/similar/index-phash/cancel', {});
     } catch (_) {}
-    const cancelBtn = document.getElementById('cancel-phash-btn');
+    const cancelBtn = document.getElementById('cm-cancel-phash-btn');
     if (cancelBtn) cancelBtn.disabled = true;
 }
 
