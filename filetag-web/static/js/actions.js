@@ -215,6 +215,7 @@ function openSettings(tab = 'general') {
             document.getElementById('ai-api-key').placeholder = cfg.api_key || 'Leave empty for local models';
             document.getElementById('ai-tag-prefix').value = cfg.tag_prefix || 'ai/';
             document.getElementById('ai-max-tokens').value = cfg.max_tokens || 512;
+            document.getElementById('ai-chat-max-tokens').value = cfg.chat_max_tokens || 2048;
             document.getElementById('ai-subject').value = cfg.subject || '';
             document.getElementById('ai-prompt-image').value = cfg.prompt_image || '';
             document.getElementById('ai-prompt-image').placeholder = cfg.default_prompt_image || '';
@@ -1169,6 +1170,7 @@ async function aiSaveSettings() {
         output_format: document.getElementById('ai-output-format').value,
         tag_prefix: document.getElementById('ai-tag-prefix').value.trim(),
         max_tokens: parseInt(document.getElementById('ai-max-tokens').value, 10) || 512,
+        chat_max_tokens: parseInt(document.getElementById('ai-chat-max-tokens').value, 10) || 2048,
         format: document.getElementById('ai-format').value,
         video_mode: 'sprite',
         video_sheet_max_frames: parseInt(document.getElementById('ai-video-sheet-max-frames').value, 10) || 16,

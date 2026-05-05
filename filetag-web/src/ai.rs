@@ -186,6 +186,8 @@ struct AiConfig {
     api_key: Option<String>,
     tag_prefix: String,
     max_tokens: u32,
+    /// Max tokens for the chat endpoint (separate from tagging; default 2048).
+    chat_max_tokens: u32,
     format: String,
     /// `"sprite"` (default) = contact-sheet JPEG; `"full"` = raw video bytes.
     video_mode: String,
@@ -238,6 +240,11 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .flatten()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(512);
+    let chat_max_tokens = db::get_setting(conn, "ai.chat_max_tokens")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(2048);
     let format = db::get_setting(conn, "ai.format")
         .ok()
         .flatten()
@@ -297,6 +304,7 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         api_key,
         tag_prefix,
         max_tokens,
+        chat_max_tokens,
         format,
         video_mode,
         video_max_mb,
@@ -1626,6 +1634,7 @@ pub(crate) struct AiConfigRequest {
     prompt: Option<String>,
     tag_prefix: Option<String>,
     max_tokens: Option<u32>,
+    chat_max_tokens: Option<u32>,
     format: Option<String>,
     /// `"sprite"` (default) or `"full"` (raw video bytes with sprite fallback).
     video_mode: Option<String>,
@@ -1700,6 +1709,9 @@ pub async fn api_ai_config_set(
     }
     if let Some(v) = body.max_tokens {
         db::set_setting(&conn, "ai.max_tokens", &v.to_string()).map_err(AppError)?;
+    }
+    if let Some(v) = body.chat_max_tokens {
+        db::set_setting(&conn, "ai.chat_max_tokens", &v.to_string()).map_err(AppError)?;
     }
     if let Some(v) = &body.format {
         if v != "openai" && v != "ollama" {
@@ -1782,6 +1794,7 @@ pub async fn api_ai_config_get(
         tag_prefix_raw
     };
     let max_tokens = g("ai.max_tokens").parse::<u32>().unwrap_or(512);
+    let chat_max_tokens = g("ai.chat_max_tokens").parse::<u32>().unwrap_or(2048);
     let format_raw = g("ai.format");
     let format = if format_raw.is_empty() {
         "openai".to_string()
@@ -1823,6 +1836,7 @@ pub async fn api_ai_config_get(
         "prompt_archive": g("ai.prompt_archive"),
         "tag_prefix": tag_prefix,
         "max_tokens": max_tokens,
+        "chat_max_tokens": chat_max_tokens,
         "format": format,
         "video_mode": video_mode,
         "video_max_mb": video_max_mb,
@@ -2035,7 +2049,7 @@ async fn vlm_chat_with_history(
             "model": config.model,
             "stream": false,
             "messages": api_messages,
-            "options": { "num_predict": config.max_tokens },
+            "options": { "num_predict": config.chat_max_tokens },
         });
         let mut req = client.post(&url).json(&body);
         if let Some(key) = &config.api_key
@@ -2076,7 +2090,7 @@ async fn vlm_chat_with_history(
             .collect();
         let body = serde_json::json!({
             "model": config.model,
-            "max_tokens": config.max_tokens,
+            "max_tokens": config.chat_max_tokens,
             "messages": api_messages,
         });
         let mut req = client.post(&url).json(&body);

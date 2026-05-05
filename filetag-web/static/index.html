@@ -408,8 +408,13 @@
                     <label>Tag prefix
                         <input type="text" id="ai-tag-prefix" placeholder="ai/">
                     </label>
-                    <label>Max tokens
+                    <label>Max tokens (tagging)
+                        <small class="settings-desc-inline">Maximum output tokens for tag generation. 512 is usually sufficient.</small>
                         <input type="number" id="ai-max-tokens" value="512" min="64" max="4096">
+                    </label>
+                    <label>Max tokens (chat)
+                        <small class="settings-desc-inline">Maximum output tokens for chat responses. Increase if answers are cut off.</small>
+                        <input type="number" id="ai-chat-max-tokens" value="2048" min="256" max="32768">
                     </label>
                     <label>Video input mode
                         <small class="settings-desc-inline">
