@@ -222,12 +222,9 @@ impl From<rusqlite::Error> for AppError {
 /// and a generous busy timeout. Suitable for settings/config reads and any
 /// operation that targets the root DB itself.
 pub fn open_conn(db_root: &TagRoot) -> anyhow::Result<Connection> {
-    let conn = Connection::open(&db_root.db_path).context("opening database")?;
-    conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA foreign_keys = ON;
-         PRAGMA busy_timeout = 5000;",
-    )?;
+    // Use open_root_db so that pending schema migrations are always applied
+    // before any query runs (avoids "no such column" errors on older DBs).
+    let (conn, _) = db::open_root_db(&db_root.root).context("opening database")?;
     Ok(conn)
 }
 
