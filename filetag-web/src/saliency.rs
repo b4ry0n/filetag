@@ -4,9 +4,9 @@
 //!
 //! * **yolov8n-pose** (~6.7 MB) — human pose detection with 17 body keypoints.
 //!   Default model when AI thumbnail cropping is enabled (`feature.saliency_pose`).
-//!   Returns the centre of the bounding box spanning all visible keypoints
-//!   (nose through ankles), so the thumbnail is centred on the full body
-//!   rather than just the face.
+//!   Returns the nose/head position as Y (face-first), combined with the
+//!   horizontal body centre as X.  The thumbnail is therefore always
+//!   anchored at the face; any remaining space shows as much body as fits.
 //!
 //! * **yolov8n** (~6.4 MB) — general object detection, 80 COCO classes.
 //!   Optional secondary model (`feature.saliency_object`) for non-person images
@@ -337,17 +337,21 @@ fn rgb_to_nchw_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
 //   13 = left knee,  14 = right knee
 //   15 = left ankle, 16 = right ankle
 //
-// Strategy: compute the bounding box of ALL visible keypoints (nose through
-// ankles).  The centre of that bounding box is used as the salient focus
-// point, so the thumbnail centres on the whole body rather than just the
-// face.  This produces better results for full-body photographs where the
-// photographer has framed the face, leaving the torso and legs in the lower
-// portion of the frame.
+// Cropping strategy — face-first, body-aware:
+//
+//   X  = horizontal centre of all visible keypoints (body centre x).
+//   Y  = nose keypoint y when visible; otherwise topmost visible keypoint.
+//
+// Because salient_crop() centres the thumbnail on the salient point,
+// anchoring Y at the nose ensures the face is always fully visible in the
+// crop.  Any remaining space below the face shows as much of the body as
+// the thumbnail height allows.  If the full body fits the face ends up near
+// the top; if it does not, the feet are cropped rather than the head.
 //
 // Fallback chain:
-//   ≥2 visible keypoints → body bounding-box centre
-//   1 visible keypoint   → that single keypoint
-//   0 visible keypoints  → YOLO bbox centre
+//   nose visible → (body_cx, nose_y)
+//   other kp visible → (body_cx, topmost_kp_y)
+//   no kp visible → YOLO bbox centre
 
 fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
     let orig_w = img.width() as f32;
@@ -379,8 +383,7 @@ fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
     // Collect all 17 keypoints that exceed the visibility threshold.
     let mut min_x = f32::MAX;
     let mut max_x = f32::MIN;
-    let mut min_y = f32::MAX;
-    let mut max_y = f32::MIN;
+    let mut top_y = f32::MAX; // y of topmost visible keypoint (smallest y = highest)
     let mut visible_count = 0u32;
 
     for kp_idx in 0..17usize {
@@ -391,18 +394,33 @@ fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
         if kp_v >= KP_VIS_THRESHOLD {
             min_x = min_x.min(kp_x);
             max_x = max_x.max(kp_x);
-            min_y = min_y.min(kp_y);
-            max_y = max_y.max(kp_y);
+            top_y = top_y.min(kp_y);
             visible_count += 1;
         }
     }
 
-    // Pick focus point: centre of the body keypoint bounding box when we
-    // have enough evidence, otherwise fall back to the YOLO bbox centre.
+    // Nose keypoint (kp 0): channels 5, 6, 7.
+    let nose_x = flat[5 * n + best_i];
+    let nose_y = flat[6 * n + best_i];
+    let nose_v = flat[7 * n + best_i];
+
+    // X: horizontal centre of the body keypoints bounding box.
+    // Y: nose when visible (face-first); topmost visible keypoint otherwise.
+    //    This anchors the crop at the face so the head is never cut off, while
+    //    showing as much of the body below as the thumbnail height allows.
     let (focus_x_640, focus_y_640) = if visible_count >= 2 {
-        ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5)
+        let body_cx = (min_x + max_x) * 0.5;
+        let anchor_y = if nose_v >= KP_VIS_THRESHOLD {
+            nose_y
+        } else {
+            top_y
+        };
+        (body_cx, anchor_y)
     } else if visible_count == 1 {
-        (min_x, min_y) // single keypoint — use it directly
+        // Single keypoint — use it as-is.
+        (min_x, top_y)
+    } else if nose_v >= KP_VIS_THRESHOLD {
+        (nose_x, nose_y)
     } else {
         (cx_640, cy_640)
     };
