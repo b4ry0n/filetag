@@ -668,6 +668,7 @@ const DIR_THUMB_CONCURRENCY = 6; // max parallel dir-thumb fetches / pollers
 const _thumbQueue    = [];
 let   _thumbBusy     = false;
 const _thumbCache    = new Map();    // thumb URL → blob URL  (null = permanent miss)
+const _thumbSalient  = new Map();    // blob URL → {cx, cy} — populated from X-Salient-* headers
 const _thumbFetching = new WeakSet(); // regular-thumb elements currently in flight
 
 const _dirThumbQueue  = [];          // ordered: visible-first, then by proximity
@@ -752,9 +753,14 @@ function _thumbReplace(el, blobUrl, revokeOnLoad = false) {
     if (el.dataset.cls) img.className = el.dataset.cls;
     img.alt = '';
     img.dataset.name = el.dataset.name || '';
-    // Apply North gravity for portrait images: crop from top so heads stay visible.
+    // Crop position: use detected salient point when available; otherwise
+    // apply North gravity for portrait images so heads stay in frame.
+    const _salient = _thumbSalient.get(blobUrl);
     img.addEventListener('load', () => {
-        if (img.naturalHeight > img.naturalWidth) {
+        if (_salient) {
+            img.style.objectPosition =
+                `${(_salient.cx * 100).toFixed(1)}% ${(_salient.cy * 100).toFixed(1)}%`;
+        } else if (img.naturalHeight > img.naturalWidth) {
             img.style.objectPosition = 'top';
         }
     }, { once: true });
@@ -843,9 +849,14 @@ async function _thumbRun() {
             const resp = await fetch(src);
             if (!el.isConnected) continue;
             if (resp.status === 200) {
+                const salientCx = resp.headers.get('x-salient-cx');
+                const salientCy = resp.headers.get('x-salient-cy');
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
                 _thumbCache.set(src, url);
+                if (salientCx !== null && salientCy !== null) {
+                    _thumbSalient.set(url, { cx: parseFloat(salientCx), cy: parseFloat(salientCy) });
+                }
                 if (el.isConnected) _thumbReplace(el, url);
             } else if (resp.status === 503) {
                 // Server busy: re-queue at back with a short delay.

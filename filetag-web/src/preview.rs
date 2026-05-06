@@ -373,6 +373,53 @@ pub fn thumb_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
     file_cache_path(abs, root, "thumbs", "thumb.webp")
 }
 
+/// Return the sidecar path for a cached salient point, keyed by the same
+/// mtime + size as the corresponding thumbnail.
+/// Stored in `<root>/.filetag/cache/thumbs/` with a `.sp` suffix.
+fn salient_cache_path(abs: &Path, root: &Path) -> Option<PathBuf> {
+    file_cache_path(abs, root, "thumbs", "thumb.sp")
+}
+
+/// Read a cached salient point from disk.
+///
+/// - `Some(Some((cx, cy)))` — a salient point was previously detected.
+/// - `Some(None)`           — detection ran but found nothing; don't retry.
+/// - `None`                 — not computed yet.
+fn read_salient_cache(sp_path: &Path) -> Option<Option<(f32, f32)>> {
+    let text = std::fs::read_to_string(sp_path).ok()?;
+    let text = text.trim();
+    if text == "-" {
+        return Some(None);
+    }
+    let mut parts = text.splitn(2, ',');
+    let cx: f32 = parts.next()?.parse().ok()?;
+    let cy: f32 = parts.next()?.parse().ok()?;
+    Some(Some((cx, cy)))
+}
+
+/// Persist a salient point (or the "nothing detected" sentinel) to disk.
+fn write_salient_cache(sp_path: &Path, salient: Option<(f32, f32)>) {
+    let text = match salient {
+        Some((cx, cy)) => format!("{cx},{cy}"),
+        None => "-".to_string(),
+    };
+    let _ = std::fs::write(sp_path, text);
+}
+
+/// Attach `X-Salient-Cx` / `X-Salient-Cy` headers to an existing response.
+fn attach_salient_headers(mut resp: Response, salient: Option<(f32, f32)>) -> Response {
+    if let Some((cx, cy)) = salient {
+        let hdrs = resp.headers_mut();
+        if let Ok(v) = axum::http::HeaderValue::try_from(format!("{cx:.4}")) {
+            hdrs.insert(axum::http::HeaderName::from_static("x-salient-cx"), v);
+        }
+        if let Ok(v) = axum::http::HeaderValue::try_from(format!("{cy:.4}")) {
+            hdrs.insert(axum::http::HeaderName::from_static("x-salient-cy"), v);
+        }
+    }
+    resp
+}
+
 /// RAW extensions for which pure-Rust embedded JPEG extraction is attempted.
 const RAW_THUMB_EXTS: &[&str] = &[
     "arw", "cr2", "nef", "orf", "dng", "rw2", "pef", "srw", "raf", "raw", "3fr", "erf", "mef",
@@ -1186,8 +1233,36 @@ pub async fn thumb_handler(
         // Regular images (JPEG, PNG, WEBP, …)
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" => {
             if let Some(cache) = thumb_cache_path(&abs, &cache_root) {
+                let sp_path = salient_cache_path(&abs, &cache_root);
                 if let Ok(data) = tokio::fs::read(&cache).await {
-                    return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+                    // Thumbnail already cached.  Read the salient sidecar when
+                    // saliency is enabled; if not yet computed, schedule a
+                    // background task so the next request will have the header.
+                    let salient = if features.saliency_pose {
+                        let cached_sp = sp_path.as_ref().and_then(|p| read_salient_cache(p));
+                        if cached_sp.is_none() && crate::saliency::pose_model_ready() {
+                            // Not computed yet — kick off a background task.
+                            if let Some(sp) = sp_path.clone() {
+                                let abs2 = abs.clone();
+                                tokio::spawn(async move {
+                                    let result = tokio::task::spawn_blocking(move || {
+                                        let d = std::fs::read(&abs2).ok()?;
+                                        let img = image::load_from_memory(&d).ok()?;
+                                        crate::saliency::detect_salient_point(&img, false)
+                                    })
+                                    .await
+                                    .ok()
+                                    .flatten();
+                                    write_salient_cache(&sp, result.map(|s| (s.cx, s.cy)));
+                                });
+                            }
+                        }
+                        cached_sp.flatten()
+                    } else {
+                        None
+                    };
+                    let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+                    return attach_salient_headers(resp, salient);
                 }
                 let _permit = match THUMB_LIMITER.try_acquire() {
                     Ok(p) => p,
@@ -1198,7 +1273,27 @@ pub async fn thumb_handler(
                 };
                 if let Some(data) = image_thumb_jpeg(&abs, features).await {
                     let _ = tokio::fs::write(&cache, &data).await;
-                    return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+                    // Compute salient point in the same request so the first
+                    // response already carries the correct header.
+                    let salient = if features.saliency_pose && crate::saliency::pose_model_ready() {
+                        let abs2 = abs.clone();
+                        let result = tokio::task::spawn_blocking(move || {
+                            let d = std::fs::read(&abs2).ok()?;
+                            let img = image::load_from_memory(&d).ok()?;
+                            crate::saliency::detect_salient_point(&img, false)
+                        })
+                        .await
+                        .ok()
+                        .flatten();
+                        if let Some(sp) = sp_path {
+                            write_salient_cache(&sp, result.map(|s| (s.cx, s.cy)));
+                        }
+                        result.map(|s| (s.cx, s.cy))
+                    } else {
+                        None
+                    };
+                    let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+                    return attach_salient_headers(resp, salient);
                 }
             }
             // Cache unavailable or tool missing: serve the original
