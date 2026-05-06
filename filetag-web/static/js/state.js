@@ -246,10 +246,11 @@ async function loadFiles(path) {
 }
 
 async function searchFiles(query) {
-    // Queries starting with "name:" search the filesystem by filename/glob,
-    // independent of whether files are indexed in the database.
-    const isNameSearch = query.startsWith('name:');
-    const apiQuery = isNameSearch ? query.slice('name:'.length).trim() : query;
+    // Queries starting with "filename:" (or shorthand "file:") search the
+    // filesystem by filename/glob, independent of DB indexing.
+    const isNameSearch = query.startsWith('filename:') || query.startsWith('file:');
+    const prefixLen = query.startsWith('filename:') ? 'filename:'.length : 'file:'.length;
+    const apiQuery = isNameSearch ? query.slice(prefixLen).trim() : query;
     const endpoint = isNameSearch ? '/api/fs-search' : '/api/search';
     try {
         const data = await api(endpoint + '?q=' + encodeURIComponent(apiQuery) + dirParam('&'));
