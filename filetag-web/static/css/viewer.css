@@ -340,6 +340,43 @@
     color: var(--fg);
 }
 
+/* Non-toggle field labels: card style */
+.modal-body label:not(.toggle-row) {
+    padding: 8px 12px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    gap: 5px;
+}
+/* Reset interactive element typography inside field cards */
+.modal-body label:not(.toggle-row) input,
+.modal-body label:not(.toggle-row) select,
+.modal-body label:not(.toggle-row) textarea,
+.modal-body label:not(.toggle-row) button {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+}
+.modal-body label:not(.toggle-row) input,
+.modal-body label:not(.toggle-row) select,
+.modal-body label:not(.toggle-row) textarea {
+    font-size: 13px;
+    color: var(--fg);
+}
+.modal-body label:not(.toggle-row) button { font-size: 12px; font-weight: 500; }
+.modal-body label:not(.toggle-row) .settings-desc-inline,
+.modal-body label:not(.toggle-row) small {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: normal;
+    margin: -1px 0 2px;
+}
+
 .modal-body input,
 .modal-body select,
 .modal-body textarea {
@@ -359,14 +396,17 @@
     padding-top: 12px;
 }
 .modal-actions button {
-    padding: 6px 14px;
-    border-radius: 4px;
+    padding: 5px 14px;
+    border-radius: 5px;
     border: 1px solid var(--border);
-    background: var(--bg-card);
+    background: var(--bg-surface);
     color: var(--fg);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.12s;
 }
+.modal-actions button:hover { background: var(--bg-hover); color: var(--text); }
 .modal-actions button:first-child { margin-right: auto; }
 
 .use-default-btn {
@@ -489,6 +529,20 @@
     border-bottom-color: var(--accent, #6ba3f7);
 }
 .modal-tab-panel[hidden] { display: none; }
+.modal-tab-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+/* Toggle rows sit flush — no flex gap between consecutive toggles */
+.modal-tab-panel > .toggle-row + .toggle-row { margin-top: -6px; }
+/* Conditional settings wrapper divs */
+#ai-settings-fields,
+#face-settings-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 
 .settings-desc {
     font-size: 13px;
@@ -505,6 +559,8 @@
 .settings-label-optional {
     font-size: 11px;
     font-weight: normal;
+    text-transform: none;
+    letter-spacing: normal;
     color: var(--text-tertiary);
 }
 .prompt-type-details {
