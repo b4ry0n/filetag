@@ -4,7 +4,9 @@
 //!
 //! * **yolov8n-pose** (~6.7 MB) — human pose detection with 17 body keypoints.
 //!   Default model when AI thumbnail cropping is enabled (`feature.saliency_pose`).
-//!   Returns the nose/head position as the salient crop centre.
+//!   Returns the centre of the bounding box spanning all visible keypoints
+//!   (nose through ankles), so the thumbnail is centred on the full body
+//!   rather than just the face.
 //!
 //! * **yolov8n** (~6.4 MB) — general object detection, 80 COCO classes.
 //!   Optional secondary model (`feature.saliency_object`) for non-person images
@@ -325,11 +327,27 @@ fn rgb_to_nchw_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
 //   channels 0–3 : cx, cy, w, h  (absolute pixels in 640-px space)
 //   channel  4   : person confidence (0–1, sigmoid applied in graph)
 //   channels 5+  : 17 keypoints × 3  (x_640, y_640, visibility)
-//     keypoint 0 = nose,  1 = left eye,  2 = right eye,
-//     3 = left ear, 4 = right ear
 //
-// We return the nose keypoint when visible, otherwise upper bbox centre.
-// Coordinates are converted back to original-image-normalised [0, 1].
+// COCO keypoint order (0-indexed):
+//   0 = nose,  1 = left eye,  2 = right eye,  3 = left ear,  4 = right ear
+//   5 = left shoulder,  6 = right shoulder
+//   7 = left elbow,  8 = right elbow
+//   9 = left wrist,  10 = right wrist
+//   11 = left hip,   12 = right hip
+//   13 = left knee,  14 = right knee
+//   15 = left ankle, 16 = right ankle
+//
+// Strategy: compute the bounding box of ALL visible keypoints (nose through
+// ankles).  The centre of that bounding box is used as the salient focus
+// point, so the thumbnail centres on the whole body rather than just the
+// face.  This produces better results for full-body photographs where the
+// photographer has framed the face, leaving the torso and legs in the lower
+// portion of the frame.
+//
+// Fallback chain:
+//   ≥2 visible keypoints → body bounding-box centre
+//   1 visible keypoint   → that single keypoint
+//   0 visible keypoints  → YOLO bbox centre
 
 fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
     let orig_w = img.width() as f32;
@@ -354,20 +372,39 @@ fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
         return None;
     }
 
+    // Fallback: YOLO bounding box centre.
     let cx_640 = flat[best_i];
     let cy_640 = flat[n + best_i];
-    let h_640 = flat[3 * n + best_i];
 
-    // Try nose keypoint (kp 0): channels 5, 6, 7.
-    let kp_x = flat[5 * n + best_i];
-    let kp_y = flat[6 * n + best_i];
-    let kp_v = flat[7 * n + best_i];
+    // Collect all 17 keypoints that exceed the visibility threshold.
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+    let mut visible_count = 0u32;
 
-    let (focus_x_640, focus_y_640) = if kp_v >= KP_VIS_THRESHOLD {
-        (kp_x, kp_y)
+    for kp_idx in 0..17usize {
+        let ch_base = 5 + kp_idx * 3;
+        let kp_x = flat[ch_base * n + best_i];
+        let kp_y = flat[(ch_base + 1) * n + best_i];
+        let kp_v = flat[(ch_base + 2) * n + best_i];
+        if kp_v >= KP_VIS_THRESHOLD {
+            min_x = min_x.min(kp_x);
+            max_x = max_x.max(kp_x);
+            min_y = min_y.min(kp_y);
+            max_y = max_y.max(kp_y);
+            visible_count += 1;
+        }
+    }
+
+    // Pick focus point: centre of the body keypoint bounding box when we
+    // have enough evidence, otherwise fall back to the YOLO bbox centre.
+    let (focus_x_640, focus_y_640) = if visible_count >= 2 {
+        ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5)
+    } else if visible_count == 1 {
+        (min_x, min_y) // single keypoint — use it directly
     } else {
-        // Fallback: top 30% of the bounding box.
-        (cx_640, cy_640 - h_640 * 0.30)
+        (cx_640, cy_640)
     };
 
     // Convert from padded-640-space back to original image normalised coords.
