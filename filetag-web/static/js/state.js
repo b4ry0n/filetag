@@ -321,9 +321,23 @@ async function removeTagFromDir(path, tagStr) {
     if (state.mode === 'browse') await loadFiles(state.currentPath);
 }
 
-// Timer to distinguish single click (select) from double click (navigate) on directories.
+// Timer to distinguish single click (select) from double click (navigate) on directories/roots.
 let _dirClickTimer = null;
+let _rootClickTimer = null;
 let _zipClickTimer = null;
+
+function handleRootClick(rootPath) {
+    if (_rootClickTimer) {
+        clearTimeout(_rootClickTimer);
+        _rootClickTimer = null;
+        enterRoot(rootPath); // double click
+    } else {
+        _rootClickTimer = setTimeout(() => {
+            _rootClickTimer = null;
+            selectRoot(rootPath); // single click
+        }, 250);
+    }
+}
 
 function handleDirClick(path, name, fileCount) {
     if (_dirClickTimer) {

@@ -161,8 +161,7 @@ function renderGrid(items) {
                     ondragover="_rootDragOver(event)"
                     ondragleave="_rootDragLeave(event)"
                     ondrop="_rootDrop(event,'${jesc(entry.root_path)}')"
-                    onclick="selectRoot('${jesc(entry.root_path)}')"
-                    ondblclick="enterRoot('${jesc(entry.root_path)}')">
+                    onclick="handleRootClick('${jesc(entry.root_path)}')">
                     <div class="card-preview"><div class="card-icon">${ICONS.root}</div></div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">root</div></div>
                 </div>`;
@@ -227,7 +226,7 @@ function renderList(items) {
 
         if (isDir) {
             if (entry.root_path != null) {
-                html += `<div class="list-row folder" data-root-path="${esc(entry.root_path)}" ondblclick="enterRoot('${jesc(entry.root_path)}')" onclick="enterRoot('${jesc(entry.root_path)}')">
+                html += `<div class="list-row folder" data-root-path="${esc(entry.root_path)}" onclick="handleRootClick('${jesc(entry.root_path)}')">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}</span>
                     <span class="size"></span>
