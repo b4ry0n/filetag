@@ -390,22 +390,56 @@ pub struct SettingsBody {
 // Synonym API
 // ---------------------------------------------------------------------------
 
-/// Body for `POST /api/synonym/add`.
+/// Body for `POST /api/synonym/add` — link two tag names as synonyms
+/// (symmetric; no canonical direction).
 #[derive(Deserialize)]
 pub struct AddSynonymRequest {
-    /// The alias to register.
-    pub alias: String,
-    /// The canonical tag name the alias maps to.
-    pub canonical: String,
+    /// First tag name.
+    pub name: String,
+    /// Second tag name to link with `name`.
+    pub other: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }
 
-/// Body for `POST /api/synonym/remove`.
+/// Body for `POST /api/synonym/remove` — remove a tag from its synonym group.
 #[derive(Deserialize)]
 pub struct RemoveSynonymRequest {
-    /// The alias to remove.
-    pub alias: String,
+    /// Tag name to remove from its group.
+    pub name: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/synonym/attr` — set an attribute on a tag name.
+#[derive(Deserialize)]
+pub struct SetTagAttrRequest {
+    /// Tag name to set the attribute on.
+    pub name: String,
+    /// Attribute key (e.g. `"lang"`).
+    pub key: String,
+    /// Attribute value (e.g. `"nl"`).
+    pub value: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/synonym/attr-remove` — remove an attribute from a tag name.
+#[derive(Deserialize)]
+pub struct RemoveTagAttrRequest {
+    /// Tag name to remove the attribute from.
+    pub name: String,
+    /// Attribute key to remove.
+    pub key: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
+/// Body for `POST /api/display-context` — set the global display context.
+#[derive(Deserialize)]
+pub struct SetDisplayContextRequest {
+    /// Key→value map used to select preferred display names from synonym groups.
+    pub context: std::collections::HashMap<String, String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }

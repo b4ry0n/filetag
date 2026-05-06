@@ -550,54 +550,61 @@ impl QueryBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Alias resolution
+// Group expansion
 // ---------------------------------------------------------------------------
 
-/// Walk `expr` and replace any tag name (or key name in a `TagValue`) that is
-/// registered as a synonym with its canonical tag name.  Glob patterns are
-/// left unchanged because they may expand to multiple tags.
-fn resolve_aliases(conn: &Connection, expr: Expr) -> Result<Expr> {
+/// Walk `expr` and replace any `Tag` or `TagValue` node whose tag name is a
+/// member of a synonym group with an `Or` of all group members.  Glob
+/// patterns are left unchanged because they may span multiple groups.
+fn expand_groups(conn: &Connection, expr: Expr) -> Result<Expr> {
     Ok(match expr {
-        Expr::Tag(name) => Expr::Tag(canonical_name(conn, &name)?),
-        Expr::TagValue(name, op, val) => Expr::TagValue(canonical_name(conn, &name)?, op, val),
+        Expr::Tag(name) => {
+            let members = crate::db::synonym_group_members(conn, &name)?;
+            if members.len() <= 1 {
+                Expr::Tag(name)
+            } else {
+                members
+                    .into_iter()
+                    .map(Expr::Tag)
+                    .reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)))
+                    .unwrap()
+            }
+        }
+        Expr::TagValue(name, op, val) => {
+            let members = crate::db::synonym_group_members(conn, &name)?;
+            if members.len() <= 1 {
+                Expr::TagValue(name, op, val)
+            } else {
+                members
+                    .into_iter()
+                    .map(|m| Expr::TagValue(m, op, val.clone()))
+                    .reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)))
+                    .unwrap()
+            }
+        }
         Expr::Glob(p) => Expr::Glob(p),
         Expr::FileType(k) => Expr::FileType(k),
-        Expr::Subject(inner) => Expr::Subject(Box::new(resolve_aliases(conn, *inner)?)),
+        Expr::Subject(inner) => Expr::Subject(Box::new(expand_groups(conn, *inner)?)),
         Expr::SubjectName(s) => Expr::SubjectName(s),
         Expr::And(a, b) => Expr::And(
-            Box::new(resolve_aliases(conn, *a)?),
-            Box::new(resolve_aliases(conn, *b)?),
+            Box::new(expand_groups(conn, *a)?),
+            Box::new(expand_groups(conn, *b)?),
         ),
         Expr::Or(a, b) => Expr::Or(
-            Box::new(resolve_aliases(conn, *a)?),
-            Box::new(resolve_aliases(conn, *b)?),
+            Box::new(expand_groups(conn, *a)?),
+            Box::new(expand_groups(conn, *b)?),
         ),
-        Expr::Not(inner) => Expr::Not(Box::new(resolve_aliases(conn, *inner)?)),
+        Expr::Not(inner) => Expr::Not(Box::new(expand_groups(conn, *inner)?)),
     })
-}
-
-/// Look up the canonical tag name for `name`.  Returns `name` unchanged when
-/// it is not registered as a synonym.
-fn canonical_name(conn: &Connection, name: &str) -> Result<String> {
-    use rusqlite::params;
-    let canonical: Option<String> = conn
-        .prepare_cached(
-            "SELECT t.name FROM tag_synonyms ts \
-             JOIN tags t ON t.id = ts.canonical_id \
-             WHERE ts.alias = ?1",
-        )?
-        .query_row(params![name], |r| r.get(0))
-        .ok();
-    Ok(canonical.unwrap_or(name.to_string()))
 }
 
 /// Execute a query expression and return matching file paths.
 ///
-/// Tag names and key names in the expression are resolved through the synonym
-/// table before the SQL is generated, so searching for an alias produces the
-/// same results as searching for the canonical tag name.
+/// Tag names and key names in the expression are expanded through synonym
+/// groups before the SQL is generated, so searching for any group member
+/// produces the same results as searching for any other member.
 pub fn execute(conn: &Connection, expr: &Expr) -> Result<Vec<String>> {
-    let resolved = resolve_aliases(conn, expr.clone())?;
+    let resolved = expand_groups(conn, expr.clone())?;
     let mut qb = QueryBuilder::new();
     let condition = qb.build_condition(&resolved);
     let sql = format!(

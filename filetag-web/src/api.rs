@@ -721,26 +721,70 @@ pub async fn api_subjects(
 // Synonym management
 // ---------------------------------------------------------------------------
 
-/// `POST /api/synonym/add` — register an alias as a synonym for a tag.
+/// `POST /api/synonym/add` — link two tag names as synonyms (symmetric).
 pub async fn api_add_synonym(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AddSynonymRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
-    db::add_synonym(&conn, &body.alias, &body.canonical).map_err(AppError)?;
+    db::link_synonyms(&conn, &[body.name.as_str(), body.other.as_str()]).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// `POST /api/synonym/remove` — remove a registered synonym alias.
+/// `POST /api/synonym/remove` — remove a tag from its synonym group.
 pub async fn api_remove_synonym(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RemoveSynonymRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
-    let removed = db::remove_synonym(&conn, &body.alias).map_err(AppError)?;
+    let removed = db::remove_synonym(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": removed })))
+}
+
+/// `POST /api/synonym/attr` — set an attribute on a tag name.
+pub async fn api_set_tag_attr(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SetTagAttrRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    db::set_tag_attr(&conn, &body.name, &body.key, &body.value).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/synonym/attr-remove` — remove an attribute from a tag name.
+pub async fn api_remove_tag_attr(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RemoveTagAttrRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let removed = db::remove_tag_attr(&conn, &body.name, &body.key).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": removed })))
+}
+
+/// `GET /api/display-context` — return the current display context.
+pub async fn api_get_display_context(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    let ctx = db::get_display_context(&conn).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "context": ctx })))
+}
+
+/// `POST /api/display-context` — set the display context.
+pub async fn api_set_display_context(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SetDisplayContextRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let conn = open_conn(db_root)?;
+    db::set_display_context(&conn, &body.context).map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ---------------------------------------------------------------------------

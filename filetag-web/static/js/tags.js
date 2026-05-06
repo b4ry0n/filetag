@@ -1498,14 +1498,14 @@ async function renameTag(oldName, newName) {
     if (document.getElementById('tag-manager-overlay')) renderTmList();
 }
 
-async function addSynonymFromInput(canonical) {
+async function addSynonymFromInput(tagName) {
     const input = document.getElementById('tag-menu-synonym-input');
-    const alias = input ? input.value.trim() : '';
-    if (!alias) return;
+    const other = input ? input.value.trim() : '';
+    if (!other) return;
     closeTagMenu();
     try {
-        await apiPost('/api/synonym/add', { alias, canonical, dir: currentAbsDir() });
-        showToast(`Added synonym "${alias}" \u2192 "${canonical}".`);
+        await apiPost('/api/synonym/add', { name: tagName, other, dir: currentAbsDir() });
+        showToast(`Linked "${tagName}" \u2194 "${other}" as synonyms.`);
     } catch (e) {
         alert(`Could not add synonym: ${e.message || e}`);
     }
@@ -1513,10 +1513,10 @@ async function addSynonymFromInput(canonical) {
     render();
 }
 
-async function removeSynonym(canonical, alias) {
+async function removeSynonym(tagName, alias) {
     closeTagMenu();
-    await apiPost('/api/synonym/remove', { alias, dir: currentAbsDir() });
-    showToast(`Removed synonym "${alias}".`);
+    await apiPost('/api/synonym/remove', { name: alias, dir: currentAbsDir() });
+    showToast(`Removed "${alias}" from synonym group.`);
     await loadTags();
     render();
 }
@@ -1952,13 +1952,13 @@ async function tmSetColor(name, color) {
     render();
 }
 
-async function tmAddSynonym(canonical) {
+async function tmAddSynonym(tagName) {
     const input = document.getElementById('tm-syn-input');
-    const alias = input ? input.value.trim() : '';
-    if (!alias) return;
+    const other = input ? input.value.trim() : '';
+    if (!other) return;
     try {
-        await apiPost('/api/synonym/add', { alias, canonical, dir: currentAbsDir() });
-        showToast(`Added synonym "${alias}" \u2192 "${canonical}".`);
+        await apiPost('/api/synonym/add', { name: tagName, other, dir: currentAbsDir() });
+        showToast(`Linked "${tagName}" \u2194 "${other}" as synonyms.`);
         if (input) input.value = '';
     } catch (e) {
         alert(`Could not add synonym: ${e.message || e}`);
@@ -1966,15 +1966,15 @@ async function tmAddSynonym(canonical) {
     }
     await loadTags();
     renderTmList();
-    await renderTmDetail(canonical);
+    await renderTmDetail(tagName);
 }
 
-async function tmRemoveSynonym(canonical, alias) {
-    await apiPost('/api/synonym/remove', { alias, dir: currentAbsDir() });
-    showToast(`Removed synonym "${alias}".`);
+async function tmRemoveSynonym(tagName, alias) {
+    await apiPost('/api/synonym/remove', { name: alias, dir: currentAbsDir() });
+    showToast(`Removed "${alias}" from synonym group.`);
     await loadTags();
     renderTmList();
-    await renderTmDetail(canonical);
+    await renderTmDetail(tagName);
 }
 
 async function tmDoRename(oldName) {
@@ -2005,7 +2005,7 @@ async function tmDoMerge(sourceName) {
     const res = await apiPost('/api/rename-tag', { name: sourceName, new_name: targetName, dir: currentAbsDir() });
     if (keepAlias) {
         try {
-            await apiPost('/api/synonym/add', { alias: sourceName, canonical: targetName, dir: currentAbsDir() });
+            await apiPost('/api/synonym/add', { name: sourceName, other: targetName, dir: currentAbsDir() });
         } catch (e) {
             showToast(`Merged, but could not create alias: ${e.message || e}`);
         }

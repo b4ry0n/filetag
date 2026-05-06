@@ -1,8 +1,9 @@
 //! Database layer: initialisation, schema migration, and all CRUD operations.
 //!
 //! Each filetag database lives at `<root>/.filetag/db.sqlite3`. The current
-//! schema version is 11.
+//! schema version is 13.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -10,7 +11,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 12;
+const SCHEMA_VERSION: i32 = 13;
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -318,6 +319,96 @@ fn migrate(conn: &Connection) -> Result<()> {
              );",
         )?;
     }
+    if version < 13 {
+        // Replace directional alias system with symmetric synonym groups.
+        //
+        // New tables:
+        //   tag_groups  – the semantic group concept (id, created_at)
+        //   tag_attrs   – per-tag attributes for ABAC display-name selection
+        //
+        // tags gets a `group_id` FK; all members with the same group_id are
+        // synonyms of each other.  The old `tag_synonyms` alias→canonical
+        // table is migrated and then dropped.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tag_groups (
+                 id         INTEGER PRIMARY KEY,
+                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE TABLE IF NOT EXISTS tag_attrs (
+                 tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                 key    TEXT NOT NULL,
+                 value  TEXT NOT NULL DEFAULT '',
+                 PRIMARY KEY (tag_id, key)
+             );",
+        )?;
+        // ALTER TABLE fails when the column already exists (fresh DB), so
+        // we ignore the error.
+        conn.execute_batch(
+            "ALTER TABLE tags ADD COLUMN group_id INTEGER REFERENCES tag_groups(id);",
+        )
+        .ok();
+
+        // Migrate existing tag_synonyms rows into groups.
+        // Each (alias, canonical_id) pair becomes a two-member group.
+        // The alias is inserted as a real tag if it does not yet exist.
+        let synonyms: Vec<(String, i64)> = {
+            // tag_synonyms may not exist on a fresh DB that jumped straight
+            // to v13 (it was only created in the v7 migration path).
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_synonyms'",
+                    [],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if exists {
+                let mut stmt = conn
+                    .prepare("SELECT alias, canonical_id FROM tag_synonyms")
+                    .unwrap();
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                    .unwrap()
+                    .filter_map(|r| r.ok())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+
+        for (alias, canonical_id) in synonyms {
+            // Create a new group.
+            conn.execute(
+                "INSERT INTO tag_groups (created_at) VALUES (datetime('now'))",
+                [],
+            )?;
+            let group_id = conn.last_insert_rowid();
+
+            // Assign the canonical tag to this group.
+            conn.execute(
+                "UPDATE tags SET group_id = ?1 WHERE id = ?2 AND group_id IS NULL",
+                params![group_id, canonical_id],
+            )?;
+
+            // Create the alias as a real tag if needed, then assign it to the group.
+            let alias_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM tags WHERE name = ?1",
+                    params![&alias],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|_| {
+                    conn.execute("INSERT INTO tags (name) VALUES (?1)", params![&alias])
+                        .unwrap();
+                    conn.last_insert_rowid()
+                });
+            conn.execute(
+                "UPDATE tags SET group_id = ?1 WHERE id = ?2 AND group_id IS NULL",
+                params![group_id, alias_id],
+            )?;
+        }
+
+        conn.execute_batch("DROP TABLE IF EXISTS tag_synonyms;")?;
+    }
+
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -468,68 +559,250 @@ fn get_file_id(_meta: &std::fs::Metadata) -> Option<String> {
 
 /// Get or create a tag, returning its id.
 pub fn get_or_create_tag(conn: &Connection, name: &str) -> Result<i64> {
-    // Check existing tag first.
     if let Ok(id) = conn.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
         r.get::<_, i64>(0)
     }) {
         return Ok(id);
-    }
-    // Check if this name is a registered synonym; if so return the canonical tag.
-    if let Ok(canonical_id) = conn
-        .prepare_cached("SELECT canonical_id FROM tag_synonyms WHERE alias = ?1")?
-        .query_row(params![name], |r| r.get::<_, i64>(0))
-    {
-        return Ok(canonical_id);
     }
     conn.execute("INSERT INTO tags (name) VALUES (?1)", params![name])?;
     Ok(conn.last_insert_rowid())
 }
 
 // ---------------------------------------------------------------------------
-// Tag synonyms
+// Synonym groups
 // ---------------------------------------------------------------------------
 
-/// Register `alias` as a synonym for the tag named `canonical`.
+/// Link two or more tag names into a synonym group.
 ///
-/// * The canonical tag is created if it does not yet exist.
-/// * Returns an error if `alias` is itself already a tag name in the `tags`
-///   table (a tag cannot simultaneously be a canonical tag and an alias).
-pub fn add_synonym(conn: &Connection, alias: &str, canonical: &str) -> Result<()> {
-    if conn
-        .query_row("SELECT id FROM tags WHERE name = ?1", params![alias], |r| {
-            r.get::<_, i64>(0)
-        })
-        .is_ok()
-    {
-        anyhow::bail!(
-            "'{}' is already a tag name; remove it first before using it as a synonym",
-            alias
-        );
+/// All names are created as real tags if they do not yet exist.  If any name
+/// is already in a group those groups are merged together.
+pub fn link_synonyms(conn: &Connection, names: &[&str]) -> Result<()> {
+    if names.len() < 2 {
+        bail!("need at least two names to link as synonyms");
     }
-    let canonical_id = get_or_create_tag(conn, canonical)?;
+
+    // Collect (tag_id, Option<group_id>) for each name.
+    let mut tag_ids: Vec<i64> = Vec::new();
+    let mut group_ids: Vec<Option<i64>> = Vec::new();
+    for &name in names {
+        let id = get_or_create_tag(conn, name)?;
+        let gid: Option<i64> = conn
+            .query_row(
+                "SELECT group_id FROM tags WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        tag_ids.push(id);
+        group_ids.push(gid);
+    }
+
+    // Collect distinct existing groups (deduplicated).
+    let distinct: Vec<i64> = {
+        let mut seen = std::collections::HashSet::new();
+        group_ids
+            .iter()
+            .filter_map(|&g| g)
+            .filter(|&g| seen.insert(g))
+            .collect()
+    };
+
+    let group_id: i64 = if distinct.is_empty() {
+        // No existing group — create a fresh one.
+        conn.execute(
+            "INSERT INTO tag_groups (created_at) VALUES (datetime('now'))",
+            [],
+        )?;
+        conn.last_insert_rowid()
+    } else {
+        // Use the first existing group; merge any additional groups into it.
+        let primary = distinct[0];
+        for &other in &distinct[1..] {
+            conn.execute(
+                "UPDATE tags SET group_id = ?1 WHERE group_id = ?2",
+                params![primary, other],
+            )?;
+            conn.execute("DELETE FROM tag_groups WHERE id = ?1", params![other])?;
+        }
+        primary
+    };
+
+    // Assign all tags to the group.
+    for &id in &tag_ids {
+        conn.execute(
+            "UPDATE tags SET group_id = ?1 WHERE id = ?2",
+            params![group_id, id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Remove `name` from its synonym group.
+///
+/// If the group would have only one member left after removal, that member is
+/// also ungrouped and the empty group is deleted.
+pub fn unlink_synonym(conn: &Connection, name: &str) -> Result<()> {
+    let (tag_id, group_id): (i64, Option<i64>) = conn
+        .query_row(
+            "SELECT id, group_id FROM tags WHERE name = ?1",
+            params![name],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| anyhow::anyhow!("tag '{}' not found", name))?;
+
+    let group_id = match group_id {
+        Some(g) => g,
+        None => bail!("tag '{}' is not in a synonym group", name),
+    };
+
+    // Remove this tag from the group.
     conn.execute(
-        "INSERT OR REPLACE INTO tag_synonyms (alias, canonical_id) VALUES (?1, ?2)",
-        params![alias, canonical_id],
+        "UPDATE tags SET group_id = NULL WHERE id = ?1",
+        params![tag_id],
+    )?;
+
+    // If only one member remains, ungroup it too and delete the group.
+    let remaining: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tags WHERE group_id = ?1",
+        params![group_id],
+        |r| r.get(0),
+    )?;
+    if remaining <= 1 {
+        conn.execute(
+            "UPDATE tags SET group_id = NULL WHERE group_id = ?1",
+            params![group_id],
+        )?;
+        conn.execute("DELETE FROM tag_groups WHERE id = ?1", params![group_id])?;
+    }
+    Ok(())
+}
+
+/// Return all members of the synonym group that contains `name`, including
+/// `name` itself.  Returns `[name]` when the tag is not in any group.
+pub fn synonym_group_members(conn: &Connection, name: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT t2.name
+         FROM tags t1
+         JOIN tags t2 ON t2.group_id = t1.group_id
+         WHERE t1.name = ?1 AND t1.group_id IS NOT NULL
+         ORDER BY t2.name",
+    )?;
+    let rows = stmt.query_map(params![name], |r| r.get::<_, String>(0))?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    if result.is_empty() {
+        result.push(name.to_string());
+    }
+    Ok(result)
+}
+
+/// Register `alias` as a synonym for `canonical` (backward-compatible wrapper).
+///
+/// Both names become real tags and are linked into the same group.
+pub fn add_synonym(conn: &Connection, alias: &str, canonical: &str) -> Result<()> {
+    link_synonyms(conn, &[alias, canonical])
+}
+
+/// Remove a synonym.  Returns `false` if the tag was not in a group.
+pub fn remove_synonym(conn: &Connection, alias: &str) -> Result<bool> {
+    match unlink_synonym(conn, alias) {
+        Ok(()) => Ok(true),
+        Err(e) if e.to_string().contains("not in a synonym group") => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Return all registered synonym groups as `(member_a, member_b, ...)` tuples,
+/// ordered by group id.
+pub fn list_synonyms(conn: &Connection) -> Result<Vec<Vec<String>>> {
+    let mut stmt = conn.prepare(
+        "SELECT tg.id, t.name
+         FROM tag_groups tg
+         JOIN tags t ON t.group_id = tg.id
+         ORDER BY tg.id, t.name",
+    )?;
+    let mut groups: std::collections::BTreeMap<i64, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+    for row in rows {
+        let (gid, name) = row?;
+        groups.entry(gid).or_default().push(name);
+    }
+    Ok(groups.into_values().collect())
+}
+
+/// Return all other members of the synonym group containing `name`
+/// (i.e. every member except `name` itself).
+pub fn synonyms_for_tag(conn: &Connection, name: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT t2.name
+         FROM tags t1
+         JOIN tags t2 ON t2.group_id = t1.group_id AND t2.name != t1.name
+         WHERE t1.name = ?1 AND t1.group_id IS NOT NULL
+         ORDER BY t2.name",
+    )?;
+    let rows = stmt.query_map(params![name], |r| r.get::<_, String>(0))?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Tag attributes
+// ---------------------------------------------------------------------------
+
+/// Set (or overwrite) an attribute on the tag named `name`.
+///
+/// The tag is created if it does not yet exist.  Attributes are arbitrary
+/// key=value pairs; they are used for ABAC-style display-name selection.
+pub fn set_tag_attr(conn: &Connection, name: &str, key: &str, value: &str) -> Result<()> {
+    let tag_id = get_or_create_tag(conn, name)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO tag_attrs (tag_id, key, value) VALUES (?1, ?2, ?3)",
+        params![tag_id, key, value],
     )?;
     Ok(())
 }
 
-/// Remove a synonym.  Returns `false` if the alias did not exist.
-pub fn remove_synonym(conn: &Connection, alias: &str) -> Result<bool> {
-    let changed = conn.execute("DELETE FROM tag_synonyms WHERE alias = ?1", params![alias])?;
+/// Remove an attribute from the tag named `name`.  Returns `false` if the
+/// attribute did not exist.
+pub fn remove_tag_attr(conn: &Connection, name: &str, key: &str) -> Result<bool> {
+    let tag_id: Option<i64> = conn
+        .query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
+            r.get(0)
+        })
+        .ok();
+    let tag_id = match tag_id {
+        Some(id) => id,
+        None => return Ok(false),
+    };
+    let changed = conn.execute(
+        "DELETE FROM tag_attrs WHERE tag_id = ?1 AND key = ?2",
+        params![tag_id, key],
+    )?;
     Ok(changed > 0)
 }
 
-/// Return all registered synonyms as `(alias, canonical_name)` pairs, ordered
-/// by canonical name then alias.
-pub fn list_synonyms(conn: &Connection) -> Result<Vec<(String, String)>> {
-    let mut stmt = conn.prepare(
-        "SELECT ts.alias, t.name \
-         FROM tag_synonyms ts JOIN tags t ON t.id = ts.canonical_id \
-         ORDER BY t.name, ts.alias",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+/// Return all attributes for the tag named `name` as `(key, value)` pairs.
+pub fn get_tag_attrs(conn: &Connection, name: &str) -> Result<Vec<(String, String)>> {
+    let tag_id: Option<i64> = conn
+        .query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
+            r.get(0)
+        })
+        .ok();
+    let tag_id = match tag_id {
+        Some(id) => id,
+        None => return Ok(Vec::new()),
+    };
+    let mut stmt =
+        conn.prepare("SELECT key, value FROM tag_attrs WHERE tag_id = ?1 ORDER BY key")?;
+    let rows = stmt.query_map(params![tag_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
     })?;
     let mut result = Vec::new();
     for row in rows {
@@ -538,19 +811,48 @@ pub fn list_synonyms(conn: &Connection) -> Result<Vec<(String, String)>> {
     Ok(result)
 }
 
-/// Return all alias names for the tag named `canonical`.
-pub fn synonyms_for_tag(conn: &Connection, canonical: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT ts.alias FROM tag_synonyms ts \
-         JOIN tags t ON t.id = ts.canonical_id \
-         WHERE t.name = ?1 ORDER BY ts.alias",
-    )?;
-    let rows = stmt.query_map(params![canonical], |r| r.get::<_, String>(0))?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
+// ---------------------------------------------------------------------------
+// Display context
+// ---------------------------------------------------------------------------
+
+/// Return the current display context stored in `settings`.
+///
+/// The context is a flat map of key→value pairs used to select the preferred
+/// display name from a synonym group.  Stored as a comma-separated
+/// `key=value,key=value` string under the settings key `"display_context"`.
+pub fn get_display_context(conn: &Connection) -> Result<HashMap<String, String>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'display_context'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let mut map = HashMap::new();
+    if let Some(s) = raw {
+        for part in s.split(',') {
+            if let Some((k, v)) = part.split_once('=') {
+                map.insert(k.trim().to_string(), v.trim().to_string());
+            }
+        }
     }
-    Ok(result)
+    Ok(map)
+}
+
+/// Store the display context in `settings`.
+///
+/// Keys and values must not contain `=` or `,`.
+pub fn set_display_context(conn: &Connection, context: &HashMap<String, String>) -> Result<()> {
+    let serialised: String = context
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join(",");
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('display_context', ?1)",
+        params![serialised],
+    )?;
+    Ok(())
 }
 
 /// Apply a tag (with optional value and optional subject) to a file.

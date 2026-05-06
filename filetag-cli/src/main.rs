@@ -245,23 +245,50 @@ enum Command {
 
 #[derive(Subcommand)]
 enum SynonymAction {
-    /// Register an alias as a synonym for a canonical tag
+    /// Link two tag names as synonyms (symmetric — no canonical direction)
     Add {
-        /// Alias name (the synonym to add)
-        alias: String,
-        /// Canonical tag name (the tag the alias maps to)
-        canonical: String,
+        /// First tag name
+        name1: String,
+        /// Second tag name
+        name2: String,
     },
 
-    /// Remove a registered synonym
+    /// Remove a tag from its synonym group
     Remove {
-        /// Alias name to remove
-        alias: String,
+        /// Tag name to ungroup
+        name: String,
     },
 
-    /// List all registered synonyms
+    /// List all synonym groups
     #[command(visible_alias = "ls")]
     List,
+
+    /// Set an attribute on a tag name (used for display-name selection)
+    #[command(name = "attr-set")]
+    AttrSet {
+        /// Tag name to set the attribute on
+        name: String,
+        /// Attribute key (e.g. `lang`)
+        key: String,
+        /// Attribute value (e.g. `nl`)
+        value: String,
+    },
+
+    /// Remove an attribute from a tag name
+    #[command(name = "attr-remove")]
+    AttrRemove {
+        /// Tag name to remove the attribute from
+        name: String,
+        /// Attribute key to remove
+        key: String,
+    },
+
+    /// Show or set the global display context (used to pick preferred display names)
+    Context {
+        /// Context string as `key=value` pairs separated by commas, e.g. `lang=nl`.
+        /// Omit to show the current context.
+        value: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1392,36 +1419,72 @@ fn cmd_completions(shell: Shell) -> Result<()> {
 fn cmd_synonym(cli: &Cli, action: &SynonymAction) -> Result<()> {
     let (conn, _root) = open_db(cli)?;
     match action {
-        SynonymAction::Add { alias, canonical } => {
-            db::add_synonym(&conn, alias, canonical)?;
-            info!(cli, "Added synonym '{}' → '{}'", alias, canonical);
+        SynonymAction::Add { name1, name2 } => {
+            db::link_synonyms(&conn, &[name1.as_str(), name2.as_str()])?;
+            info!(cli, "Linked '{}' and '{}' as synonyms.", name1, name2);
         }
-        SynonymAction::Remove { alias } => {
-            if db::remove_synonym(&conn, alias)? {
-                info!(cli, "Removed synonym '{}'", alias);
-            } else {
-                anyhow::bail!("synonym '{}' not found", alias);
-            }
+        SynonymAction::Remove { name } => {
+            db::unlink_synonym(&conn, name)?;
+            info!(cli, "Removed '{}' from its synonym group.", name);
         }
         SynonymAction::List => {
-            let synonyms = db::list_synonyms(&conn)?;
-            if synonyms.is_empty() {
+            let groups = db::list_synonyms(&conn)?;
+            if groups.is_empty() {
                 if !cli.quiet {
-                    eprintln!("No synonyms registered.");
+                    eprintln!("No synonym groups registered.");
                 }
                 return Ok(());
             }
             if cli.json {
-                let j: Vec<serde_json::Value> = synonyms
+                let j: Vec<serde_json::Value> = groups
                     .iter()
-                    .map(|(alias, canonical)| {
-                        serde_json::json!({ "alias": alias, "canonical": canonical })
-                    })
+                    .map(|members| serde_json::json!({ "members": members }))
                     .collect();
                 println!("{}", serde_json::to_string(&j)?);
             } else {
-                for (alias, canonical) in &synonyms {
-                    println!("{alias} → {canonical}");
+                for members in &groups {
+                    println!("{}", members.join(" ↔ "));
+                }
+            }
+        }
+        SynonymAction::AttrSet { name, key, value } => {
+            db::set_tag_attr(&conn, name, key, value)?;
+            info!(cli, "Set attr {}={} on '{}'.", key, value, name);
+        }
+        SynonymAction::AttrRemove { name, key } => {
+            if db::remove_tag_attr(&conn, name, key)? {
+                info!(cli, "Removed attr '{}' from '{}'.", key, name);
+            } else {
+                anyhow::bail!("attr '{}' not found on tag '{}'", key, name);
+            }
+        }
+        SynonymAction::Context { value } => {
+            if let Some(v) = value {
+                let mut ctx = std::collections::HashMap::new();
+                for part in v.split(',') {
+                    if let Some((k, val)) = part.trim().split_once('=') {
+                        ctx.insert(k.trim().to_string(), val.trim().to_string());
+                    } else if !part.trim().is_empty() {
+                        anyhow::bail!(
+                            "invalid context format: '{}' (expected key=value)",
+                            part.trim()
+                        );
+                    }
+                }
+                db::set_display_context(&conn, &ctx)?;
+                info!(cli, "Display context updated.");
+            } else {
+                let ctx = db::get_display_context(&conn)?;
+                if ctx.is_empty() {
+                    if !cli.quiet {
+                        eprintln!("No display context set.");
+                    }
+                } else if cli.json {
+                    println!("{}", serde_json::to_string(&ctx)?);
+                } else {
+                    for (k, v) in &ctx {
+                        println!("{}={}", k, v);
+                    }
                 }
             }
         }
