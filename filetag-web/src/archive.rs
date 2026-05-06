@@ -554,6 +554,25 @@ fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<Pat
     Some(dir.join(key))
 }
 
+fn zip_page_salient_cache_path(abs: &Path, root: &Path, page: usize) -> Option<PathBuf> {
+    let meta = std::fs::metadata(abs).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let size = meta.len();
+    let stem = abs
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.sp");
+    let dir = root.join(".filetag").join("cache").join("zip-pages");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(key))
+}
+
 /// Query params for `GET /api/zip/thumb`.
 #[derive(Deserialize)]
 pub struct ZipThumbParams {
@@ -582,8 +601,35 @@ pub async fn api_zip_thumb(
     let page_idx = params.page;
 
     if let Some(cache) = zip_page_thumb_cache_path(&abs, &cache_root, page_idx) {
+        let sp_path = zip_page_salient_cache_path(&abs, &cache_root, page_idx);
         if let Ok(data) = tokio::fs::read(&cache).await {
-            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+            // Already cached — attach salient headers if sidecar exists.
+            let salient = if features.saliency_pose {
+                let cached_sp = sp_path
+                    .as_ref()
+                    .and_then(|p| crate::preview::read_salient_cache_pub(p));
+                if cached_sp.is_none()
+                    && crate::saliency::pose_model_ready()
+                    && let Some(sp) = sp_path.clone()
+                {
+                    let data2 = data.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            let img = image::load_from_memory(&data2).ok()?;
+                            crate::saliency::detect_salient_point(&img, false)
+                        })
+                        .await
+                        .ok()
+                        .flatten();
+                        crate::preview::write_salient_cache_pub(&sp, result.map(|s| (s.cx, s.cy)));
+                    });
+                }
+                cached_sp.flatten()
+            } else {
+                None
+            };
+            let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+            return crate::preview::attach_salient_headers_pub(resp, salient);
         }
 
         let _permit = match THUMB_LIMITER.acquire().await {
@@ -597,17 +643,32 @@ pub async fn api_zip_thumb(
             }
         };
 
+        let abs2 = abs.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let pages = archive_image_entries(&abs)?;
+            let pages = archive_image_entries(&abs2)?;
             let name = pages
                 .into_iter()
                 .nth(page_idx)
                 .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
-            archive_read_entry(&abs, &name)
+            archive_read_entry(&abs2, &name)
         })
         .await;
 
         if let Ok(Ok((img_bytes, mime))) = result {
+            // Run salient detection on full-resolution bytes before downscaling.
+            let salient = if features.saliency_pose && crate::saliency::pose_model_ready() {
+                let bytes2 = img_bytes.clone();
+                tokio::task::spawn_blocking(move || {
+                    let img = image::load_from_memory(&bytes2).ok()?;
+                    crate::saliency::detect_salient_point(&img, false)
+                })
+                .await
+                .ok()
+                .flatten()
+                .map(|s| (s.cx, s.cy))
+            } else {
+                None
+            };
             let tmp = cache_root
                 .join(".filetag")
                 .join("tmp")
@@ -617,7 +678,11 @@ pub async fn api_zip_thumb(
                 if let Some(small) = image_thumb_jpeg(&tmp, features).await {
                     let _ = tokio::fs::remove_file(&tmp).await;
                     let _ = tokio::fs::write(&cache, &small).await;
-                    return ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
+                    if let Some(ref sp) = sp_path {
+                        crate::preview::write_salient_cache_pub(sp, salient);
+                    }
+                    let resp = ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
+                    return crate::preview::attach_salient_headers_pub(resp, salient);
                 }
                 let _ = tokio::fs::remove_file(&tmp).await;
             }

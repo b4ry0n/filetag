@@ -405,6 +405,11 @@ fn read_salient_cache(sp_path: &Path) -> Option<Option<(f32, f32)>> {
     Some(Some((cx, cy)))
 }
 
+/// Public wrapper for use by `archive.rs`.
+pub fn read_salient_cache_pub(sp_path: &Path) -> Option<Option<(f32, f32)>> {
+    read_salient_cache(sp_path)
+}
+
 /// Persist a salient point (or the "nothing detected" sentinel) to disk.
 fn write_salient_cache(sp_path: &Path, salient: Option<(f32, f32)>) {
     let text = match salient {
@@ -412,6 +417,11 @@ fn write_salient_cache(sp_path: &Path, salient: Option<(f32, f32)>) {
         None => "-".to_string(),
     };
     let _ = std::fs::write(sp_path, text);
+}
+
+/// Public wrapper for use by `archive.rs`.
+pub fn write_salient_cache_pub(sp_path: &Path, salient: Option<(f32, f32)>) {
+    write_salient_cache(sp_path, salient);
 }
 
 /// Attach `X-Salient-Cx` / `X-Salient-Cy` headers to an existing response.
@@ -426,6 +436,11 @@ fn attach_salient_headers(mut resp: Response, salient: Option<(f32, f32)>) -> Re
         }
     }
     resp
+}
+
+/// Public wrapper for use by `archive.rs`.
+pub fn attach_salient_headers_pub(resp: Response, salient: Option<(f32, f32)>) -> Response {
+    attach_salient_headers(resp, salient)
 }
 
 /// RAW extensions for which pure-Rust embedded JPEG extraction is attempted.
