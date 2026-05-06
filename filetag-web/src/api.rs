@@ -1031,6 +1031,109 @@ pub async fn api_search(
 }
 
 // ---------------------------------------------------------------------------
+// Filesystem search
+// ---------------------------------------------------------------------------
+
+/// `GET /api/fs-search?q=pattern&dir=...` — search files on the filesystem by
+/// filename pattern, regardless of whether they are indexed in the database.
+///
+/// `q` is matched case-insensitively against each file's name:
+///   - If `q` contains `*` or `?` it is treated as a glob pattern.
+///   - Otherwise every file whose name contains `q` as a substring matches.
+///
+/// Returns at most 2 000 results to keep the response fast.
+pub async fn api_fs_search(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SearchParams>,
+) -> Result<Json<ApiSearchResult>, AppError> {
+    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let root = db_root.root.clone();
+    let pattern = params.q.to_lowercase();
+    let is_glob = pattern.contains('*') || pattern.contains('?');
+    let filetag_dir = root.join(".filetag");
+
+    const MAX_RESULTS: usize = 2000;
+
+    let results: Vec<ApiSearchEntry> = walkdir::WalkDir::new(&root)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| {
+            // Skip .filetag dir and any dotfile / dotdir at any level.
+            let p = e.path();
+            if p.starts_with(&filetag_dir) {
+                return false;
+            }
+            if let Some(name) = p.file_name().and_then(|n| n.to_str())
+                && name.starts_with('.')
+            {
+                return false;
+            }
+            true
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if is_glob {
+                glob_match(&pattern, &name)
+            } else {
+                name.contains(pattern.as_str())
+            }
+        })
+        .take(MAX_RESULTS)
+        .filter_map(|e| {
+            e.path().strip_prefix(&root).ok().map(|rel| ApiSearchEntry {
+                path: rel.to_string_lossy().into_owned(),
+                tags: vec![],
+            })
+        })
+        .collect();
+
+    Ok(Json(ApiSearchResult {
+        query: params.q,
+        results,
+    }))
+}
+
+/// Minimal glob matcher supporting `*` (any sequence) and `?` (any single character).
+/// Both `pattern` and `text` must already be lowercased.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let p = pattern.as_bytes();
+    let t = text.as_bytes();
+    let mut pi = 0usize;
+    let mut ti = 0usize;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0usize;
+    loop {
+        if ti < t.len() {
+            if pi < p.len() && (p[pi] == b'?' || p[pi] == t[ti]) {
+                pi += 1;
+                ti += 1;
+                continue;
+            }
+            if pi < p.len() && p[pi] == b'*' {
+                star_pi = pi;
+                star_ti = ti;
+                pi += 1;
+                continue;
+            }
+            if star_pi != usize::MAX {
+                pi = star_pi + 1;
+                star_ti += 1;
+                ti = star_ti;
+                continue;
+            }
+            return false;
+        }
+        // Consume trailing `*` wildcards.
+        while pi < p.len() && p[pi] == b'*' {
+            pi += 1;
+        }
+        return pi == p.len();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // File detail
 // ---------------------------------------------------------------------------
 
