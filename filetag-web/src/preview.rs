@@ -84,11 +84,19 @@ fn salient_crop(img: &image::DynamicImage, pw: u32, ph: u32, cx: f32, cy: f32) -
     let px = (cx * sw as f32) as i64;
     let py = (cy * sh as f32) as i64;
 
-    // Crop origin centred on salient point, clamped to valid range.
+    // Place the salient point at 38 % from the top of the panel (rather than
+    // dead-centre at 50 %) so there is a little breathing room above the head.
+    let anchor_y = (ph as f32 * 0.38) as i64;
+
+    // Crop origin — anchor salient point at 38 % from top, clamped to valid range.
     let ox = (px - pw as i64 / 2).clamp(0, (sw - pw) as i64) as u32;
-    let oy = (py - ph as i64 / 2).clamp(0, (sh - ph) as i64) as u32;
+    let oy = (py - anchor_y).clamp(0, (sh - ph) as i64) as u32;
     image::imageops::crop_imm(&scaled.to_rgba8(), ox, oy, pw, ph).to_image()
 }
+
+/// Thumbnail bytes + optional salient point; used as return type for archive
+/// spawn_blocking closures to keep the type signature manageable.
+type ThumbWithSalient = (Vec<u8>, Option<(f32, f32)>);
 
 fn encode_lossy_webp_rgba(canvas: &image::RgbaImage) -> Option<Vec<u8>> {
     let (w, h) = canvas.dimensions();
@@ -1039,9 +1047,14 @@ pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Opt
 ///
 /// Cache key is derived from the zip file's mtime + size + entry name so
 /// thumbnails are invalidated automatically when the archive changes.
-async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> Response {
-    // Build a stable cache path: <root>/.filetag/cache/thumbs/<mtime>_<size>_<entry_slug>.thumb.webp
-    let cache_path: Option<PathBuf> = (|| {
+async fn thumb_archive_entry(
+    zip_abs: &Path,
+    entry_name: &str,
+    root: &Path,
+    features: Features,
+) -> Response {
+    // Build stable cache paths: <root>/.filetag/cache/thumbs/<mtime>_<size>_<slug>.thumb.{webp,sp}
+    let (cache_path, sp_path): (Option<PathBuf>, Option<PathBuf>) = (|| {
         let meta = std::fs::metadata(zip_abs).ok()?;
         let mtime = meta
             .modified()
@@ -1052,17 +1065,43 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
         let size = meta.len();
         // Sanitise entry name for use as a filename: replace path separators.
         let slug = entry_name.replace(['/', '\\', ':'], "_");
-        let key = format!("{mtime}_{size}_{slug}.thumb.webp");
         let dir = root.join(".filetag").join("cache").join("thumbs");
         std::fs::create_dir_all(&dir).ok()?;
-        Some(dir.join(key))
-    })();
+        Some((
+            dir.join(format!("{mtime}_{size}_{slug}.thumb.webp")),
+            dir.join(format!("{mtime}_{size}_{slug}.thumb.sp")),
+        ))
+    })()
+    .unzip();
 
     // Serve from cache if available.
     if let Some(ref p) = cache_path
         && let Ok(data) = tokio::fs::read(p).await
     {
-        return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+        let salient = if features.saliency_pose {
+            let cached_sp = sp_path.as_ref().and_then(|s| read_salient_cache(s));
+            if cached_sp.is_none()
+                && crate::saliency::pose_model_ready()
+                && let Some(sp) = sp_path.clone()
+            {
+                let data2 = data.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        let img = image::load_from_memory(&data2).ok()?;
+                        crate::saliency::detect_salient_point(&img, false)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    write_salient_cache(&sp, result.map(|s| (s.cx, s.cy)));
+                });
+            }
+            cached_sp.flatten()
+        } else {
+            None
+        };
+        let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+        return attach_salient_headers(resp, salient);
     }
 
     let _permit = match THUMB_LIMITER.try_acquire() {
@@ -1074,8 +1113,9 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
 
     let zip_abs = zip_abs.to_path_buf();
     let entry_name = entry_name.to_string();
+    let use_saliency = features.saliency_pose && crate::saliency::pose_model_ready();
 
-    let result = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+    let result = tokio::task::spawn_blocking(move || -> Option<ThumbWithSalient> {
         let (bytes, _) = crate::archive::archive_read_entry(&zip_abs, &entry_name).ok()?;
         let img = image::load_from_memory(&bytes).ok()?;
         // Respect EXIF orientation for JPEG entries.
@@ -1087,19 +1127,29 @@ async fn thumb_archive_entry(zip_abs: &Path, entry_name: &str, root: &Path) -> R
             1
         };
         let img = apply_exif_orientation(img, orient);
+        // Run salient detection on the full image before downscaling.
+        let salient = if use_saliency {
+            crate::saliency::detect_salient_point(&img, false).map(|s| (s.cx, s.cy))
+        } else {
+            None
+        };
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-        encode_lossy_webp(&img, 80.0)
+        Some((encode_lossy_webp(&img, 80.0)?, salient))
     })
     .await
     .ok()
     .flatten();
 
     match result {
-        Some(data) => {
+        Some((data, salient)) => {
             if let Some(ref p) = cache_path {
                 let _ = tokio::fs::write(p, &data).await;
             }
-            ([(header::CONTENT_TYPE, "image/webp")], data).into_response()
+            if let Some(ref sp) = sp_path {
+                write_salient_cache(sp, salient);
+            }
+            let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+            attach_salient_headers(resp, salient)
         }
         None => StatusCode::NO_CONTENT.into_response(),
     }
@@ -1129,7 +1179,8 @@ pub async fn thumb_handler(
             Some(p) => p,
             None => return (StatusCode::BAD_REQUEST, "Invalid archive path").into_response(),
         };
-        return thumb_archive_entry(&zip_abs, entry_name, &db_root.root).await;
+        let features = load_features_for(&state, &db_root.root);
+        return thumb_archive_entry(&zip_abs, entry_name, &db_root.root, features).await;
     }
 
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
@@ -1147,22 +1198,74 @@ pub async fn thumb_handler(
     match ext.as_str() {
         // ZIP/CBZ/RAR/CBR/7z/CB7: thumbnail = first image page, resized
         "zip" | "cbz" | "rar" | "cbr" | "7z" | "cb7" => {
-            let root = cache_root.clone();
-            thumb_cached(&abs, &cache_root, move |abs| {
-                Box::pin(async move {
-                    let abs2 = abs.to_path_buf();
-                    let result = tokio::task::spawn_blocking(move || {
-                        crate::archive::archive_cover_image(&abs2)
-                    })
-                    .await;
-                    if let Ok(Ok(img_bytes)) = result {
-                        thumb_from_raw_bytes(&img_bytes, &root, features).await
+            if let Some(cache) = thumb_cache_path(&abs, &cache_root) {
+                let sp_path = salient_cache_path(&abs, &cache_root);
+                if let Ok(data) = tokio::fs::read(&cache).await {
+                    // Already cached — attach salient headers if available.
+                    let salient = if features.saliency_pose {
+                        let cached_sp = sp_path.as_ref().and_then(|p| read_salient_cache(p));
+                        if cached_sp.is_none()
+                            && crate::saliency::pose_model_ready()
+                            && let Some(sp) = sp_path.clone()
+                        {
+                            let data2 = data.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    let img = image::load_from_memory(&data2).ok()?;
+                                    crate::saliency::detect_salient_point(&img, false)
+                                })
+                                .await
+                                .ok()
+                                .flatten();
+                                write_salient_cache(&sp, result.map(|s| (s.cx, s.cy)));
+                            });
+                        }
+                        cached_sp.flatten()
                     } else {
                         None
+                    };
+                    let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+                    return attach_salient_headers(resp, salient);
+                }
+                let _permit = match THUMB_LIMITER.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
+                            .into_response();
                     }
-                })
-            })
-            .await
+                };
+                let abs2 = abs.clone();
+                let root = cache_root.clone();
+                let use_saliency = features.saliency_pose && crate::saliency::pose_model_ready();
+                // Fetch cover image bytes; run salient detection before downscaling.
+                let cover =
+                    tokio::task::spawn_blocking(move || crate::archive::archive_cover_image(&abs2))
+                        .await;
+                if let Ok(Ok(img_bytes)) = cover {
+                    let salient = if use_saliency {
+                        let img_bytes2 = img_bytes.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let img = image::load_from_memory(&img_bytes2).ok()?;
+                            crate::saliency::detect_salient_point(&img, false)
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|s| (s.cx, s.cy))
+                    } else {
+                        None
+                    };
+                    if let Some(data) = thumb_from_raw_bytes(&img_bytes, &root, features).await {
+                        let _ = tokio::fs::write(&cache, &data).await;
+                        if let Some(ref sp) = sp_path {
+                            write_salient_cache(sp, salient);
+                        }
+                        let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+                        return attach_salient_headers(resp, salient);
+                    }
+                }
+            }
+            StatusCode::NO_CONTENT.into_response()
         }
 
         // Video: single-frame thumbnail (requires video feature)
