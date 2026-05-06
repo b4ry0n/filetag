@@ -2768,6 +2768,8 @@ fn dir_thumb_cache_path(
         features.video.hash(&mut h);
         features.imagemagick.hash(&mut h);
         features.pdf.hash(&mut h);
+        features.saliency_pose.hash(&mut h);
+        features.saliency_object.hash(&mut h);
         style.hash(&mut h);
         files.len().hash(&mut h);
         for path in files {

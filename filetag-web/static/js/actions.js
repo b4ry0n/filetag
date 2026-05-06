@@ -1039,11 +1039,10 @@ function _updateSaliencyStatus() {
             } else {
                 poseEl.textContent = 'Downloading…';
             }
+        } else if (poseReady) {
+            poseEl.innerHTML = '✓ Model ready &nbsp;<button onclick="saliencyTestFile()">Test on a file…</button>';
         } else {
-            poseEl.textContent = poseReady ? '✓ Model ready' : '⚠ Model not downloaded';
-            if (!poseReady) {
-                poseEl.innerHTML += ' <button onclick="saliencyDownloadPose()">Download</button>';
-            }
+            poseEl.innerHTML = '⚠ Model not downloaded <button onclick="saliencyDownloadPose()">Download</button>';
         }
     }
     if (objEl) {
@@ -1129,9 +1128,29 @@ function _pollSaliency() {
     }, 600);
 }
 
-// ---------------------------------------------------------------------------
-// Face settings
-// ---------------------------------------------------------------------------
+async function saliencyTestFile() {
+    const path = prompt('Enter the absolute path to an image file to test detection on:');
+    if (!path) return;
+    const statusEl = document.getElementById('feat-saliency-pose-status');
+    if (statusEl) statusEl.textContent = 'Running detection…';
+    try {
+        const res = await api(`/api/saliency/test?path=${encodeURIComponent(path)}`);
+        if (res.error) {
+            if (statusEl) statusEl.innerHTML = `✓ Model ready &nbsp;<button onclick="saliencyTestFile()">Test on a file…</button>`;
+            showToast('Detection error: ' + res.error, 5000);
+        } else if (res.salient_point) {
+            const cx = res.salient_point.cx.toFixed(3);
+            const cy = res.salient_point.cy.toFixed(3);
+            if (statusEl) statusEl.innerHTML = `✓ Model ready — detected (cx=${cx}, cy=${cy}) &nbsp;<button onclick="saliencyTestFile()">Test again…</button>`;
+        } else {
+            if (statusEl) statusEl.innerHTML = `✓ Model ready — no subject detected &nbsp;<button onclick="saliencyTestFile()">Test again…</button>`;
+        }
+    } catch (e) {
+        if (statusEl) statusEl.innerHTML = `✓ Model ready &nbsp;<button onclick="saliencyTestFile()">Test on a file…</button>`;
+        showToast('Test failed: ' + e.message, 5000);
+    }
+}
+
 
 function faceToggleEnabled() {
     const enabled = document.getElementById('face-enabled').checked;

@@ -394,6 +394,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/saliency/ensure-object",
             post(saliency::api_saliency_ensure_object),
         )
+        .route("/api/saliency/test", get(saliency::api_saliency_test))
         .route("/api/settings", get(api::api_settings_get))
         .route("/api/settings", post(api::api_settings_set))
         // Authentication routes (always available so login/logout work).

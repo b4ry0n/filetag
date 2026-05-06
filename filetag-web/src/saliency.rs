@@ -23,11 +23,11 @@ use std::sync::Mutex;
 
 use anyhow::Context;
 use axum::{
-    extract::State,
+    extract::{Query, State},
     response::{IntoResponse, Json},
 };
 use image::DynamicImage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tract_onnx::prelude::*;
 
@@ -585,6 +585,53 @@ pub async fn api_saliency_ensure_object(State(state): State<Arc<AppState>>) -> i
         let _ = ensure_object_model(state).await;
     });
     Json(serde_json::json!({"status": "started"})).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Saliency test endpoint
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SaliencyTestParams {
+    /// Absolute filesystem path of the file to test.
+    path: String,
+}
+
+/// `GET /api/saliency/test?path=<abs-path>` — run detection on a single image
+/// and return the detected salient point (or null when nothing is detected).
+/// Useful for diagnosing whether the pose model is working correctly.
+pub async fn api_saliency_test(Query(params): Query<SaliencyTestParams>) -> impl IntoResponse {
+    if !pose_model_ready() {
+        return Json(serde_json::json!({
+            "error": "pose model not downloaded",
+            "salient_point": null,
+        }))
+        .into_response();
+    }
+
+    let abs = std::path::PathBuf::from(&params.path);
+    if !abs.is_file() {
+        return (axum::http::StatusCode::BAD_REQUEST, "file not found").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let data = std::fs::read(&abs).ok()?;
+        let img = image::load_from_memory(&data).ok()?;
+        detect_salient_point(&img, object_model_ready())
+    })
+    .await
+    .unwrap_or(None);
+
+    match result {
+        Some(sp) => Json(serde_json::json!({
+            "salient_point": { "cx": sp.cx, "cy": sp.cy },
+        }))
+        .into_response(),
+        None => Json(serde_json::json!({
+            "salient_point": null,
+        }))
+        .into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
