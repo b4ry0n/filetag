@@ -678,7 +678,13 @@
 .tag-add-form button.btn-secondary:hover { background: var(--border); }
 
 /* Bulk-select tag panel */
-.bulk-tag-section { padding: 16px; }
+.bulk-tag-section {
+    padding: 16px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
 
 .bulk-subject-chips {
     display: flex;

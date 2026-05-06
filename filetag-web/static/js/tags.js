@@ -1662,6 +1662,7 @@ async function pruneUnusedTags() {
         } else {
             showToast(`Removed ${n} unused tag${n === 1 ? '' : 's'}.`);
             await loadTags();
+            renderTags();
             renderTmList();
         }
     } catch (e) {

@@ -375,6 +375,14 @@ pub async fn api_index_phash(
             !e.path().starts_with(&filetag_dir)
         })
         .filter(|e| {
+            // Skip macOS AppleDouble resource fork files (._filename)
+            e.path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| !n.starts_with("._"))
+                .unwrap_or(false)
+        })
+        .filter(|e| {
             let ext = e
                 .path()
                 .extension()

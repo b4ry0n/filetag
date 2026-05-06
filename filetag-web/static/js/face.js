@@ -683,6 +683,9 @@ async function faceOnDetailRendered(path, type_) {
     _faceRefreshDetailControls(path);
     _faceWrapPreviewImg();
     await faceLoadDetections(path);
+    // Always re-render overlays: the detail DOM was just rebuilt so existing
+    // boxes are gone even when detections were already cached.
+    _faceRenderOverlays(path);
     // Refresh toolbar now that detections are known
     _faceRefreshDetailControls(path);
 }

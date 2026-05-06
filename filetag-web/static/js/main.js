@@ -183,6 +183,11 @@ async function _selectAllFiles() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Click on empty space in the content area deselects everything (Finder-style).
+    document.getElementById('content').addEventListener('click', e => {
+        if (e.target === e.currentTarget) clearSelection();
+    });
+
     // Search
     document.getElementById('search-btn').addEventListener('click', doSearch);
     document.getElementById('search-clear').addEventListener('click', doClearSearch);

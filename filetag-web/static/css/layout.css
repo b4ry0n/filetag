@@ -1569,6 +1569,8 @@ mark.tag-filter-match {
     transition: opacity 0.12s;
     cursor: grab;
     flex-shrink: 0;
+    order: 99;
+    margin-left: 4px;
 }
 .ai-section-divider:hover .section-drag-handle { opacity: 0.6; }
 .ai-section-divider.section-dragging { opacity: 0.45; }

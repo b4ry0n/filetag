@@ -1267,8 +1267,98 @@ pub fn cluster_and_assign(conn: &Connection, cfg: &FaceConfig) -> anyhow::Result
 /// Tries the `image` crate first.  Returns an error if the format is not
 /// supported (caller can decide whether to skip or try an external tool).
 fn load_image(abs: &Path) -> anyhow::Result<DynamicImage> {
-    let img = image::open(abs)?;
-    Ok(img)
+    let data = std::fs::read(abs)?;
+    let img = image::load_from_memory(&data)?;
+    // Apply EXIF orientation so detection coordinates match the browser's
+    // display orientation (the preview handler also applies this correction).
+    let orient = jpeg_exif_orientation_bytes(&data);
+    Ok(apply_exif_orientation_face(img, orient))
+}
+
+/// Read the EXIF Orientation tag (1–8) from raw JPEG bytes.
+/// Returns 1 (normal) for non-JPEG files or when the tag is absent.
+fn jpeg_exif_orientation_bytes(data: &[u8]) -> u8 {
+    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+        return 1;
+    }
+    let mut pos = 2;
+    while pos + 3 < data.len() {
+        if data[pos] != 0xFF {
+            return 1;
+        }
+        let marker = data[pos + 1];
+        if marker == 0xDA {
+            return 1;
+        }
+        let seg_len = ((data[pos + 2] as usize) << 8) | data[pos + 3] as usize;
+        if seg_len < 2 || pos + 2 + seg_len > data.len() {
+            return 1;
+        }
+        if marker == 0xE1 {
+            let app1 = &data[pos + 4..pos + 2 + seg_len];
+            if app1.starts_with(b"Exif\0\0") && app1.len() >= 14 {
+                return parse_tiff_orientation_bytes(&app1[6..]);
+            }
+        }
+        pos += 2 + seg_len;
+    }
+    1
+}
+
+fn parse_tiff_orientation_bytes(tiff: &[u8]) -> u8 {
+    if tiff.len() < 8 {
+        return 1;
+    }
+    let le = &tiff[0..2] == b"II";
+    let u16_at = |off: usize| -> u16 {
+        if off + 2 > tiff.len() {
+            return 0;
+        }
+        if le {
+            u16::from_le_bytes([tiff[off], tiff[off + 1]])
+        } else {
+            u16::from_be_bytes([tiff[off], tiff[off + 1]])
+        }
+    };
+    let u32_at = |off: usize| -> u32 {
+        if off + 4 > tiff.len() {
+            return 0;
+        }
+        if le {
+            u32::from_le_bytes([tiff[off], tiff[off + 1], tiff[off + 2], tiff[off + 3]])
+        } else {
+            u32::from_be_bytes([tiff[off], tiff[off + 1], tiff[off + 2], tiff[off + 3]])
+        }
+    };
+    let ifd0 = u32_at(4) as usize;
+    if ifd0 + 2 > tiff.len() {
+        return 1;
+    }
+    let nentries = u16_at(ifd0) as usize;
+    for i in 0..nentries {
+        let e = ifd0 + 2 + i * 12;
+        if e + 12 > tiff.len() {
+            break;
+        }
+        if u16_at(e) == 0x0112 {
+            let v = u16_at(e + 8) as u8;
+            return if (1..=8).contains(&v) { v } else { 1 };
+        }
+    }
+    1
+}
+
+fn apply_exif_orientation_face(img: DynamicImage, orient: u8) -> DynamicImage {
+    match orient {
+        2 => img.fliph(),
+        3 => img.rotate180(),
+        4 => img.flipv(),
+        5 => img.rotate90().fliph(),
+        6 => img.rotate90(),
+        7 => img.rotate90().flipv(),
+        8 => img.rotate270(),
+        _ => img,
+    }
 }
 
 // ---------------------------------------------------------------------------
