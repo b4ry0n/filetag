@@ -758,9 +758,9 @@ function _thumbReplace(el, blobUrl, revokeOnLoad = false) {
     const _salient = _thumbSalient.get(blobUrl);
     img.addEventListener('load', () => {
         if (_salient) {
-            // Shift the focal point 10 percentage points lower in the card so
-            // there is a little breathing room above the detected head/body.
-            const cy_display = Math.min(90, _salient.cy * 100 + 10);
+            // Subtract 10 percentage points so the focal point sits lower in
+            // the card, leaving breathing room above the detected head/body.
+            const cy_display = Math.max(5, Math.min(90, _salient.cy * 100 - 10));
             img.style.objectPosition =
                 `${(_salient.cx * 100).toFixed(1)}% ${cy_display.toFixed(1)}%`;
         } else if (img.naturalHeight > img.naturalWidth) {
