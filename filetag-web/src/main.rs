@@ -210,6 +210,34 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("no databases found");
     }
 
+    // One-time migration: remove old `.filetag/tmp/` directories (pre-cache-layout legacy).
+    // Earlier versions wrote temp files directly to `<root>/.filetag/tmp/` instead of the
+    // current `<root>/.filetag/cache/tmp/`.  The directory itself was never cleaned up
+    // after use.  Remove it silently if it exists and is empty or contains only empty
+    // subdirectories; leave it alone if it still contains files (defensive).
+    for tag_root in &roots {
+        let old_tmp = tag_root.root.join(".filetag").join("tmp");
+        if old_tmp.is_dir() {
+            // Only remove if there are no files left inside.
+            let has_files = std::fs::read_dir(&old_tmp)
+                .ok()
+                .map(|rd| {
+                    rd.flatten().any(|e| {
+                        e.path().is_file()
+                            || e.path()
+                                .read_dir()
+                                .ok()
+                                .map(|mut d| d.next().is_some())
+                                .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            if !has_files {
+                let _ = std::fs::remove_dir_all(&old_tmp);
+            }
+        }
+    }
+
     // Resolve password: --password-file > --generate-password > --password / env var.
     let resolved_password: Option<String> = if let Some(ref path) = args.password_file {
         let raw = std::fs::read_to_string(path)
