@@ -40,6 +40,7 @@
     align-items: center;
     gap: 4px;
     font-size: 13px;
+    flex: 1;
     min-width: 0;
     overflow: hidden;
 }
@@ -49,11 +50,13 @@
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .breadcrumb-item:hover { background: var(--bg-hover); color: var(--text); }
 .breadcrumb-item.current { color: var(--text); font-weight: 500; }
-.breadcrumb-sep { color: var(--text-tertiary); font-size: 11px; }
+.breadcrumb-sep { color: var(--text-tertiary); font-size: 11px; flex-shrink: 0; }
 
 .view-toggle {
     display: flex;

@@ -73,6 +73,60 @@ function renderBreadcrumb() {
     }
 
     el.innerHTML = html;
+    _compactBreadcrumb(el);
+}
+
+/**
+ * Collapse the leftmost breadcrumb segments into a single "…" item when
+ * the breadcrumb overflows its container (Finder-style: oldest ancestors
+ * are hidden first so the current directory is always fully visible).
+ */
+function _compactBreadcrumb(el) {
+    if (el.scrollWidth <= el.clientWidth) return;
+
+    // Build a list of segments from the flat children list.
+    // children[0] is always the root "/" button (no preceding separator).
+    // Subsequent children are [sep][item] pairs.
+    const children = Array.from(el.children);
+    const segs = [];
+    let i = 1;
+    while (i < children.length) {
+        const isSep = children[i] && children[i].classList.contains('breadcrumb-sep');
+        const sep  = isSep ? children[i++] : null;
+        const item = children[i++];
+        if (item) segs.push({ sep, item });
+    }
+
+    // Need at least 2 segments to collapse anything (last segment is always kept).
+    if (segs.length <= 1) return;
+
+    // Hide segments from the left until the breadcrumb fits.
+    const hiddenLabels = [];
+    for (let h = 0; h < segs.length - 1 && el.scrollWidth > el.clientWidth; h++) {
+        const seg = segs[h];
+        if (seg.sep) seg.sep.style.display = 'none';
+        seg.item.style.display = 'none';
+        hiddenLabels.push(seg.item.textContent.trim());
+        void el.offsetWidth; // flush layout so scrollWidth is re-measured
+    }
+
+    if (hiddenLabels.length === 0) return;
+
+    // Insert a "…" button just before the separator of the first visible
+    // segment.  That separator then acts as the "/" between "…" and the
+    // next visible name:  / … / dir / current
+    const firstVisible = segs[hiddenLabels.length];
+    const insertBefore = (firstVisible && firstVisible.sep) || null;
+
+    const ellEl = document.createElement('button');
+    ellEl.className = 'breadcrumb-item';
+    ellEl.textContent = '\u2026'; // …
+    ellEl.title = hiddenLabels.join(' / ');
+    if (insertBefore) {
+        el.insertBefore(ellEl, insertBefore);
+    } else {
+        el.appendChild(ellEl);
+    }
 }
 
 // Inline rename of a root database name.
