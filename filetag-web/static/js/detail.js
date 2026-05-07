@@ -1478,6 +1478,9 @@ function renderFileTagChips(f, covered) {
         if (!hasExplicit && !hasImplicit) continue;
         html += `<div class="subject-group" ondragover="detailSubjectDragOver(event)" ondragleave="detailSubjectDragLeave(event)" ondrop="detailSubjectDrop(event,'${jesc(f.path)}','${jesc(subj)}')">`;
         html += `<span class="subject-label" title="Click to fill subject field" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}</span>`;
+        if (covered) {
+            html += `<button class="subject-rename" title="Rename subject" onclick="event.stopPropagation();startSubjectRename(this.parentElement,'${jesc(f.path)}','${jesc(subj)}')" tabindex="-1">&#9998;</button>`;
+        }
         html += explicitTags.map(chipHtml).join('');
         if (hasImplicit) {
             html += `<span class="subject-implicit-sep" title="Subject tags (read-only)"></span>`;

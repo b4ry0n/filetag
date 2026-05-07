@@ -564,6 +564,38 @@
 }
 .subject-remove:hover { opacity: 1; color: var(--danger, #e74c3c); }
 
+/* Inline-rename pencil button — visible only on subject-group hover */
+.subject-rename {
+    background: none;
+    border: none;
+    color: var(--fg-muted, #aaa);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0 2px;
+    line-height: 1;
+    margin-left: 1px;
+    opacity: 0;
+    transition: opacity .15s;
+}
+.subject-group:hover .subject-rename { opacity: .55; }
+.subject-rename:hover { opacity: 1 !important; color: var(--accent, #5b9cf6); }
+
+/* Inline text field that replaces the subject label during rename */
+.subject-rename-input {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    border: 1px solid var(--primary, #5b9cf6);
+    background: var(--bg-secondary, #1e1e1e);
+    color: var(--text-primary, #eee);
+    width: 130px;
+    max-width: 200px;
+    outline: none;
+}
+
 .transcode-btn {
     margin-top: 8px;
     padding: 6px 14px;

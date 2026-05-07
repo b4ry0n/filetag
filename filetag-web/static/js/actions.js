@@ -436,6 +436,58 @@ function toggleSubjectInput(subject) {
     _updateSubjectLabelHighlight();
 }
 
+/// Start inline rename for a subject label in the detail panel.
+/// Replaces the label (and its rename button) with a text input;
+/// Enter or blur confirms; Escape cancels.
+function startSubjectRename(groupEl, filePath, oldSubj) {
+    const label = groupEl.querySelector('.subject-label');
+    const renameBtn = groupEl.querySelector('.subject-rename');
+    if (!label) return;
+
+    const input = document.createElement('input');
+    input.className = 'subject-rename-input';
+    input.type = 'text';
+    input.value = oldSubj;
+
+    let done = false;
+
+    async function commit() {
+        if (done) return;
+        done = true;
+        const newSubj = input.value.trim();
+        input.replaceWith(label);
+        if (renameBtn) label.insertAdjacentElement('afterend', renameBtn);
+        if (newSubj && newSubj !== oldSubj) {
+            await doRenameSubject(oldSubj, newSubj);
+        }
+    }
+
+    function cancel() {
+        if (done) return;
+        done = true;
+        input.replaceWith(label);
+        if (renameBtn) label.insertAdjacentElement('afterend', renameBtn);
+    }
+
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', () => setTimeout(commit, 150));
+
+    label.replaceWith(input);
+    if (renameBtn) renameBtn.remove();
+    input.select();
+}
+
+/// Rename a subject globally across all files in the database.
+async function doRenameSubject(oldName, newName) {
+    await apiPost('/api/rename-subject', { name: oldName, new_name: newName, dir: currentAbsDir() });
+    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
+    await loadTags();
+    ftEmit('ft:file-tags', { paths: [] });
+}
+
 function attachTagAutocomplete(inputEl, submitFn) {
     let _dropdown = null;
     let _activeIdx = -1;
