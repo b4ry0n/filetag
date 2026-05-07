@@ -1002,13 +1002,13 @@ pub async fn sips_thumb_jpeg(_path: &Path, _root: &Path) -> Option<Vec<u8>> {
 
 /// Generate a JPEG thumbnail for a PDF by rasterising the first page.
 /// Tries pdftoppm first (poppler-utils), then ImageMagick+Ghostscript.
-/// Temp files are written under `<root>/.filetag/tmp/` per data-isolation rules.
+/// Temp files are written under `<root>/.filetag/cache/tmp/` per data-isolation rules.
 /// Returns `None` immediately when `features.pdf` is disabled.
 pub async fn pdf_thumb_jpeg(path: &Path, root: &Path, features: Features) -> Option<Vec<u8>> {
     if !features.pdf {
         return None;
     }
-    let tmp_dir = root.join(".filetag").join("tmp");
+    let tmp_dir = root.join(".filetag").join("cache").join("tmp");
     let _ = std::fs::create_dir_all(&tmp_dir);
     let stem = path
         .file_stem()
@@ -3099,6 +3099,7 @@ pub async fn api_dir_thumbs(
                 const MAX_ITEMS: usize = MAX_FRAMES * IMAGES_PER_FRAME;
                 let tmp_dir = cache_root
                     .join(".filetag")
+                    .join("cache")
                     .join("tmp")
                     .join(format!("dpt_{}", rand_hex()));
                 let _ = tokio::fs::create_dir_all(&tmp_dir).await;
