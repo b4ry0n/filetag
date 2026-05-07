@@ -34,6 +34,11 @@ fn encode_lossy_webp(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>>
     bytes.starts_with(b"RIFF").then_some(bytes)
 }
 
+/// Public wrapper for use by `archive.rs`.
+pub fn encode_lossy_webp_pub(img: &image::DynamicImage, quality: f32) -> Option<Vec<u8>> {
+    encode_lossy_webp(img, quality)
+}
+
 /// Encode an `RgbaImage` as **lossy** WebP at quality 80, preserving the alpha channel.
 /// `image::ImageFormat::WebP` discards alpha; this helper uses the `webp` crate
 /// directly (`WebPEncodeRGBA`) so transparency is retained.
@@ -1467,21 +1472,18 @@ where
 /// Falls back to the raw bytes if resizing fails.
 async fn thumb_from_raw_bytes(
     raw_bytes: &[u8],
-    cache_root: &Path,
-    features: Features,
+    _cache_root: &Path,
+    _features: Features,
 ) -> Option<Vec<u8>> {
-    let tmp_dir = cache_root.join(".filetag").join("tmp");
-    let _ = tokio::fs::create_dir_all(&tmp_dir).await;
-    let tmp = tmp_dir.join("thumb_src.jpg");
-    if tokio::fs::write(&tmp, raw_bytes).await.is_ok() {
-        if let Some(small) = image_thumb_jpeg(&tmp, features).await {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return Some(small);
-        }
-        let _ = tokio::fs::remove_file(&tmp).await;
-    }
-    // Fallback: return the raw bytes unchanged
-    Some(raw_bytes.to_vec())
+    let raw_bytes = raw_bytes.to_vec();
+    tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        let img = image::load_from_memory(&raw_bytes).ok()?;
+        let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+        encode_lossy_webp(&img, 80.0)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 // ---------------------------------------------------------------------------

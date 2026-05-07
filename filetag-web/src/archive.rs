@@ -14,7 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::preview::{image_thumb_jpeg, mime_for_ext};
+use crate::preview::mime_for_ext;
 use crate::state::{
     AppState, THUMB_LIMITER, open_conn, preview_safe_path, resolve_preview, root_for_dir,
 };
@@ -669,22 +669,24 @@ pub async fn api_zip_thumb(
             } else {
                 None
             };
-            let tmp = cache_root
-                .join(".filetag")
-                .join("tmp")
-                .join(format!("zp_{page_idx}.jpg"));
-            let _ = tokio::fs::create_dir_all(tmp.parent().unwrap()).await;
-            if tokio::fs::write(&tmp, &img_bytes).await.is_ok() {
-                if let Some(small) = image_thumb_jpeg(&tmp, features).await {
-                    let _ = tokio::fs::remove_file(&tmp).await;
-                    let _ = tokio::fs::write(&cache, &small).await;
-                    if let Some(ref sp) = sp_path {
-                        crate::preview::write_salient_cache_pub(sp, salient);
-                    }
-                    let resp = ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
-                    return crate::preview::attach_salient_headers_pub(resp, salient);
+            let small = {
+                let bytes = img_bytes.clone();
+                tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+                    let img = image::load_from_memory(&bytes).ok()?;
+                    let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+                    crate::preview::encode_lossy_webp_pub(&img, 80.0)
+                })
+                .await
+                .ok()
+                .flatten()
+            };
+            if let Some(small) = small {
+                let _ = tokio::fs::write(&cache, &small).await;
+                if let Some(ref sp) = sp_path {
+                    crate::preview::write_salient_cache_pub(sp, salient);
                 }
-                let _ = tokio::fs::remove_file(&tmp).await;
+                let resp = ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
+                return crate::preview::attach_salient_headers_pub(resp, salient);
             }
             return ([(header::CONTENT_TYPE, mime)], img_bytes).into_response();
         }
