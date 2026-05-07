@@ -450,6 +450,12 @@ function _updateCardTagBadges() {
 // Render: Content area
 // ---------------------------------------------------------------------------
 
+// Returns the grid/list class name with hide-labels appended if the user
+// preference is set, so that navigation never strips the class.
+function _gridClass(base) {
+    return localStorage.getItem('ft-card-labels') === '0' ? base + ' hide-labels' : base;
+}
+
 function renderContent() {
     // Remove any floating directory trickplay overlays left over from the
     // previous render (e.g. when the user double-clicks into a directory
@@ -472,10 +478,10 @@ function renderContent() {
             return;
         }
         if (state.viewMode === 'grid') {
-            el.className = 'file-grid';
+            el.className = _gridClass('file-grid');
             el.innerHTML = renderZipGrid(entries);
         } else {
-            el.className = 'file-list';
+            el.className = _gridClass('file-list');
             el.innerHTML = renderZipList(entries);
         }
         const images = entries.filter(e => e.is_image).length;
@@ -510,10 +516,10 @@ function renderContent() {
 
 
     if (state.viewMode === 'grid') {
-        el.className = 'file-grid';
+        el.className = _gridClass('file-grid');
         el.innerHTML = renderGrid(displayItems);
     } else {
-        el.className = 'file-list';
+        el.className = _gridClass('file-list');
         el.innerHTML = renderList(displayItems);
     }
     // Trigger dir-thumb pool after each content render.
