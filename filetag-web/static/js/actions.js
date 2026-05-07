@@ -288,9 +288,6 @@ async function doAddTag() {
     const subject = subjectInput?.value.trim() || undefined;
     await addTagToFile(state.selectedFile.path, tagStr, subject);
     input.value = '';
-    renderTags();
-    _updateCardTagBadges();
-    renderDetailTagsOnly();
     input.focus();
 }
 
@@ -301,15 +298,10 @@ async function doDirAddTag() {
     if (!tagStr) return;
     input.value = '';
     await addTagToDir(state.selectedDir.path, tagStr);
-    renderTags();
-    _updateCardTagBadges();
 }
 
 async function doRemoveTag(path, tagStr, subject) {
     await removeTagFromFile(path, tagStr, subject);
-    renderTags();
-    _updateCardTagBadges();
-    renderDetailTagsOnly();
 }
 
 // ---------------------------------------------------------------------------
@@ -348,8 +340,7 @@ async function detailSubjectDrop(event, filePath, newSubject) {
     await apiPost('/api/tag',   { path, tags: [tagStr], dir, ...(normNew ? { subject: normNew } : {}) });
     await loadFileDetail(path);
     await loadTags();
-    renderDetailTagsOnly();
-    renderTags();
+    ftEmit('ft:file-tags', { paths: [path] });
 }
 
 async function doRemoveSubject(path, subject) {
@@ -359,9 +350,7 @@ async function doRemoveSubject(path, subject) {
     for (const tag of subjectTags) {
         await removeTagFromFile(path, formatTag(tag), subject);
     }
-    renderTags();
-    _updateCardTagBadges();
-    renderDetailTagsOnly();
+    // ftEmit is handled by the last removeTagFromFile call
 }
 
 // ---------------------------------------------------------------------------

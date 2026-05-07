@@ -2,6 +2,31 @@
 // Icons (inline SVG)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Lightweight event bus
+// Two events are defined:
+//   'ft:tags-meta'  — tag metadata changed (name, colour, synonyms)
+//   'ft:file-tags'  — file↔tag associations changed (tag/untag operations)
+// Emitters load all required data BEFORE calling ftEmit so that by the time
+// subscribers run, state.tags / state.selectedFile are already up to date.
+// Subscribers are responsible only for rendering.
+// ---------------------------------------------------------------------------
+
+const _ftBus = {};
+
+/** Register a handler for an event. */
+function ftOn(event, handler) {
+    (_ftBus[event] ??= []).push(handler);
+}
+/** Remove a previously registered handler. */
+function ftOff(event, handler) {
+    if (_ftBus[event]) _ftBus[event] = _ftBus[event].filter(h => h !== handler);
+}
+/** Emit an event, calling all registered handlers synchronously. */
+function ftEmit(event, detail) {
+    (_ftBus[event] || []).forEach(h => h(detail));
+}
+
 const ICONS = {
     folder: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
     file:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',

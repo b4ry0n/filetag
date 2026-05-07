@@ -375,6 +375,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     const _labelsMode = (_savedLabels === '0' || _savedLabels === 'hide') ? 'hide'
                       : _savedLabels === 'minimal' ? 'minimal' : 'show';
     if (_labelsMode !== 'show') setCardLabels(_labelsMode);
+
+    // ---------------------------------------------------------------------------
+    // Pub/sub subscribers — all tag and file-tag mutations emit one of these two
+    // events after their data loads complete. Subscribers are the single source
+    // of truth for post-mutation rendering.
+    //
+    // 'ft:tags-meta'  — tag metadata changed (name, colour, synonyms)
+    //                   → re-render sidebar and detail panel
+    // 'ft:file-tags'  — file↔tag associations changed (tag / untag operations)
+    //                   → re-render sidebar, detail panel, and card tag badges
+    // ---------------------------------------------------------------------------
+    ftOn('ft:tags-meta', () => {
+        renderTags();
+        renderDetail();
+    });
+    ftOn('ft:file-tags', () => {
+        renderTags();
+        renderDetail();
+        _updateCardTagBadges();
+    });
 });
 
 // ---------------------------------------------------------------------------

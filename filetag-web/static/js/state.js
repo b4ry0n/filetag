@@ -310,10 +310,10 @@ async function addTagToDir(path, tagStr) {
     const detail = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
     if (state.selectedDir && state.selectedDir.path === path) {
         state.selectedDir.tags = detail.tags || [];
-        renderDetail();
     }
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
+    ftEmit('ft:file-tags', { paths: [path] });
 }
 
 async function removeTagFromDir(path, tagStr) {
@@ -321,10 +321,10 @@ async function removeTagFromDir(path, tagStr) {
     const detail = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
     if (state.selectedDir && state.selectedDir.path === path) {
         state.selectedDir.tags = detail.tags || [];
-        renderDetail();
     }
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
+    ftEmit('ft:file-tags', { paths: [path] });
 }
 
 // Timer to distinguish single click (select) from double click (navigate) on directories/roots.
@@ -379,6 +379,7 @@ async function addTagToFile(path, tagStr, subject) {
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     if (state.mode === 'zip')    await refreshZipEntries();
+    ftEmit('ft:file-tags', { paths: [path] });
 }
 
 async function removeTagFromFile(path, tagStr, subject) {
@@ -389,6 +390,7 @@ async function removeTagFromFile(path, tagStr, subject) {
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     if (state.mode === 'zip')    await refreshZipEntries();
+    ftEmit('ft:file-tags', { paths: [path] });
 }
 
 // ---------------------------------------------------------------------------

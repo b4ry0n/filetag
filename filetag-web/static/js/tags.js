@@ -1268,7 +1268,7 @@ async function setTagColor(tagName, color) {
     closeTagMenu();
     await apiPost('/api/tag-color', { name: tagName, color, dir: currentAbsDir() });
     await loadTags();
-    render();
+    ftEmit('ft:tags-meta', { tag: tagName });
 }
 
 async function deleteTag(tagName) {
@@ -1281,7 +1281,7 @@ async function deleteTag(tagName) {
     await apiPost('/api/delete-tag', { name: tagName, dir: currentAbsDir() });
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    render();
+    ftEmit('ft:file-tags', { tag: tagName });
 }
 
 async function applyTagToSelection(tagName) {
@@ -1296,9 +1296,8 @@ async function applyTagToSelection(tagName) {
     showToast(`Applied "${tagName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    renderDetailTagsOnly();
-    renderTags();
-    _updateCardTagBadges();
+    ftEmit('ft:file-tags', { paths });
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -1350,9 +1349,7 @@ async function tagDrop(event, tagName) {
     showToast(`Applied "${tagName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    renderDetailTagsOnly();
-    renderTags();
-    _updateCardTagBadges();
+    ftEmit('ft:file-tags', { paths });
 }
 
 async function subjectDrop(event, subjectName) {
@@ -1404,9 +1401,7 @@ async function subjectDrop(event, subjectName) {
     showToast(`Assigned subject "${subjectName}" to ${assigned} file${assigned === 1 ? '' : 's'}.`);
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     await loadTags();
-    renderDetailTagsOnly();
-    renderTags();
-    _updateCardTagBadges();
+    ftEmit('ft:file-tags', { subject: subjectName });
 }
 
 function showSubjectConflictDialog({ file, tag, subject }) {
@@ -1494,7 +1489,7 @@ async function renameTag(oldName, newName) {
     }
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    render();
+    ftEmit('ft:file-tags', { oldName, newName });
     if (document.getElementById('tag-manager-overlay')) renderTmList();
 }
 
@@ -1510,7 +1505,7 @@ async function addSynonymFromInput(tagName) {
         alert(`Could not add synonym: ${e.message || e}`);
     }
     await loadTags();
-    render();
+    ftEmit('ft:tags-meta', { tag: tagName });
 }
 
 async function removeSynonym(tagName, alias) {
@@ -1518,7 +1513,7 @@ async function removeSynonym(tagName, alias) {
     await apiPost('/api/synonym/remove', { name: alias, dir: currentAbsDir() });
     showToast(`Removed "${alias}" from synonym group.`);
     await loadTags();
-    render();
+    ftEmit('ft:tags-meta', { tag: tagName });
 }
 
 function startKvValueRename(tagName, oldValue) {
@@ -1535,7 +1530,7 @@ async function deleteKvValue(tagName, value) {
     delete state.kvValueCache[tagName];
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    render();
+    ftEmit('ft:file-tags', { tag: `${tagName}=${value}` });
 }
 
 // ---------------------------------------------------------------------------
@@ -1663,6 +1658,7 @@ async function pruneUnusedTags() {
             showToast(`Removed ${n} unused tag${n === 1 ? '' : 's'}.`);
             await loadTags();
             renderTmList();
+            ftEmit('ft:tags-meta');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
