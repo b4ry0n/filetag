@@ -582,10 +582,7 @@
 
 /* Inline text field that replaces the subject label during rename */
 .subject-rename-input {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .04em;
+    font-size: 11px;
     padding: 1px 4px;
     border-radius: 3px;
     border: 1px solid var(--primary, #5b9cf6);
