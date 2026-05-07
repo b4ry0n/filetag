@@ -1477,19 +1477,30 @@ function startTagRename(tagName) {
 async function renameTag(oldName, newName) {
     if (!newName || newName === oldName) { closeTagMenu(); return; }
     closeTagMenu();
+    // If renaming to key=value form (e.g. "shirt/color=blue"), the backend converts the
+    // tag to a kv tag named by the part before '=' and applies the value to all files.
+    // Use the base name for cache invalidation and TM navigation.
+    const eqIdx = newName.indexOf('=');
+    const baseName = eqIdx > 0 ? newName.slice(0, eqIdx) : newName;
     // Clear kv value caches for affected tags so the sidebar reflects the rename.
-    for (const n of [oldName, newName]) {
-        const eq = n.indexOf('=');
-        delete state.kvValueCache[eq > 0 ? n.slice(0, eq) : n];
+    for (const n of [oldName, baseName]) {
+        delete state.kvValueCache[n];
     }
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
-    if (res && res.merged) {
+    if (eqIdx > 0) {
+        showToast(`Converted "${oldName}" \u2192 "${baseName}" (k=v).`);
+    } else if (res && res.merged) {
         showToast(`Tags merged into "${newName}".`);
     }
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    ftEmit('ft:file-tags', { oldName, newName });
-    if (document.getElementById('tag-manager-overlay')) renderTmList();
+    ftEmit('ft:file-tags', { oldName, newName: baseName });
+    if (document.getElementById('tag-manager-overlay')) {
+        // Navigate TM to the actual (base) tag name after kv conversion.
+        if (eqIdx > 0) _tmSelectedTag = baseName;
+        renderTmList();
+        if (eqIdx > 0) renderTmDetail(baseName);
+    }
 }
 
 async function addSynonymFromInput(tagName) {
@@ -1943,7 +1954,7 @@ async function renderTmDetail(name) {
                         onkeydown="if(event.key==='Enter') tmDoRename('${jesc(name)}')">
                     <button class="tm-btn" onclick="tmDoRename('${jesc(name)}')">Rename</button>
                 </div>
-                <div class="tm-op-hint">Renaming to an existing tag merges them. Use <code>key=value</code> form to change tag style.</div>
+                <div class="tm-op-hint">Renaming to an existing tag merges them. Use <code>key=value</code> form to convert to a key=value tag (e.g. <code>shirt/color=blue</code> &rarr; tag <em>shirt/color</em> with value <em>blue</em>).</div>
             </div>
 
             <div class="tm-op-row">
@@ -2019,15 +2030,32 @@ async function tmDoRename(oldName) {
     const input = document.getElementById('tm-rename-input');
     const newName = input ? input.value.trim() : '';
     if (!newName || newName === oldName) return;
-    const existingTarget = state.tags.find(t => t.name === newName);
-    if (!confirm(`Rename "${oldName}" to "${newName}"?${existingTarget ? '\n\nTarget tag already exists \u2014 they will be merged.' : ''}`)) return;
+
+    // Detect key=value conversion: renaming to e.g. "shirt/color=blue" converts the
+    // tag to a k/v tag named "shirt/color" with value "blue" applied to all files.
+    const eqIdx = newName.indexOf('=');
+    const isKvConvert = eqIdx > 0;
+    const targetTag = isKvConvert ? newName.slice(0, eqIdx) : newName;
+
+    const existingTarget = state.tags.find(t => t.name === targetTag);
+    let confirmMsg = `Rename "${oldName}" to "${newName}"?`;
+    if (isKvConvert) {
+        const kv = newName.slice(eqIdx + 1);
+        confirmMsg += `\n\nThis converts the tag to key=value form:\n  tag: "${targetTag}"\n  value: "${kv}"\n\nAll files tagged with "${oldName}" will receive "${targetTag}=${kv}" instead.`;
+    } else if (existingTarget) {
+        confirmMsg += '\n\nTarget tag already exists \u2014 they will be merged.';
+    }
+    if (!confirm(confirmMsg)) return;
+
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
-    if (res && res.merged) showToast(`Merged into "${newName}".`);
+    if (isKvConvert) showToast(`Converted "${oldName}" \u2192 "${targetTag}" (k=v).`);
+    else if (res && res.merged) showToast(`Merged into "${newName}".`);
     else showToast(`Renamed "${oldName}" to "${newName}".`);
     await loadTags();
-    _tmSelectedTag = newName;
+    // Navigate to the actual tag name in the DB (base name without =value).
+    _tmSelectedTag = targetTag;
     renderTmList();
-    await renderTmDetail(newName);
+    await renderTmDetail(targetTag);
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();
 }
