@@ -1298,7 +1298,6 @@ async function applyTagToSelection(tagName) {
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     ftEmit('ft:file-tags', { paths });
 }
-}
 
 // ---------------------------------------------------------------------------
 // Drag-and-drop: file cards → sidebar tag/subject items
