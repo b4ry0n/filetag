@@ -774,6 +774,13 @@ async function toggleShowHidden() {
     }
 }
 
+function toggleCardLabels() {
+    const grid = document.getElementById('content');
+    const hidden = grid.classList.toggle('hide-labels');
+    document.getElementById('labels-toggle').classList.toggle('active', !hidden);
+    localStorage.setItem('ft-card-labels', hidden ? '0' : '1');
+}
+
 function toggleMoreMenu(e) {
     e.stopPropagation();
     const menu = document.getElementById('more-menu');

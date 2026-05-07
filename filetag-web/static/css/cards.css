@@ -11,6 +11,9 @@
     align-content: start;
 }
 
+/* Toggle: hide card labels (card-body = name + meta overlay) */
+.file-grid.hide-labels .card-body { display: none; }
+
 .card {
     width: var(--card-size, 140px);
     height: var(--card-size, 140px);

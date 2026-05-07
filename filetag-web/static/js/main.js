@@ -368,6 +368,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Panel resize handles
     initResizeHandles();
     _initChatResize();
+
+    // Restore card-labels toggle state from localStorage.
+    if (localStorage.getItem('ft-card-labels') === '0') {
+        document.getElementById('content').classList.add('hide-labels');
+        document.getElementById('labels-toggle').classList.remove('active');
+    }
 });
 
 // ---------------------------------------------------------------------------
