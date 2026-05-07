@@ -1577,7 +1577,7 @@ function showTagManager(selectTag) {
                     onkeydown="if(event.key==='Escape') closeTagManager()">
             </div>
             <div class="tm-body" id="tm-body-tags">
-                <div class="tm-list-col">
+                <div class="tm-list-col" id="tm-list-col-tags">
                     <div class="tm-list-header">
                         <button class="sidebar-sort-btn active" id="tm-sort-btn" onclick="toggleTagSortMode()" title="Sort: groups first">
                             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -1588,14 +1588,16 @@ function showTagManager(selectTag) {
                     </div>
                     <div class="tm-list" id="tm-list"></div>
                 </div>
+                <div class="tm-resizer" id="tm-resizer" onmousedown="tmResizerStart(event)"></div>
                 <div class="tm-detail" id="tm-detail">
                     <div class="tm-detail-placeholder">Select a tag to edit it.</div>
                 </div>
             </div>
             <div class="tm-body" id="tm-body-subjects" style="display:none">
-                <div class="tm-list-col">
+                <div class="tm-list-col" id="tm-list-col-subjects">
                     <div class="tm-list" id="tm-subject-list"></div>
                 </div>
+                <div class="tm-resizer" onmousedown="tmResizerStart(event)"></div>
                 <div class="tm-detail" id="tm-subject-detail">
                     <div class="tm-detail-placeholder">Selecteer een subject om het te bewerken.</div>
                 </div>
@@ -1604,6 +1606,13 @@ function showTagManager(selectTag) {
     `;
     overlay.addEventListener('click', closeTagManager);
     document.body.appendChild(overlay);
+
+    // Restore saved list-column width.
+    const savedTmW = localStorage.getItem('ft-tm-list-w');
+    if (savedTmW) {
+        const w = savedTmW + 'px';
+        for (const col of overlay.querySelectorAll('.tm-list-col')) col.style.width = w;
+    }
 
     _tmTab = 'tags';
     _tmSelectedTag = selectTag || null;
@@ -1618,6 +1627,39 @@ function showTagManager(selectTag) {
     requestAnimationFrame(() => {
         document.getElementById('tm-search')?.focus();
     });
+}
+
+// ---------------------------------------------------------------------------
+// Tag Manager: draggable list/detail divider
+// ---------------------------------------------------------------------------
+
+function tmResizerStart(e) {
+    e.preventDefault();
+    const resizer = e.currentTarget;
+    const body = resizer.closest('.tm-body');
+    const col = body?.querySelector('.tm-list-col');
+    if (!col) return;
+    const startX = e.clientX;
+    const startW = col.offsetWidth;
+
+    resizer.classList.add('tm-resizer-active');
+    document.body.style.cursor = 'col-resize';
+
+    function onMove(ev) {
+        const w = Math.max(140, Math.min(460, startW + ev.clientX - startX));
+        // Apply to all list columns so both tabs stay in sync.
+        for (const c of document.querySelectorAll('.tm-list-col')) c.style.width = w + 'px';
+    }
+    function onUp() {
+        resizer.classList.remove('tm-resizer-active');
+        document.body.style.cursor = '';
+        const finalW = col.offsetWidth;
+        localStorage.setItem('ft-tm-list-w', String(finalW));
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
 }
 
 function tmSwitchTab(tab) {
@@ -1696,7 +1738,10 @@ function renderTmTagTreeNodes(nodeMap, depth) {
 function renderTmTagTreeNode(node, depth) {
     const { segment, fullPath, tag, children } = node;
     const hasChildren = children.size > 0;
-    const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
+    // For groups the margin-left goes on the wrapper div (no width:100% issue).
+    // For leaf buttons we use a wrapper div instead of putting margin on the button,
+    // so that width:100% is relative to the already-narrowed wrapper.
+    const groupMargin = depth > 0 ? ' style="margin-left:12px"' : '';
     const q = _tmSearchQuery;
 
     // --- Leaf node ---
@@ -1706,12 +1751,10 @@ function renderTmTagTreeNode(node, depth) {
         const synBadge = (tag.synonyms || []).length
             ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms||[]).map(esc).join(', ')}">&#8801;</span>` : '';
         const kvBadge = tag.has_values ? ` <span class="tag-kv-badge">k=v</span>` : '';
-        // depth=0: tag-standalone (padding-left:6px) → dot at 6+12+4 = 22px.
-        // depth>0: inside a .tag-group div that already carries margin-left:12px,
-        //   so tag-item (padding-left:22px) gives dot at 12+22+12+4 = 50px — same as sidebar.
-        //   No extra margin or padding needed; the parent div handles the indentation.
         const cls = depth === 0 ? 'tag-item tag-standalone' : 'tag-item';
-        return `<button class="${cls}${sel}"${marginStyle} onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder">${_tagLeafIcon()}</span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+        const btn = `<button class="${cls}${sel}" onclick="tmSelectTag('${jesc(fullPath)}')" draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')" ><span class="tag-check-placeholder">${_tagLeafIcon()}</span>${_highlightMatch(segment, q)}${kvBadge}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+        // Wrap indented leaves in a div so width:100% on the button stays inside bounds.
+        return depth > 0 ? `<div style="margin-left:12px">${btn}</div>` : btn;
     }
 
     // --- Group node ---
@@ -1724,7 +1767,7 @@ function renderTmTagTreeNode(node, depth) {
         ? ` <span class="tag-synonym-badge" title="Synonyms: ${(tag.synonyms||[]).map(esc).join(', ')}">&#8801;</span>` : '';
     const kvBadge = tag && tag.has_values ? ` <span class="tag-kv-badge">k=v</span>` : '';
     const groupDrag = tag ? ` draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')"` : '';
-    return `<div class="tag-group"${marginStyle}>
+    return `<div class="tag-group"${groupMargin}>
         <div class="tag-group-label${expandedClass}${sel}">
             <button class="tag-group-chevron" onclick="tmToggleGroup('${jesc(fullPath)}')" title="Expand/collapse">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
