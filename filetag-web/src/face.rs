@@ -547,38 +547,144 @@ fn det_image_to_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
 /// Decode the 9 output tensors of det_10g.onnx into a flat list of
 /// `(score, x1, y1, x2, y2, landmarks[10])` tuples.
 ///
-/// Output tensor layout (for 640×640 input):
-/// ```text
-/// [0] scores stride 8   [1, 12800, 1]
-/// [1] scores stride 16  [1,  3200, 1]
-/// [2] scores stride 32  [1,   800, 1]
-/// [3] boxes  stride 8   [1, 12800, 4]
-/// [4] boxes  stride 16  [1,  3200, 4]
-/// [5] boxes  stride 32  [1,   800, 4]
-/// [6] kps    stride 8   [1, 12800, 10]
-/// [7] kps    stride 16  [1,  3200, 10]
-/// [8] kps    stride 32  [1,   800, 10]
-/// ```
+/// The 9 tensors (for 640×640 input) carry:
+///   - 3 score tensors  [*, N, 1]  for strides 8 / 16 / 32
+///   - 3 box tensors    [*, N, 4]  for strides 8 / 16 / 32
+///   - 3 keypoint tensors [*, N, 10] for strides 8 / 16 / 32
 ///
-/// Flat-slice access is used throughout to avoid ndarray dimensionality
-/// panics: regardless of whether the model exports [1, N, C] or [N, C],
-/// the in-memory layout is identical (batch=1, so the batch stride is
-/// irrelevant) and `flat[anchor * C + channel]` is always correct.
+/// The ONNX runtime (or the tract optimiser) may return them in any order
+/// depending on the platform.  We therefore identify each tensor by the
+/// last dimension of its shape (channel count C) and sort within each
+/// category by anchor count N (descending → stride 8 first).
+/// Only falls back to positional indexing when shape information is
+/// unavailable (1-D tensors).
 fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec<ScrfdDetection> {
+    // --- classify outputs by last shape dimension ---
+    let mut score_outs: Vec<&TValue> = Vec::new();
+    let mut box_outs: Vec<&TValue> = Vec::new();
+    let mut kps_outs: Vec<&TValue> = Vec::new();
+
+    for tv in outputs.iter() {
+        let shape = tv.shape();
+        if shape.len() < 2 {
+            continue; // 1-D tensor — cannot classify by channel count
+        }
+        match shape[shape.len() - 1] {
+            1 => score_outs.push(tv),
+            4 => box_outs.push(tv),
+            10 => kps_outs.push(tv),
+            _ => {}
+        }
+    }
+
+    // anchor count = product of all dims except the last
+    let anchor_n = |tv: &&TValue| -> usize {
+        let s = tv.shape();
+        s[..s.len() - 1].iter().product()
+    };
+
+    // Sort within each group: most anchors first (stride 8, 16, 32).
+    score_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
+    box_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
+    kps_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
+
+    // If we found exactly 3 of each, use the shape-based tensors.
+    // Otherwise fall back to the original stride-grouped index mapping
+    // (scores_8..32 at [0..2], boxes at [3..5], kps at [6..8]).
+    if score_outs.len() == 3 && box_outs.len() == 3 && kps_outs.len() == 3 {
+        decode_scrfd_classified(
+            &score_outs,
+            &box_outs,
+            &kps_outs,
+            score_threshold,
+            det_scale,
+        )
+    } else {
+        decode_scrfd_indexed(outputs, score_threshold, det_scale)
+    }
+}
+
+/// Decode after the tensors have been classified and sorted by stride.
+fn decode_scrfd_classified(
+    score_outs: &[&TValue],
+    box_outs: &[&TValue],
+    kps_outs: &[&TValue],
+    score_threshold: f32,
+    det_scale: f32,
+) -> Vec<ScrfdDetection> {
     let strides = [8u32, 16, 32];
     let num_anchors = 2usize;
-    // fmc = 3 (number of feature map levels)
-    // InsightFace SCRFD grouped layout: [scores_8, scores_16, scores_32,
-    //   boxes_8, boxes_16, boxes_32, kps_8, kps_16, kps_32]
-    // Indices: score=si, box=si+3, kps=si+6.
+    let mut results = Vec::new();
 
+    for (si, &stride) in strides.iter().enumerate() {
+        let scores_raw = score_outs[si].as_slice::<f32>().expect("scores slice");
+        let boxes_raw = box_outs[si].as_slice::<f32>().expect("boxes slice");
+        let kps_raw = kps_outs[si].as_slice::<f32>().expect("kps slice");
+
+        // Anchor count from the score tensor's shape (all dims except last).
+        let n = {
+            let s = score_outs[si].shape();
+            s[..s.len() - 1].iter().product::<usize>()
+        };
+        let grid = ((n / num_anchors) as f64).sqrt() as usize;
+
+        let mut anchor_idx = 0usize;
+        for row in 0..grid {
+            for col in 0..grid {
+                for _ in 0..num_anchors {
+                    if anchor_idx >= n {
+                        break;
+                    }
+                    let score = scores_raw[anchor_idx];
+                    if score >= score_threshold {
+                        let cx = col as f32 * stride as f32;
+                        let cy = row as f32 * stride as f32;
+
+                        let bi = anchor_idx * 4;
+                        let left = boxes_raw[bi] * stride as f32;
+                        let top = boxes_raw[bi + 1] * stride as f32;
+                        let right = boxes_raw[bi + 2] * stride as f32;
+                        let bottom = boxes_raw[bi + 3] * stride as f32;
+
+                        let x1 = (cx - left) / det_scale;
+                        let y1 = (cy - top) / det_scale;
+                        let x2 = (cx + right) / det_scale;
+                        let y2 = (cy + bottom) / det_scale;
+
+                        let mut lm = [0_f32; 10];
+                        let ki = anchor_idx * 10;
+                        for k in 0..5 {
+                            lm[2 * k] = (cx + kps_raw[ki + 2 * k] * stride as f32) / det_scale;
+                            lm[2 * k + 1] =
+                                (cy + kps_raw[ki + 2 * k + 1] * stride as f32) / det_scale;
+                        }
+
+                        results.push((score, x1, y1, x2, y2, lm));
+                    }
+                    anchor_idx += 1;
+                }
+            }
+        }
+    }
+    results
+}
+
+/// Fallback decoder that assumes the stride-grouped index ordering produced
+/// by the Python ONNX export:
+///   [scores_8, scores_16, scores_32, boxes_8, boxes_16, boxes_32, kps_8, kps_16, kps_32]
+fn decode_scrfd_indexed(
+    outputs: &[TValue],
+    score_threshold: f32,
+    det_scale: f32,
+) -> Vec<ScrfdDetection> {
+    let strides = [8u32, 16, 32];
+    let num_anchors = 2usize;
     let mut results = Vec::new();
 
     for (si, &stride) in strides.iter().enumerate() {
         let grid = (DET_SIZE / stride) as usize;
         let n = grid * grid * num_anchors;
 
-        // Flat slices — works regardless of whether the tensor is [1,N,C] or [N,C].
         let scores_raw = outputs[si].as_slice::<f32>().expect("scores slice");
         let boxes_raw = outputs[si + 3].as_slice::<f32>().expect("boxes slice");
         let kps_raw = outputs[si + 6].as_slice::<f32>().expect("kps slice");
@@ -590,10 +696,6 @@ fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec
                     if anchor_idx >= n {
                         break;
                     }
-
-                    // scores_raw: N elements (shape [1,N,1] or [N,1] → same flat layout)
-                    // det_10g.onnx applies sigmoid internally; scores are
-                    // already in [0, 1].  Do NOT apply sigmoid again.
                     let score = scores_raw[anchor_idx];
                     if score >= score_threshold {
                         let cx = col as f32 * stride as f32;
