@@ -11,8 +11,15 @@
     align-content: start;
 }
 
-/* Toggle: hide card labels (card-body = name + meta overlay) */
-.file-grid.hide-labels .card-body { display: none; }
+/* Toggle: hide card labels (card-body = name + meta overlay).
+ * Only hide when the card actually has a real thumbnail preview:
+ * - .card-icon[data-thumb-src]  → thumbnail queued/loading
+ * - .card-preview > img         → file thumbnail successfully loaded
+ * - .card-dir-sprite            → directory sprite successfully loaded
+ * Cards without a preview (roots, plain files, failed thumbs) keep their label. */
+.file-grid.hide-labels .card:has(.card-icon[data-thumb-src]) .card-body,
+.file-grid.hide-labels .card:has(.card-preview > img) .card-body,
+.file-grid.hide-labels .card:has(.card-dir-sprite) .card-body { display: none; }
 
 .card {
     width: var(--card-size, 140px);
