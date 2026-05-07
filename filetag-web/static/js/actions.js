@@ -780,8 +780,17 @@ function toggleLabelsMenu(e) {
     menu.hidden = !menu.hidden;
 }
 
+function toggleCardLabels() {
+    const current = localStorage.getItem('ft-card-labels') || 'show';
+    // Main button: simple on/off. Off uses the last non-show mode stored,
+    // defaulting to 'hide'. On always goes back to 'show'.
+    const next = current === 'show' ? (localStorage.getItem('ft-card-labels-off') || 'hide') : 'show';
+    setCardLabels(next);
+}
+
 function setCardLabels(mode) {
     document.getElementById('labels-menu').hidden = true;
+    if (mode !== 'show') localStorage.setItem('ft-card-labels-off', mode);
     const grid = document.getElementById('content');
     const btn  = document.getElementById('labels-toggle');
     grid.classList.toggle('hide-labels', mode !== 'show');
@@ -806,6 +815,8 @@ function toggleMoreMenu(e) {
 document.addEventListener('click', () => {
     const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
+    const lmenu = document.getElementById('labels-menu');
+    if (lmenu) lmenu.hidden = true;
 });
 
 async function clearCache(all = false) {
