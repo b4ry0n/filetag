@@ -370,10 +370,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     _initChatResize();
 
     // Restore card-labels toggle state from localStorage.
-    if (localStorage.getItem('ft-card-labels') === '0') {
-        document.getElementById('content').classList.add('hide-labels');
-        document.getElementById('labels-toggle').classList.remove('active');
-    }
+    const _savedLabels = localStorage.getItem('ft-card-labels');
+    // Migrate legacy values ('0' → 'hide', '1' → 'show').
+    const _labelsMode = (_savedLabels === '0' || _savedLabels === 'hide') ? 'hide'
+                      : _savedLabels === 'minimal' ? 'minimal' : 'show';
+    if (_labelsMode !== 'show') setCardLabels(_labelsMode);
 });
 
 // ---------------------------------------------------------------------------

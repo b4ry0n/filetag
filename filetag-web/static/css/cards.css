@@ -135,6 +135,33 @@
 }
 .card-filmstrip-badge svg { width: 10px; height: 10px; }
 
+/* Type badge for directory and image cards — same style as filmstrip badge.
+ * Hidden by default; shown only when the label is hidden and a thumbnail
+ * has been loaded (.has-thumb). This lets the user still identify the type. */
+.card-type-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 9px;
+    line-height: 14px;
+    pointer-events: none;
+    display: none;
+    align-items: center;
+    gap: 3px;
+}
+.card-type-badge svg { width: 10px; height: 10px; }
+
+/* Show type badge once label is hidden and thumbnail is present */
+.file-grid.hide-labels .card.has-thumb .card-type-badge { display: flex; }
+
+/* Hide ALL badges (filmstrip + type) in minimal mode */
+.file-grid.hide-badges .card-filmstrip-badge,
+.file-grid.hide-badges .card-type-badge { display: none !important; }
+
 /* Trickplay hover: sprite-sheet overlay driven by JS */
 .card-trickplay {
     position: relative;

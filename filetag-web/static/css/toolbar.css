@@ -136,13 +136,20 @@
     display: block;
     width: 100%;
     text-align: left;
-    padding: 7px 14px 7px 14px;
+    padding: 7px 14px 7px 32px;
     font-size: 13px;
     color: var(--text);
     background: none;
     border: none;
     cursor: pointer;
     white-space: nowrap;
+    position: relative;
+}
+.toolbar-dropdown button.active::before {
+    content: '✓';
+    position: absolute;
+    left: 12px;
+    color: var(--accent, #4a9eff);
 }
 .toolbar-dropdown button:hover { background: var(--bg-hover); }
 .toolbar-dropdown hr {

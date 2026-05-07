@@ -774,11 +774,27 @@ async function toggleShowHidden() {
     }
 }
 
-function toggleCardLabels() {
+function toggleLabelsMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('labels-menu');
+    menu.hidden = !menu.hidden;
+}
+
+function setCardLabels(mode) {
+    document.getElementById('labels-menu').hidden = true;
     const grid = document.getElementById('content');
-    const hidden = grid.classList.toggle('hide-labels');
-    document.getElementById('labels-toggle').classList.toggle('active', !hidden);
-    localStorage.setItem('ft-card-labels', hidden ? '0' : '1');
+    const btn  = document.getElementById('labels-toggle');
+    grid.classList.toggle('hide-labels', mode !== 'show');
+    grid.classList.toggle('hide-badges', mode === 'minimal');
+    // Active = labels are visible
+    btn.classList.toggle('active', mode === 'show');
+    // Update checkmarks in the dropdown
+    ['show', 'hide', 'minimal'].forEach(m => {
+        const el = document.getElementById(`labels-opt-${m}`);
+        if (!el) return;
+        el.classList.toggle('active', m === mode);
+    });
+    localStorage.setItem('ft-card-labels', mode);
 }
 
 function toggleMoreMenu(e) {

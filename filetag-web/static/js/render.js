@@ -183,12 +183,14 @@ function renderGrid(items) {
             const dirPath = entry.root_path == null ? fullPath(entry) : null;
             if (dirPath) {
                 const dts = `/api/dir-thumbs?${new URLSearchParams({path: dirPath}).toString()}${dirParam('&')}`;
-                        preview = `<div class="card-icon" data-thumb-src="${esc(dts)}" data-dir-path="${esc(dirPath)}" data-name="${esc(name)}">${ICONS.folder}</div>`;
+                        preview = `<div class="card-icon" data-thumb-src="${esc(dts)}" data-dir-path="${esc(dirPath)}" data-name="${esc(name)}">${ICONS.folder}</div>` +
+                            `<div class="card-type-badge">${ICONS.folder}</div>`;
             } else {
                 preview = `<div class="card-icon">${ICONS.folder}</div>`;
             }
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}" data-thumb-hover="1">${fileIcon(name)}</div>`;
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}" data-thumb-hover="1">${fileIcon(name)}</div>` +
+                `<div class="card-type-badge">${fileIcon(name)}</div>`;
         } else if (type_ === 'video') {
             const vpath = fullPath(entry);
             preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(vpath)}${dirParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}">${ICONS.video}</div>` +
@@ -450,10 +452,13 @@ function _updateCardTagBadges() {
 // Render: Content area
 // ---------------------------------------------------------------------------
 
-// Returns the grid/list class name with hide-labels appended if the user
-// preference is set, so that navigation never strips the class.
+// Returns the grid/list class name with the current label/badge preference
+// applied, so that navigation never strips those classes.
 function _gridClass(base) {
-    return localStorage.getItem('ft-card-labels') === '0' ? base + ' hide-labels' : base;
+    const v = localStorage.getItem('ft-card-labels');
+    if (v === 'minimal') return base + ' hide-labels hide-badges';
+    if (v === '0' || v === 'hide') return base + ' hide-labels';
+    return base;
 }
 
 function renderContent() {
