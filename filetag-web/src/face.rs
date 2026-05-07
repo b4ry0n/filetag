@@ -564,8 +564,15 @@ fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec
     let mut box_outs: Vec<&TValue> = Vec::new();
     let mut kps_outs: Vec<&TValue> = Vec::new();
 
-    for tv in outputs.iter() {
+    // Diagnostic: log every tensor's shape so we can identify ordering issues.
+    eprintln!(
+        "[face] decode_scrfd: {} output tensors, scale={:.4}",
+        outputs.len(),
+        det_scale
+    );
+    for (i, tv) in outputs.iter().enumerate() {
         let shape = tv.shape();
+        eprintln!("[face]   tensor[{i}] shape={shape:?}");
         if shape.len() < 2 {
             continue; // 1-D tensor — cannot classify by channel count
         }
@@ -587,6 +594,18 @@ fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec
     score_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
     box_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
     kps_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
+
+    eprintln!(
+        "[face]   classified: {} scores, {} boxes, {} kps → path: {}",
+        score_outs.len(),
+        box_outs.len(),
+        kps_outs.len(),
+        if score_outs.len() == 3 && box_outs.len() == 3 && kps_outs.len() == 3 {
+            "shape-based"
+        } else {
+            "index-based fallback"
+        }
+    );
 
     // If we found exactly 3 of each, use the shape-based tensors.
     // Otherwise fall back to the original stride-grouped index mapping
