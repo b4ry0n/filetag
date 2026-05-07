@@ -388,12 +388,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ---------------------------------------------------------------------------
     ftOn('ft:tags-meta', () => {
         renderTags();
-        renderDetail();
+        renderDetailTagsSectionOnly();
     });
     ftOn('ft:file-tags', () => {
+        // Remember which input had focus so we can restore it after the render.
+        const focusedId = document.activeElement?.id || null;
         renderTags();
-        renderDetail();
+        renderDetailTagsSectionOnly();
         _updateCardTagBadges();
+        // Restore focus — renderDetailTagsSectionOnly() only updates the tags
+        // section HTML, so the input elements are replaced; re-focus by id.
+        if (focusedId) {
+            const el = document.getElementById(focusedId);
+            if (el) el.focus();
+        }
     });
 });
 
