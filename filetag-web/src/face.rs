@@ -647,6 +647,7 @@ fn decode_scrfd_classified(
         };
         let grid = ((n / num_anchors) as f64).sqrt() as usize;
 
+        let mut hits = 0usize;
         let mut anchor_idx = 0usize;
         for row in 0..grid {
             for col in 0..grid {
@@ -656,6 +657,7 @@ fn decode_scrfd_classified(
                     }
                     let score = scores_raw[anchor_idx];
                     if score >= score_threshold {
+                        hits += 1;
                         let cx = col as f32 * stride as f32;
                         let cy = row as f32 * stride as f32;
 
@@ -684,6 +686,10 @@ fn decode_scrfd_classified(
                 }
             }
         }
+        eprintln!(
+            "[face]   stride={stride} n={n} grid={grid} above_thresh={hits} results_so_far={}",
+            results.len()
+        );
     }
     results
 }
@@ -1021,11 +1027,21 @@ pub fn detect_and_embed(
     // ------------------------------------------------------------------
     all_decoded.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
+    eprintln!("[face] before NMS: {} raw detections", all_decoded.len());
+    for (i, &(s, x1, y1, x2, y2, _)) in all_decoded.iter().take(10).enumerate() {
+        eprintln!(
+            "[face]   [{i}] score={s:.4} box=({x1:.1},{y1:.1},{x2:.1},{y2:.1}) size=({:.1}×{:.1})",
+            x2 - x1,
+            y2 - y1
+        );
+    }
+
     let candidates_nms: Vec<(f32, f32, f32, f32, f32)> = all_decoded
         .iter()
         .map(|&(s, x1, y1, x2, y2, _)| (s, x1, y1, x2, y2))
         .collect();
     let keep = nms(&candidates_nms, 0.4);
+    eprintln!("[face] after NMS: {} detections kept", keep.len());
 
     // ------------------------------------------------------------------
     // Step 3: Size filter + landmark-based alignment + embed.
