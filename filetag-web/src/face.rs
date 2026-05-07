@@ -525,14 +525,17 @@ fn prep_detector_input(img: &DynamicImage) -> (image::RgbImage, f32) {
 
 /// Build the NCHW input tensor for det_10g.onnx from a 640×640 RGB image.
 /// Normalisation: `(pixel − 127.5) / 128.0`.
+///
+/// det_10g.onnx was trained with OpenCV (BGR channel order).  The `image`
+/// crate decodes images as RGB, so we place channels in BGR order here.
 fn det_image_to_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
     let h = rgb.height() as usize;
     let w = rgb.width() as usize;
     let mut data = vec![0_f32; 3 * h * w];
     for (idx, pixel) in rgb.pixels().enumerate() {
-        data[idx] = (pixel[0] as f32 - 127.5) / 128.0; // R
-        data[h * w + idx] = (pixel[1] as f32 - 127.5) / 128.0; // G
-        data[2 * h * w + idx] = (pixel[2] as f32 - 127.5) / 128.0; // B
+        data[idx] = (pixel[2] as f32 - 127.5) / 128.0; // B (ch 0)
+        data[h * w + idx] = (pixel[1] as f32 - 127.5) / 128.0; // G (ch 1)
+        data[2 * h * w + idx] = (pixel[0] as f32 - 127.5) / 128.0; // R (ch 2)
     }
     Ok(tract_ndarray::Array4::from_shape_vec((1, 3, h, w), data)?.into())
 }
@@ -950,12 +953,13 @@ fn align_and_embed(
     let (a, b, tx, ty) = similarity_transform(src_lm, &CANONICAL_112);
     let aligned = warp_face_112(img, a, b, tx, ty);
 
-    // Normalise: (pixel / 255 − 0.5) / 0.5  (ArcFace standard).
+    // Normalise: (pixel / 255 − 0.5) / 0.5  (ArcFace standard, BGR order).
+    // w600k_r50.onnx was also trained with BGR input.
     let mut data = vec![0_f32; 3 * 112 * 112];
     for (idx, pixel) in aligned.pixels().enumerate() {
-        data[idx] = (pixel[0] as f32 / 255.0 - 0.5) / 0.5; // R
-        data[112 * 112 + idx] = (pixel[1] as f32 / 255.0 - 0.5) / 0.5; // G
-        data[2 * 112 * 112 + idx] = (pixel[2] as f32 / 255.0 - 0.5) / 0.5; // B
+        data[idx] = (pixel[2] as f32 / 255.0 - 0.5) / 0.5; // B (ch 0)
+        data[112 * 112 + idx] = (pixel[1] as f32 / 255.0 - 0.5) / 0.5; // G (ch 1)
+        data[2 * 112 * 112 + idx] = (pixel[0] as f32 / 255.0 - 0.5) / 0.5; // R (ch 2)
     }
 
     let tensor: Tensor = tract_ndarray::Array4::from_shape_vec((1, 3, 112, 112), data)?.into();
