@@ -771,7 +771,9 @@ function _thumbReplace(el, blobUrl, revokeOnLoad = false) {
         img.addEventListener('load',  () => URL.revokeObjectURL(blobUrl), { once: true });
         img.addEventListener('error', () => URL.revokeObjectURL(blobUrl), { once: true });
     }
+    const _card = el.closest('.card');
     el.replaceWith(img);
+    if (_card) _card.classList.add('has-thumb');
 
     // Attach trickplay for video cards.
     if (el.dataset.videoPath) {
@@ -806,6 +808,7 @@ function _dirPreviewReplace(el, blobUrl) {
         sprite.style.backgroundImage = `url(${JSON.stringify(blobUrl)})`;
         const card = el.closest('.card');
         el.replaceWith(sprite);
+        if (card) card.classList.add('has-thumb');
         if (n > 1 && card) {
             let timer = null;
             let frame = 0;

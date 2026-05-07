@@ -12,13 +12,10 @@
 }
 
 /* Toggle: hide card labels (card-body = name + meta overlay).
- * Only hide once a thumbnail is actually rendered:
- * - .card-preview > img    → file thumbnail loaded (replaces .card-icon)
- * - .card-dir-sprite       → directory sprite loaded (replaces .card-icon)
- * While loading (.card-icon[data-thumb-src] still present) and for cards
- * without any preview, the label remains visible. */
-.file-grid.hide-labels .card:has(.card-preview > img) .card-body,
-.file-grid.hide-labels .card:has(.card-dir-sprite) .card-body { display: none; }
+ * Only hide once a thumbnail is actually rendered; JS adds .has-thumb to the
+ * card element in _thumbReplace / _dirPreviewReplace. Cards without a loaded
+ * thumbnail (roots, plain files, failed thumbs) keep their label. */
+.file-grid.hide-labels .card.has-thumb .card-body { display: none; }
 
 .card {
     width: var(--card-size, 140px);
