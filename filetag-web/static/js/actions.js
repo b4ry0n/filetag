@@ -17,6 +17,11 @@ function _navUpdateButtons() {
 /** Capture the current navigation state and push it onto the history stack. */
 function _navPush() {
     if (_navRestoring) return;
+    // Save the scroll position of the page we're navigating away from.
+    const _content = document.getElementById('content');
+    if (_content && _navHistoryIdx >= 0 && _navHistory[_navHistoryIdx]) {
+        _navHistory[_navHistoryIdx].scrollTop = _content.scrollTop;
+    }
     const snap = {
         mode:            state.mode,
         currentPath:     state.currentPath,
@@ -64,6 +69,8 @@ async function _navRestore(snap) {
         _navRestoring = false;
     }
     render();
+    const _rc = document.getElementById('content');
+    if (_rc && snap.scrollTop) _rc.scrollTop = snap.scrollTop;
 }
 
 /** Go back one step in the navigation history (Alt+Left). */
