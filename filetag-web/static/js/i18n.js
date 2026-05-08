@@ -145,6 +145,7 @@ const TRANSLATIONS = {
         'face.no-faces-found': 'No faces detected in this image.',
         'face.toggle-boxes': 'Show/hide face boxes',
         'face.detect-error': 'Face detection failed',
+        'face.detect-timeout': 'Detection request timed out — the model may still be loading (OpenVINO). Try again in a moment.',
 
         // Chat panel
         'chat.title': 'Chat',
@@ -443,6 +444,7 @@ const TRANSLATIONS = {
         'face.no-faces-found': 'Geen gezichten gevonden in dit beeld.',
         'face.toggle-boxes': 'Gezichtskaders tonen/verbergen',
         'face.detect-error': 'Gezichtsdetectie mislukt',
+        'face.detect-timeout': 'Detectie time-out — het model wordt mogelijk nog geladen (OpenVINO). Probeer opnieuw.',
 
         // Chat panel
         'chat.title': 'Chat',

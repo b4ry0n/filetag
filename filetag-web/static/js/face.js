@@ -315,8 +315,13 @@ function faceToggleBoxes(path) {
 async function faceDetectSingle(path) {
     state.faceDetecting = true;
     _faceRefreshDetailControls(path);
+    // 10-minute timeout: with OpenVINO, the first detect may need to compile
+    // the model.  Pre-warming at startup normally prevents this, but as a
+    // safety net we abort after 10 min and show a helpful message.
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 600_000);
     try {
-        const result = await apiPost('/api/face/analyse', { path, dir: currentAbsDir() });
+        const result = await apiPost('/api/face/analyse', { path, dir: currentAbsDir() }, { signal: ctrl.signal });
         state.faceDetections = result.detections || [];
         state.faceDetectionsPath = path;
         state.faceImageWidth  = result.image_width  || 0;
@@ -327,9 +332,11 @@ async function faceDetectSingle(path) {
             showToast(t('face.no-faces-found'), 3000);
         }
     } catch (e) {
-        showToast(t('face.detect-error') + ': ' + e.message, 6000);
+        const msg = ctrl.signal.aborted ? t('face.detect-timeout') : e.message;
+        showToast(t('face.detect-error') + ': ' + msg, 6000);
         state.faceDetections = [];
     } finally {
+        clearTimeout(tid);
         state.faceDetecting = false;
         _faceRefreshDetailControls(path);
         _faceRenderOverlays(path);

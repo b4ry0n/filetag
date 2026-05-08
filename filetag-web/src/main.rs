@@ -535,6 +535,22 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Pre-warm ONNX/OpenVINO models in a background task if they are already
+    // on disk.  With the OpenVINO feature enabled, commit_from_file() compiles
+    // each model to an internal representation the first time it is called —
+    // this can take several minutes on a low-power device.  Starting the
+    // compilation here means the user does not see a long hang when they first
+    // click the Detect button.
+    if face::models_ready() {
+        tokio::spawn(async {
+            match tokio::task::spawn_blocking(face::prewarm_models).await {
+                Ok(Ok(_)) => eprintln!("face models pre-warmed"),
+                Ok(Err(e)) => eprintln!("face model pre-warm failed: {e:#}"),
+                Err(e) => eprintln!("face model pre-warm task panicked: {e}"),
+            }
+        });
+    }
+
     println!("filetag-web at http://{}", addr);
     for &i in &print_order {
         // Rebuild the ancestor chain for i using parent_idx.

@@ -397,7 +397,15 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         .min(8); // cap: more threads give diminishing returns on small batches
 
     let mk_session = |path: &std::path::Path| -> anyhow::Result<ort::session::Session> {
+        // Register OpenVINO as the preferred EP.  On systems without OpenVINO
+        // (e.g. macOS or a Linux build without --features openvino), the feature
+        // flag is absent so `register` returns MissingFeature and ort falls back
+        // silently to CPU/MLAS.  On a NAS built with `--features openvino` and
+        // ORT_DYLIB_PATH pointing to Intel's libonnxruntime.so, OpenVINO EP is
+        // initialised and the iGPU / CPU is used via the OpenVINO runtime.
         ort::session::Session::builder()?
+            .with_execution_providers([ort::ep::OpenVINO::default().build()])
+            .map_err(|e| anyhow::anyhow!("ort EP registration: {e}"))?
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(|e| anyhow::anyhow!("ort session options: {e}"))?
             .with_intra_threads(intra_threads)
@@ -427,6 +435,17 @@ fn load_models_cached() -> anyhow::Result<Arc<FaceModels>> {
     }
     *guard = Some(loaded.clone());
     Ok(loaded)
+}
+
+/// Public wrapper for use in `tokio::task::spawn_blocking` from startup code.
+///
+/// With the OpenVINO feature enabled, `commit_from_file` compiles each model
+/// to an OpenVINO internal representation on first call.  This can take
+/// several minutes on a low-power device.  Calling this function at server
+/// startup (in the background) means the compilation is done before the user
+/// ever clicks Detect, so the operation appears instant.
+pub fn prewarm_models() -> anyhow::Result<Arc<FaceModels>> {
+    load_models_cached()
 }
 
 // ---------------------------------------------------------------------------
@@ -1584,10 +1603,21 @@ pub async fn api_face_analyse(
     let (conn, eff_root, rel) = open_for_file_op(root_entry, &req.path)?;
     let cfg = load_face_config(&conn);
 
-    let models = tokio::task::spawn_blocking(load_models_cached)
-        .await
-        .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
-        .map_err(AppError)?;
+    // OpenVINO compiles models to an internal representation on first use;
+    // this can take several minutes.  Use a generous timeout so the request
+    // returns an error rather than hanging indefinitely.
+    let models = tokio::time::timeout(
+        std::time::Duration::from_secs(600),
+        tokio::task::spawn_blocking(load_models_cached),
+    )
+    .await
+    .map_err(|_| {
+        AppError(anyhow::anyhow!(
+            "model loading timed out — OpenVINO may still be compiling; try again in a moment"
+        ))
+    })?
+    .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
+    .map_err(AppError)?;
 
     let rel_clone = rel.clone();
     let (rows, img_w, img_h) = tokio::task::spawn_blocking(move || {
@@ -1719,7 +1749,18 @@ async fn run_batch(
     dir: PathBuf,
     recursive: bool,
 ) -> anyhow::Result<()> {
-    let models = tokio::task::spawn_blocking(load_models_cached).await??;
+    // Same generous timeout as in api_face_analyse.
+    let models = tokio::time::timeout(
+        std::time::Duration::from_secs(600),
+        tokio::task::spawn_blocking(load_models_cached),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "model loading timed out — OpenVINO may still be compiling; try again in a moment"
+        )
+    })?
+    .map_err(|e| anyhow::anyhow!("model load task panicked: {e}"))??;
 
     let files = collect_images(&dir, recursive);
     let total = files.len();

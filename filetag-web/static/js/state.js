@@ -117,11 +117,12 @@ async function api(url) {
     return res.json();
 }
 
-async function apiPost(url, body) {
+async function apiPost(url, body, opts = {}) {
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: opts.signal,
     });
     if (!res.ok) {
         const text = await res.text().catch(() => '');
