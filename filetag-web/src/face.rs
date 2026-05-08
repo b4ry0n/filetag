@@ -396,6 +396,17 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         .unwrap_or(4)
         .min(8); // cap: more threads give diminishing returns on small batches
 
+    // OpenVINO model cache: after the first compilation run, the compiled
+    // kernels are stored here and loaded on subsequent starts in seconds
+    // instead of minutes.  Stored alongside the ONNX models so it is
+    // naturally cleared when the user removes the models directory.
+    // On non-OpenVINO builds this directory is created but never written to.
+    let ov_cache_dir: Option<String> = models_dir().and_then(|d| {
+        let cache = d.join("ov_cache");
+        std::fs::create_dir_all(&cache).ok()?;
+        cache.to_str().map(str::to_string)
+    });
+
     let mk_session = |path: &std::path::Path| -> anyhow::Result<ort::session::Session> {
         // Register OpenVINO as the preferred EP.  On systems without OpenVINO
         // (e.g. macOS or a Linux build without --features openvino), the feature
@@ -403,8 +414,12 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         // silently to CPU/MLAS.  On a NAS built with `--features openvino` and
         // ORT_DYLIB_PATH pointing to Intel's libonnxruntime.so, OpenVINO EP is
         // initialised and the iGPU / CPU is used via the OpenVINO runtime.
+        let mut ov_ep = ort::ep::OpenVINO::default();
+        if let Some(ref dir) = ov_cache_dir {
+            ov_ep = ov_ep.with_cache_dir(dir);
+        }
         ort::session::Session::builder()?
-            .with_execution_providers([ort::ep::OpenVINO::default().build()])
+            .with_execution_providers([ov_ep.build()])
             .map_err(|e| anyhow::anyhow!("ort EP registration: {e}"))?
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(|e| anyhow::anyhow!("ort session options: {e}"))?
