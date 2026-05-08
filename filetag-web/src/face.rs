@@ -648,6 +648,13 @@ fn decode_scrfd_classified(
         let grid = ((n / num_anchors) as f64).sqrt() as usize;
 
         let mut hits = 0usize;
+        // Log first 5 raw score values and first 4 raw box values for diagnosis.
+        if si == 0 {
+            let sv: Vec<f32> = scores_raw.iter().copied().take(5).collect();
+            let bv: Vec<f32> = boxes_raw.iter().copied().take(8).collect();
+            eprintln!("[face]   stride=8 raw_scores[0..5]={sv:.4?}");
+            eprintln!("[face]   stride=8 raw_boxes[0..8]={bv:.4?}");
+        }
         let mut anchor_idx = 0usize;
         for row in 0..grid {
             for col in 0..grid {
