@@ -36,6 +36,7 @@ use axum::{
 };
 use filetag_lib::db;
 use image::{DynamicImage, ImageFormat, imageops::FilterType};
+use ort::session::builder::GraphOptimizationLevel;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -387,8 +388,26 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
     let embed_path =
         embed_model_path().ok_or_else(|| anyhow::anyhow!("models directory not available"))?;
 
-    let detector = ort::session::Session::builder()?.commit_from_file(&detect_path)?;
-    let embedder = ort::session::Session::builder()?.commit_from_file(&embed_path)?;
+    // Use all available CPU cores for intra-op parallelism (matrix operations
+    // within a single ORT node).  On a 4-core N100 this can halve inference
+    // time compared to the single-threaded default.
+    let intra_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8); // cap: more threads give diminishing returns on small batches
+
+    let mk_session = |path: &std::path::Path| -> anyhow::Result<ort::session::Session> {
+        ort::session::Session::builder()?
+            .with_optimization_level(GraphOptimizationLevel::All)
+            .map_err(|e| anyhow::anyhow!("ort session options: {e}"))?
+            .with_intra_threads(intra_threads)
+            .map_err(|e| anyhow::anyhow!("ort intra threads: {e}"))?
+            .commit_from_file(path)
+            .map_err(anyhow::Error::from)
+    };
+
+    let detector = mk_session(&detect_path)?;
+    let embedder = mk_session(&embed_path)?;
 
     Ok(FaceModels {
         detector: Mutex::new(detector),
