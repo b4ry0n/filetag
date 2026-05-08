@@ -664,12 +664,13 @@ function _dirThumbInit() {
 //      so the page fills in concentric rings rather than random order.
 
 const DIR_THUMB_CONCURRENCY = 6; // max parallel dir-thumb fetches / pollers
+const THUMB_CONCURRENCY = 6;     // max parallel regular-thumb fetches
 
 const _thumbQueue    = [];
-let   _thumbBusy     = false;
+let   _thumbBusy     = false;    // kept for back-compat; no longer used as a gate
 const _thumbCache    = new Map();    // thumb URL → blob URL  (null = permanent miss)
 const _thumbSalient  = new Map();    // blob URL → {cx, cy} — populated from X-Salient-* headers
-const _thumbFetching = new WeakSet(); // regular-thumb elements currently in flight
+const _thumbActive   = new Set();    // regular-thumb elements currently in flight
 
 const _dirThumbQueue  = [];          // ordered: visible-first, then by proximity
 const _dirThumbActive = new Set();   // dir-thumb elements currently being fetched
@@ -688,12 +689,12 @@ const _thumbObserver = new IntersectionObserver((entries) => {
                 _dirThumbQueue.unshift(el);
             }
         } else {
-            // Regular thumb: move to the front of the serial queue.
+            // Regular thumb: move to the front of the parallel pool queue.
             const i = _thumbQueue.indexOf(el);
             if (i !== -1) {
                 _thumbQueue.splice(i, 1);
                 newlyRegular.push(el);
-            } else if (!_thumbFetching.has(el) && src) {
+            } else if (!_thumbActive.has(el) && src) {
                 newlyRegular.push(el);
             }
         }
@@ -731,7 +732,7 @@ function _thumbInit() {
                 _thumbObserver.observe(el);
             }
         } else {
-            if (_thumbQueue.includes(el) || _thumbFetching.has(el)) return;
+            if (_thumbQueue.includes(el) || _thumbActive.has(el)) return;
             _thumbQueue.push(el);
             _thumbObserver.observe(el);
         }
@@ -835,57 +836,58 @@ function _dirPreviewReplace(el, blobUrl) {
     probe.src = blobUrl;
 }
 
-async function _thumbRun() {
-    if (_thumbBusy) return;
-    _thumbBusy = true;
-    while (_thumbQueue.length > 0) {
+/** Fill free slots in the regular-thumb parallel pool from _thumbQueue. */
+function _thumbRun() {
+    _thumbFlush();
+    while (_thumbActive.size < THUMB_CONCURRENCY && _thumbQueue.length > 0) {
         const el = _thumbQueue.shift();
-        if (!el.isConnected) continue;
-        const src = el.dataset.thumbSrc;
-        if (!src) continue;
-        // Check cache (may have been filled by another element with the same URL).
-        // null = permanent failure: skip without fetching again.
-        if (_thumbCache.has(src)) {
-            const cached = _thumbCache.get(src);
-            if (cached) _thumbReplace(el, cached);
-            continue;
-        }
-        _thumbFetching.add(el);
-        try {
-            const resp = await fetch(src);
-            if (!el.isConnected) continue;
-            if (resp.status === 200) {
-                const salientCx = resp.headers.get('x-salient-cx');
-                const salientCy = resp.headers.get('x-salient-cy');
-                const blob = await resp.blob();
-                const url = URL.createObjectURL(blob);
-                _thumbCache.set(src, url);
-                if (salientCx !== null && salientCy !== null) {
-                    _thumbSalient.set(url, { cx: parseFloat(salientCx), cy: parseFloat(salientCy) });
-                }
-                if (el.isConnected) _thumbReplace(el, url);
-            } else if (resp.status === 503) {
-                // Server busy: re-queue at back with a short delay.
-                await new Promise(resolve => setTimeout(resolve, 250));
-                if (el.isConnected) {
-                    _thumbQueue.push(el);
-                    _thumbObserver.observe(el);
-                }
-            } else if (resp.status === 204) {
-                // No content: cache the miss so this file is not refetched.
-                _thumbCache.set(src, null);
-                if (el.isConnected) _thumbShowFailed(el);
-            } else {
-                // Other failures: show placeholder but don't cache globally.
-                if (el.isConnected) _thumbShowFailed(el);
-            }
-        } catch (_) {
-            if (el.isConnected) _thumbShowFailed(el);
-        } finally {
-            _thumbFetching.delete(el);
-        }
+        if (!el.isConnected || !el.dataset.thumbSrc || _thumbActive.has(el)) continue;
+        _thumbActive.add(el);
+        _thumbFetchOne(el).finally(() => {
+            _thumbActive.delete(el);
+            _thumbRun();
+        });
     }
-    _thumbBusy = false;
+}
+
+async function _thumbFetchOne(el) {
+    const src = el.dataset.thumbSrc;
+    if (!src) return;
+    // Check cache before fetching (another element may have populated it).
+    if (_thumbCache.has(src)) {
+        const cached = _thumbCache.get(src);
+        if (cached) _thumbReplace(el, cached); else _thumbShowFailed(el);
+        return;
+    }
+    try {
+        const resp = await fetch(src);
+        if (!el.isConnected) return;
+        if (resp.status === 200) {
+            const salientCx = resp.headers.get('x-salient-cx');
+            const salientCy = resp.headers.get('x-salient-cy');
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            _thumbCache.set(src, url);
+            if (salientCx !== null && salientCy !== null) {
+                _thumbSalient.set(url, { cx: parseFloat(salientCx), cy: parseFloat(salientCy) });
+            }
+            if (el.isConnected) _thumbReplace(el, url);
+        } else if (resp.status === 503) {
+            // Server busy: re-queue at back with a short delay.
+            await new Promise(resolve => setTimeout(resolve, 250));
+            if (el.isConnected) {
+                _thumbQueue.push(el);
+                _thumbObserver.observe(el);
+            }
+        } else if (resp.status === 204) {
+            _thumbCache.set(src, null);
+            if (el.isConnected) _thumbShowFailed(el);
+        } else {
+            if (el.isConnected) _thumbShowFailed(el);
+        }
+    } catch (_) {
+        if (el.isConnected) _thumbShowFailed(el);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -999,6 +1001,7 @@ function _thumbClearCache() {
     for (const url of _thumbCache.values()) URL.revokeObjectURL(url);
     _thumbCache.clear();
     _thumbQueue.length = 0;
+    _thumbActive.clear();
     _dirThumbAbort(); // abort in-flight dir-thumb fetches + clear queue
     _trickplayCache.clear();
 }

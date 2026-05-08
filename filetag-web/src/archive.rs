@@ -529,27 +529,19 @@ pub async fn api_zip_page(
     }
 }
 
-/// Returns a cache path for a specific ZIP page thumbnail.
-fn zip_page_thumb_cache_path(abs: &Path, root: &Path, page: usize) -> Option<PathBuf> {
-    let meta = std::fs::metadata(abs).ok()?;
-    let mtime = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let size = meta.len();
-    let stem = abs
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.webp");
-    let dir = root.join(".filetag").join("cache").join("zip-pages");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join(key))
+/// Both cache paths for a single ZIP page thumbnail, computed in one blocking call.
+struct ZipThumbPaths {
+    thumb: PathBuf,
+    salient: PathBuf,
 }
 
-fn zip_page_salient_cache_path(abs: &Path, root: &Path, page: usize) -> Option<PathBuf> {
+/// Compute both cache paths for a ZIP page thumbnail.
+///
+/// This is a **blocking** function (calls `std::fs::metadata` and
+/// `std::fs::create_dir_all`) and must be called from `spawn_blocking`.
+/// It is a single function so that the filesystem metadata is read only once
+/// and the cache directory is created only once per request.
+fn zip_page_cache_paths(abs: &Path, root: &Path, page: usize) -> Option<ZipThumbPaths> {
     let meta = std::fs::metadata(abs).ok()?;
     let mtime = meta
         .modified()
@@ -562,10 +554,13 @@ fn zip_page_salient_cache_path(abs: &Path, root: &Path, page: usize) -> Option<P
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let key = format!("{mtime}_{size}_{stem}_p{page}.thumb.sp");
     let dir = root.join(".filetag").join("cache").join("zip-pages");
     std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join(key))
+    let base = format!("{mtime}_{size}_{stem}_p{page}");
+    Some(ZipThumbPaths {
+        thumb: dir.join(format!("{base}.thumb.webp")),
+        salient: dir.join(format!("{base}.thumb.sp")),
+    })
 }
 
 /// Query params for `GET /api/zip/thumb`.
@@ -595,99 +590,110 @@ pub async fn api_zip_thumb(
     };
     let page_idx = params.page;
 
-    if let Some(cache) = zip_page_thumb_cache_path(&abs, &cache_root, page_idx) {
-        let sp_path = zip_page_salient_cache_path(&abs, &cache_root, page_idx);
-        if let Ok(data) = tokio::fs::read(&cache).await {
-            // Already cached — attach salient headers if sidecar exists.
-            let salient = if features.saliency_pose {
-                let cached_sp = sp_path
-                    .as_ref()
-                    .and_then(|p| crate::preview::read_salient_cache_pub(p));
-                if cached_sp.is_none()
-                    && crate::saliency::pose_model_ready()
-                    && let Some(sp) = sp_path.clone()
-                {
-                    let data2 = data.clone();
-                    tokio::spawn(async move {
-                        let result = tokio::task::spawn_blocking(move || {
-                            let img = image::load_from_memory(&data2).ok()?;
-                            crate::saliency::detect_salient_point(&img, false)
-                        })
-                        .await
-                        .ok()
-                        .flatten();
-                        crate::preview::write_salient_cache_pub(&sp, result.map(|s| (s.cx, s.cy)));
-                    });
-                }
-                cached_sp.flatten()
-            } else {
-                None
-            };
-            let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+    // Compute cache paths in spawn_blocking: zip_page_cache_paths calls
+    // std::fs::metadata (stat the archive) and std::fs::create_dir_all, both
+    // blocking syscalls that may take hundreds of milliseconds over NFS.
+    // Previously these were called directly in the async handler, stalling the
+    // executor thread on every thumbnail request even when the cache was warm.
+    let abs2 = abs.clone();
+    let cache_root2 = cache_root.clone();
+    let paths =
+        tokio::task::spawn_blocking(move || zip_page_cache_paths(&abs2, &cache_root2, page_idx))
+            .await
+            .ok()
+            .flatten();
+
+    let Some(ZipThumbPaths {
+        thumb: cache,
+        salient: sp_path,
+    }) = paths
+    else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Cache unavailable").into_response();
+    };
+
+    if let Ok(data) = tokio::fs::read(&cache).await {
+        // Already cached — attach salient headers if sidecar exists.
+        let salient = if features.saliency_pose {
+            let cached_sp = crate::preview::read_salient_cache_pub(&sp_path);
+            if cached_sp.is_none() && crate::saliency::pose_model_ready() {
+                let sp = sp_path.clone();
+                let data2 = data.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        let img = image::load_from_memory(&data2).ok()?;
+                        crate::saliency::detect_salient_point(&img, false)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    crate::preview::write_salient_cache_pub(&sp, result.map(|s| (s.cx, s.cy)));
+                });
+            }
+            cached_sp.flatten()
+        } else {
+            None
+        };
+        let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+        return crate::preview::attach_salient_headers_pub(resp, salient);
+    }
+
+    let _permit = match THUMB_LIMITER.acquire().await {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "thumbnail limiter closed",
+            )
+                .into_response();
+        }
+    };
+
+    let abs2 = abs.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let pages = archive_image_entries(&abs2)?;
+        let name = pages
+            .into_iter()
+            .nth(page_idx)
+            .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
+        archive_read_entry(&abs2, &name)
+    })
+    .await;
+
+    if let Ok(Ok((img_bytes, mime))) = result {
+        // Run salient detection on full-resolution bytes before downscaling.
+        let salient = if features.saliency_pose && crate::saliency::pose_model_ready() {
+            let bytes2 = img_bytes.clone();
+            tokio::task::spawn_blocking(move || {
+                let img = image::load_from_memory(&bytes2).ok()?;
+                crate::saliency::detect_salient_point(&img, false)
+            })
+            .await
+            .ok()
+            .flatten()
+            .map(|s| (s.cx, s.cy))
+        } else {
+            None
+        };
+        let small = {
+            let bytes = img_bytes.clone();
+            tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+                let img = image::load_from_memory(&bytes).ok()?;
+                let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
+                crate::preview::encode_lossy_webp_pub(&img, 80.0)
+            })
+            .await
+            .ok()
+            .flatten()
+        };
+        if let Some(small) = small {
+            let _ = tokio::fs::write(&cache, &small).await;
+            crate::preview::write_salient_cache_pub(&sp_path, salient);
+            let resp = ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
             return crate::preview::attach_salient_headers_pub(resp, salient);
         }
-
-        let _permit = match THUMB_LIMITER.acquire().await {
-            Ok(p) => p,
-            Err(_) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "thumbnail limiter closed",
-                )
-                    .into_response();
-            }
-        };
-
-        let abs2 = abs.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let pages = archive_image_entries(&abs2)?;
-            let name = pages
-                .into_iter()
-                .nth(page_idx)
-                .ok_or_else(|| anyhow::anyhow!("page out of range"))?;
-            archive_read_entry(&abs2, &name)
-        })
-        .await;
-
-        if let Ok(Ok((img_bytes, mime))) = result {
-            // Run salient detection on full-resolution bytes before downscaling.
-            let salient = if features.saliency_pose && crate::saliency::pose_model_ready() {
-                let bytes2 = img_bytes.clone();
-                tokio::task::spawn_blocking(move || {
-                    let img = image::load_from_memory(&bytes2).ok()?;
-                    crate::saliency::detect_salient_point(&img, false)
-                })
-                .await
-                .ok()
-                .flatten()
-                .map(|s| (s.cx, s.cy))
-            } else {
-                None
-            };
-            let small = {
-                let bytes = img_bytes.clone();
-                tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
-                    let img = image::load_from_memory(&bytes).ok()?;
-                    let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-                    crate::preview::encode_lossy_webp_pub(&img, 80.0)
-                })
-                .await
-                .ok()
-                .flatten()
-            };
-            if let Some(small) = small {
-                let _ = tokio::fs::write(&cache, &small).await;
-                if let Some(ref sp) = sp_path {
-                    crate::preview::write_salient_cache_pub(sp, salient);
-                }
-                let resp = ([(header::CONTENT_TYPE, "image/webp")], small).into_response();
-                return crate::preview::attach_salient_headers_pub(resp, salient);
-            }
-            return ([(header::CONTENT_TYPE, mime)], img_bytes).into_response();
-        }
-        return (StatusCode::NOT_FOUND, "Page not found").into_response();
+        return ([(header::CONTENT_TYPE, mime)], img_bytes).into_response();
     }
-    (StatusCode::INTERNAL_SERVER_ERROR, "Cache unavailable").into_response()
+    (StatusCode::NOT_FOUND, "Page not found").into_response()
 }
 
 // ---------------------------------------------------------------------------
