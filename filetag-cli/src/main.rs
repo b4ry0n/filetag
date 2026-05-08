@@ -1492,8 +1492,27 @@ fn cmd_synonym(cli: &Cli, action: &SynonymAction) -> Result<()> {
     Ok(())
 }
 
+/// Compute the shortest relative path from directory `from` to path `to`.
+/// Both paths should be canonicalised before calling.
+/// Used to store linked-database paths in a mount-point-independent way.
+fn path_relative_to(from: &std::path::Path, to: &std::path::Path) -> PathBuf {
+    let common = from
+        .components()
+        .zip(to.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let up_count = from.components().count() - common;
+    let down: PathBuf = to.components().skip(common).collect();
+    let mut result = PathBuf::new();
+    for _ in 0..up_count {
+        result.push("..");
+    }
+    result.push(down);
+    result
+}
+
 /// Validate that `path` is a registered linked database.
-/// Returns the stored key (relative if under root, absolute if partner) and its `.filetag/db.sqlite3` path.
+/// Returns the stored key (relative path from root) and its `.filetag/db.sqlite3` path.
 fn resolve_registered_linked(
     conn: &rusqlite::Connection,
     root: &std::path::Path,
@@ -1508,10 +1527,7 @@ fn resolve_registered_linked(
             abs.display()
         );
     }
-    let stored_path = abs
-        .strip_prefix(root)
-        .map(|rel| rel.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| abs.to_string_lossy().into_owned());
+    let stored_path = path_relative_to(root, &abs).to_string_lossy().into_owned();
     let linked = db::list_linked(conn)?;
     if !linked.contains(&stored_path) {
         anyhow::bail!(
@@ -1569,22 +1585,17 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                     abs.display()
                 );
             }
-            // Store relative path if the target is under the current root (child),
-            // or absolute path if it is outside (partner/parent).
-            let stored_path = abs
-                .strip_prefix(&root)
-                .map(|rel| rel.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| abs.to_string_lossy().into_owned());
+            // Always store a relative path (from root to target), so that the
+            // link survives being re-mounted at a different absolute prefix on
+            // another machine (e.g. /mnt/docs → /mnt/user-docs via NFS).
+            let stored_path = path_relative_to(&root, &abs).to_string_lossy().into_owned();
             db::link_database(&conn, &stored_path)?;
             info!(cli, "Linked database: {}", stored_path);
         }
         DbAction::Remove { path } => {
             let abs = std::fs::canonicalize(path)
                 .or_else(|_| Ok::<PathBuf, std::io::Error>(path.clone()))?;
-            let stored_path = abs
-                .strip_prefix(&root)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| abs.to_string_lossy().into_owned());
+            let stored_path = path_relative_to(&root, &abs).to_string_lossy().into_owned();
             if db::unlink_database(&conn, &stored_path)? {
                 info!(cli, "Removed linked database: {}", stored_path);
             } else {
