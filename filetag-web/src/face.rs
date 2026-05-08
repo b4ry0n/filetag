@@ -39,7 +39,6 @@ use image::{DynamicImage, ImageFormat, imageops::FilterType};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tract_onnx::prelude::*;
 
 use crate::state::{
     AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
@@ -356,27 +355,19 @@ pub async fn ensure_models(state: Arc<AppState>) -> anyhow::Result<()> {
 // Loaded models (re-used across calls)
 // ---------------------------------------------------------------------------
 
-type OnnxModel = RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
-
 /// Compiled ONNX models kept alive for the lifetime of the server.
 ///
-/// The detector and embedder are wrapped in a `Mutex` to serialise concurrent
-/// `run()` calls.  `SimplePlan` is `Sync`, but tract's internal scratch
-/// buffers (e.g. `cached_mmm_scratch_space`) are stored in `RefCell`s inside
-/// the per-call `SessionState`.  In practice, concurrent calls from a
-/// background batch task and a foreground single-image request produced
-/// garbage detection outputs.  Serialising access eliminates that race.
+/// Each `ort::session::Session` is wrapped in a `Mutex` because `Session::run`
+/// requires `&mut self`.  The two locks are independent so detector and
+/// embedder can execute concurrently when called from different tasks.
 pub struct FaceModels {
-    pub detector: Mutex<OnnxModel>,
-    pub embedder: Mutex<OnnxModel>,
+    pub detector: Mutex<ort::session::Session>,
+    pub embedder: Mutex<ort::session::Session>,
 }
 
 static FACE_MODEL_CACHE: Mutex<Option<Arc<FaceModels>>> = Mutex::new(None);
 
-/// Load and optimise both models from disk.
-///
-/// This is expensive (~100 ms per model) and should only be called once, then
-/// the result cached in an `Arc` or `OnceCell`.
+/// Load both models from disk via ONNX Runtime.
 pub fn load_models() -> anyhow::Result<FaceModels> {
     let detect_path =
         detect_model_path().ok_or_else(|| anyhow::anyhow!("models directory not available"))?;
@@ -398,25 +389,8 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         }
     }
 
-    // det_10g.onnx — SCRFD-10GF, 640×640 input.
-    let detector = tract_onnx::onnx()
-        .model_for_path(&detect_path)?
-        .with_input_fact(
-            0,
-            InferenceFact::dt_shape(f32::datum_type(), tvec![1, 3, 640, 640]),
-        )?
-        .into_optimized()?
-        .into_runnable()?;
-
-    // w600k_r50.onnx — ResNet-50 ArcFace, 112×112 input.
-    let embedder = tract_onnx::onnx()
-        .model_for_path(&embed_path)?
-        .with_input_fact(
-            0,
-            InferenceFact::dt_shape(f32::datum_type(), tvec![1, 3, 112, 112]),
-        )?
-        .into_optimized()?
-        .into_runnable()?;
+    let detector = ort::session::Session::builder()?.commit_from_file(&detect_path)?;
+    let embedder = ort::session::Session::builder()?.commit_from_file(&embed_path)?;
 
     Ok(FaceModels {
         detector: Mutex::new(detector),
@@ -553,7 +527,7 @@ fn prep_detector_input(img: &DynamicImage) -> (image::RgbImage, f32) {
 ///
 /// det_10g.onnx was trained with OpenCV (BGR channel order).  The `image`
 /// crate decodes images as RGB, so we place channels in BGR order here.
-fn det_image_to_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
+fn det_image_to_tensor(rgb: &image::RgbImage) -> anyhow::Result<ndarray::Array4<f32>> {
     let h = rgb.height() as usize;
     let w = rgb.width() as usize;
     let mut data = vec![0_f32; 3 * h * w];
@@ -562,126 +536,72 @@ fn det_image_to_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
         data[h * w + idx] = (pixel[1] as f32 - 127.5) / 128.0; // G (ch 1)
         data[2 * h * w + idx] = (pixel[0] as f32 - 127.5) / 128.0; // R (ch 2)
     }
-    Ok(tract_ndarray::Array4::from_shape_vec((1, 3, h, w), data)?.into())
+    Ok(ndarray::Array4::from_shape_vec((1, 3, h, w), data)?)
 }
 
 // ---------------------------------------------------------------------------
 // SCRFD output decoder
 // ---------------------------------------------------------------------------
 
+/// A helper type: raw f32 slice for one SCRFD output tensor, with shape info.
+struct ScrfdTensor {
+    data: Vec<f32>,
+    shape: Vec<usize>,
+}
+
+impl ScrfdTensor {
+    fn anchor_n(&self) -> usize {
+        self.shape[..self.shape.len() - 1].iter().product()
+    }
+    fn channels(&self) -> usize {
+        *self.shape.last().unwrap_or(&0)
+    }
+}
+
 /// Decode the 9 output tensors of det_10g.onnx into a flat list of
 /// `(score, x1, y1, x2, y2, landmarks[10])` tuples.
 ///
-/// The 9 tensors (for 640×640 input) carry:
-///   - 3 score tensors  [*, N, 1]  for strides 8 / 16 / 32
-///   - 3 box tensors    [*, N, 4]  for strides 8 / 16 / 32
-///   - 3 keypoint tensors [*, N, 10] for strides 8 / 16 / 32
-///
-/// The ONNX runtime (or the tract optimiser) may return them in any order
-/// depending on the platform.  We therefore identify each tensor by the
-/// last dimension of its shape (channel count C) and sort within each
-/// category by anchor count N (descending → stride 8 first).
-/// Only falls back to positional indexing when shape information is
-/// unavailable (1-D tensors).
-fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec<ScrfdDetection> {
-    // --- classify outputs by last shape dimension ---
-    let mut score_outs: Vec<&TValue> = Vec::new();
-    let mut box_outs: Vec<&TValue> = Vec::new();
-    let mut kps_outs: Vec<&TValue> = Vec::new();
+/// Tensors are classified by their last dimension (1 = scores, 4 = boxes,
+/// 10 = keypoints) and sorted by anchor count descending (stride 8 first).
+fn decode_scrfd(
+    outputs: Vec<ScrfdTensor>,
+    score_threshold: f32,
+    det_scale: f32,
+) -> Vec<ScrfdDetection> {
+    let mut score_outs: Vec<ScrfdTensor> = Vec::new();
+    let mut box_outs: Vec<ScrfdTensor> = Vec::new();
+    let mut kps_outs: Vec<ScrfdTensor> = Vec::new();
 
-    // Diagnostic: log every tensor's shape so we can identify ordering issues.
-    eprintln!(
-        "[face] decode_scrfd: {} output tensors, scale={:.4}, threshold={:.4}",
-        outputs.len(),
-        det_scale,
-        score_threshold
-    );
-    for (i, tv) in outputs.iter().enumerate() {
-        let shape = tv.shape();
-        eprintln!("[face]   tensor[{i}] shape={shape:?}");
-        if shape.len() < 2 {
-            continue; // 1-D tensor — cannot classify by channel count
-        }
-        match shape[shape.len() - 1] {
-            1 => score_outs.push(tv),
-            4 => box_outs.push(tv),
-            10 => kps_outs.push(tv),
+    for t in outputs {
+        match t.channels() {
+            1 => score_outs.push(t),
+            4 => box_outs.push(t),
+            10 => kps_outs.push(t),
             _ => {}
         }
     }
 
-    // anchor count = product of all dims except the last
-    let anchor_n = |tv: &&TValue| -> usize {
-        let s = tv.shape();
-        s[..s.len() - 1].iter().product()
-    };
+    score_outs.sort_unstable_by_key(|t| std::cmp::Reverse(t.anchor_n()));
+    box_outs.sort_unstable_by_key(|t| std::cmp::Reverse(t.anchor_n()));
+    kps_outs.sort_unstable_by_key(|t| std::cmp::Reverse(t.anchor_n()));
 
-    // Sort within each group: most anchors first (stride 8, 16, 32).
-    score_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
-    box_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
-    kps_outs.sort_unstable_by_key(|tv| std::cmp::Reverse(anchor_n(tv)));
-
-    eprintln!(
-        "[face]   classified: {} scores, {} boxes, {} kps → path: {}",
-        score_outs.len(),
-        box_outs.len(),
-        kps_outs.len(),
-        if score_outs.len() == 3 && box_outs.len() == 3 && kps_outs.len() == 3 {
-            "shape-based"
-        } else {
-            "index-based fallback"
-        }
-    );
-
-    // If we found exactly 3 of each, use the shape-based tensors.
-    // Otherwise fall back to the original stride-grouped index mapping
-    // (scores_8..32 at [0..2], boxes at [3..5], kps at [6..8]).
-    if score_outs.len() == 3 && box_outs.len() == 3 && kps_outs.len() == 3 {
-        decode_scrfd_classified(
-            &score_outs,
-            &box_outs,
-            &kps_outs,
-            score_threshold,
-            det_scale,
-        )
-    } else {
-        decode_scrfd_indexed(outputs, score_threshold, det_scale)
+    if score_outs.len() != 3 || box_outs.len() != 3 || kps_outs.len() != 3 {
+        return Vec::new();
     }
-}
 
-/// Decode after the tensors have been classified and sorted by stride.
-fn decode_scrfd_classified(
-    score_outs: &[&TValue],
-    box_outs: &[&TValue],
-    kps_outs: &[&TValue],
-    score_threshold: f32,
-    det_scale: f32,
-) -> Vec<ScrfdDetection> {
     let strides = [8u32, 16, 32];
     let num_anchors = 2usize;
     let mut results = Vec::new();
 
     for (si, &stride) in strides.iter().enumerate() {
-        let scores_raw = score_outs[si].as_slice::<f32>().expect("scores slice");
-        let boxes_raw = box_outs[si].as_slice::<f32>().expect("boxes slice");
-        let kps_raw = kps_outs[si].as_slice::<f32>().expect("kps slice");
+        let scores_raw = &score_outs[si].data;
+        let boxes_raw = &box_outs[si].data;
+        let kps_raw = &kps_outs[si].data;
 
-        // Anchor count from the score tensor's shape (all dims except last).
-        let n = {
-            let s = score_outs[si].shape();
-            s[..s.len() - 1].iter().product::<usize>()
-        };
+        let n = score_outs[si].anchor_n();
         let grid = ((n / num_anchors) as f64).sqrt() as usize;
+        let max_edge = DET_SIZE as f32 / det_scale.max(1e-4) * 2.0;
 
-        let mut hits = 0usize;
-        // Log first 5 raw score values, max score, and first raw box values for diagnosis.
-        {
-            let max_score = scores_raw.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let sv: Vec<f32> = scores_raw.iter().copied().take(5).collect();
-            let bv: Vec<f32> = boxes_raw.iter().copied().take(8).collect();
-            eprintln!("[face]   stride={stride} raw_scores[0..5]={sv:.4?} max={max_score:.4}");
-            eprintln!("[face]   stride={stride} raw_boxes[0..8]={bv:.4?}");
-        }
         let mut anchor_idx = 0usize;
         for row in 0..grid {
             for col in 0..grid {
@@ -691,102 +611,29 @@ fn decode_scrfd_classified(
                     }
                     let score = scores_raw[anchor_idx];
                     if score >= score_threshold {
-                        hits += 1;
                         let cx = col as f32 * stride as f32;
                         let cy = row as f32 * stride as f32;
 
                         let bi = anchor_idx * 4;
-                        let left = boxes_raw[bi] * stride as f32;
-                        let top = boxes_raw[bi + 1] * stride as f32;
-                        let right = boxes_raw[bi + 2] * stride as f32;
-                        let bottom = boxes_raw[bi + 3] * stride as f32;
+                        let x1 = (cx - boxes_raw[bi] * stride as f32) / det_scale;
+                        let y1 = (cy - boxes_raw[bi + 1] * stride as f32) / det_scale;
+                        let x2 = (cx + boxes_raw[bi + 2] * stride as f32) / det_scale;
+                        let y2 = (cy + boxes_raw[bi + 3] * stride as f32) / det_scale;
 
-                        let x1 = (cx - left) / det_scale;
-                        let y1 = (cy - top) / det_scale;
-                        let x2 = (cx + right) / det_scale;
-                        let y2 = (cy + bottom) / det_scale;
-
-                        // Guard against NaN/Inf.
-                        if !x1.is_finite() || !y1.is_finite() || !x2.is_finite() || !y2.is_finite()
-                        {
-                            continue;
-                        }
-
-                        // Guard against implausibly large boxes.  On Linux x86_64 certain tile
-                        // contents trigger extreme model activations (sigmoid → 1.0, bbox head
-                        // → 10^15).  The maximum plausible face edge in original-image coordinates
-                        // is 2 × (DET_SIZE / det_scale); anything larger is garbage.
                         let w = x2 - x1;
                         let h = y2 - y1;
-                        let max_edge = DET_SIZE as f32 / det_scale.max(1e-4) * 2.0;
-                        if w <= 0.0 || h <= 0.0 || w > max_edge || h > max_edge {
+                        if !x1.is_finite()
+                            || !y1.is_finite()
+                            || !x2.is_finite()
+                            || !y2.is_finite()
+                            || w <= 0.0
+                            || h <= 0.0
+                            || w > max_edge
+                            || h > max_edge
+                        {
+                            anchor_idx += 1;
                             continue;
                         }
-
-                        let mut lm = [0_f32; 10];
-                        let ki = anchor_idx * 10;
-                        for k in 0..5 {
-                            lm[2 * k] = (cx + kps_raw[ki + 2 * k] * stride as f32) / det_scale;
-                            lm[2 * k + 1] =
-                                (cy + kps_raw[ki + 2 * k + 1] * stride as f32) / det_scale;
-                        }
-
-                        results.push((score, x1, y1, x2, y2, lm));
-                    }
-                    anchor_idx += 1;
-                }
-            }
-        }
-        eprintln!(
-            "[face]   stride={stride} n={n} grid={grid} above_thresh={hits} results_so_far={}",
-            results.len()
-        );
-    }
-    results
-}
-
-/// Fallback decoder that assumes the stride-grouped index ordering produced
-/// by the Python ONNX export:
-///   [scores_8, scores_16, scores_32, boxes_8, boxes_16, boxes_32, kps_8, kps_16, kps_32]
-fn decode_scrfd_indexed(
-    outputs: &[TValue],
-    score_threshold: f32,
-    det_scale: f32,
-) -> Vec<ScrfdDetection> {
-    let strides = [8u32, 16, 32];
-    let num_anchors = 2usize;
-    let mut results = Vec::new();
-
-    for (si, &stride) in strides.iter().enumerate() {
-        let grid = (DET_SIZE / stride) as usize;
-        let n = grid * grid * num_anchors;
-
-        let scores_raw = outputs[si].as_slice::<f32>().expect("scores slice");
-        let boxes_raw = outputs[si + 3].as_slice::<f32>().expect("boxes slice");
-        let kps_raw = outputs[si + 6].as_slice::<f32>().expect("kps slice");
-
-        let mut anchor_idx = 0usize;
-        for row in 0..grid {
-            for col in 0..grid {
-                for _ in 0..num_anchors {
-                    if anchor_idx >= n {
-                        break;
-                    }
-                    let score = scores_raw[anchor_idx];
-                    if score >= score_threshold {
-                        let cx = col as f32 * stride as f32;
-                        let cy = row as f32 * stride as f32;
-
-                        let bi = anchor_idx * 4;
-                        let left = boxes_raw[bi] * stride as f32;
-                        let top = boxes_raw[bi + 1] * stride as f32;
-                        let right = boxes_raw[bi + 2] * stride as f32;
-                        let bottom = boxes_raw[bi + 3] * stride as f32;
-
-                        let x1 = (cx - left) / det_scale;
-                        let y1 = (cy - top) / det_scale;
-                        let x2 = (cx + right) / det_scale;
-                        let y2 = (cy + bottom) / det_scale;
 
                         let mut lm = [0_f32; 10];
                         let ki = anchor_idx * 10;
@@ -948,6 +795,20 @@ const TILE_OVERLAP: f32 = 0.25;
 /// A raw SCRFD output tuple: (score, x1, y1, x2, y2, landmarks[10]).
 type ScrfdDetection = (f32, f32, f32, f32, f32, [f32; 10]);
 
+/// Convert `ort::session::SessionOutputs` (9 tensors) to `Vec<ScrfdTensor>` for decoding.
+fn ort_outputs_to_scrfd_tensors(
+    outputs: &ort::session::SessionOutputs,
+) -> anyhow::Result<Vec<ScrfdTensor>> {
+    let mut result = Vec::new();
+    for (_, value) in outputs.iter() {
+        let (shape_info, data_slice) = value.try_extract_tensor::<f32>()?;
+        let shape: Vec<usize> = (**shape_info).iter().map(|&d| d as usize).collect();
+        let data: Vec<f32> = data_slice.to_vec();
+        result.push(ScrfdTensor { data, shape });
+    }
+    Ok(result)
+}
+
 fn detect_tile(
     padded_rgb: &image::RgbImage,
     models: &FaceModels,
@@ -956,11 +817,12 @@ fn detect_tile(
     offset_x: f32,
     offset_y: f32,
 ) -> anyhow::Result<Vec<ScrfdDetection>> {
-    let tensor = det_image_to_tensor(padded_rgb)?;
-    let outputs = models.detector.lock().unwrap().run(tvec![tensor.into()])?;
-    // decode_scrfd returns coordinates in original-image space already
-    // (divided by `tile_scale`). We must still add the tile offset.
-    let decoded = decode_scrfd(&outputs, score_threshold, tile_scale);
+    let array = det_image_to_tensor(padded_rgb)?;
+    let input = ort::value::Tensor::from_array(array)?;
+    let mut detector = models.detector.lock().unwrap();
+    let raw_outputs = detector.run(ort::inputs![input])?;
+    let tensors = ort_outputs_to_scrfd_tensors(&raw_outputs)?;
+    let decoded = decode_scrfd(tensors, score_threshold, tile_scale);
     Ok(decoded
         .into_iter()
         .map(|(s, x1, y1, x2, y2, mut lm)| {
@@ -1079,20 +941,12 @@ pub fn detect_and_embed(
     all_decoded.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
     eprintln!("[face] before NMS: {} raw detections", all_decoded.len());
-    for (i, &(s, x1, y1, x2, y2, _)) in all_decoded.iter().take(10).enumerate() {
-        eprintln!(
-            "[face]   [{i}] score={s:.4} box=({x1:.1},{y1:.1},{x2:.1},{y2:.1}) size=({:.1}×{:.1})",
-            x2 - x1,
-            y2 - y1
-        );
-    }
 
     let candidates_nms: Vec<(f32, f32, f32, f32, f32)> = all_decoded
         .iter()
         .map(|&(s, x1, y1, x2, y2, _)| (s, x1, y1, x2, y2))
         .collect();
     let keep = nms(&candidates_nms, 0.4);
-    eprintln!("[face] after NMS: {} detections kept", keep.len());
 
     // ------------------------------------------------------------------
     // Step 3: Size filter + landmark-based alignment + embed.
@@ -1150,11 +1004,17 @@ fn align_and_embed(
         data[2 * 112 * 112 + idx] = (pixel[0] as f32 / 255.0 - 0.5) / 0.5; // R (ch 2)
     }
 
-    let tensor: Tensor = tract_ndarray::Array4::from_shape_vec((1, 3, 112, 112), data)?.into();
-    let outputs = models.embedder.lock().unwrap().run(tvec![tensor.into()])?;
-    let emb = outputs[0].to_array_view::<f32>()?;
+    let array = ndarray::Array4::from_shape_vec((1, 3, 112, 112), data)?;
+    let input = ort::value::Tensor::from_array(array)?;
+    let mut embedder = models.embedder.lock().unwrap();
+    let outputs = embedder.run(ort::inputs![input])?;
+    let (_, first_out) = outputs
+        .iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("embedder produced no output"))?;
+    let (_, emb_data) = first_out.try_extract_tensor::<f32>()?;
 
-    let raw: Vec<f32> = emb.iter().copied().collect();
+    let raw: Vec<f32> = emb_data.to_vec();
     let norm = l2_norm(&raw);
     let normalised: Vec<f32> = raw.iter().map(|v| v / norm.max(1e-8)).collect();
 

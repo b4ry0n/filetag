@@ -29,7 +29,6 @@ use axum::{
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tract_onnx::prelude::*;
 
 use crate::face::models_dir;
 use crate::state::{AppError, AppState};
@@ -220,11 +219,11 @@ pub async fn ensure_object_model(state: Arc<AppState>) -> anyhow::Result<()> {
 // Loaded model cache
 // ---------------------------------------------------------------------------
 
-type OnnxModel = RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+type OnnxSession = ort::session::Session;
 
 struct SaliencyModels {
-    pose: OnnxModel,
-    object: Option<OnnxModel>,
+    pose: Mutex<OnnxSession>,
+    object: Option<Mutex<OnnxSession>>,
 }
 
 static MODEL_CACHE: Mutex<Option<Arc<SaliencyModels>>> = Mutex::new(None);
@@ -240,39 +239,28 @@ fn load_models(use_object: bool) -> anyhow::Result<Arc<SaliencyModels>> {
     let pose_path =
         pose_model_path().ok_or_else(|| anyhow::anyhow!("models directory unavailable"))?;
 
-    let pose = tract_onnx::onnx()
-        .model_for_path(&pose_path)
-        .context("loading yolov8n-pose.onnx")?
-        .with_input_fact(
-            0,
-            InferenceFact::dt_shape(f32::datum_type(), tvec![1, 3, 640, 640]),
-        )?
-        .into_optimized()
-        .context("optimising yolov8n-pose.onnx")?
-        .into_runnable()
-        .context("making yolov8n-pose.onnx runnable")?;
+    let pose = ort::session::Session::builder()
+        .context("creating session builder")?
+        .commit_from_file(&pose_path)
+        .context("loading yolov8n-pose.onnx")?;
 
     let object = if use_object {
         let obj_path =
             object_model_path().ok_or_else(|| anyhow::anyhow!("models directory unavailable"))?;
         Some(
-            tract_onnx::onnx()
-                .model_for_path(&obj_path)
-                .context("loading yolov8n.onnx")?
-                .with_input_fact(
-                    0,
-                    InferenceFact::dt_shape(f32::datum_type(), tvec![1, 3, 640, 640]),
-                )?
-                .into_optimized()
-                .context("optimising yolov8n.onnx")?
-                .into_runnable()
-                .context("making yolov8n.onnx runnable")?,
+            ort::session::Session::builder()
+                .context("creating session builder")?
+                .commit_from_file(&obj_path)
+                .context("loading yolov8n.onnx")?,
         )
     } else {
         None
     };
 
-    let models = Arc::new(SaliencyModels { pose, object });
+    let models = Arc::new(SaliencyModels {
+        pose: Mutex::new(pose),
+        object: object.map(Mutex::new),
+    });
     *MODEL_CACHE.lock().unwrap() = Some(models.clone());
     Ok(models)
 }
@@ -307,7 +295,7 @@ fn prep_yolo_input(img: &DynamicImage) -> (image::RgbImage, f32) {
 
 /// Build [1, 3, H, W] float32 tensor from an RGB image.
 /// YOLOv8 normalises to [0, 1] (divide by 255).
-fn rgb_to_nchw_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
+fn rgb_to_nchw_ndarray(rgb: &image::RgbImage) -> anyhow::Result<ndarray::Array4<f32>> {
     let h = rgb.height() as usize;
     let w = rgb.width() as usize;
     let mut data = vec![0_f32; 3 * h * w];
@@ -316,7 +304,7 @@ fn rgb_to_nchw_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
         data[h * w + idx] = pixel[1] as f32 / 255.0;
         data[2 * h * w + idx] = pixel[2] as f32 / 255.0;
     }
-    Ok(tract_ndarray::Array4::from_shape_vec((1, 3, h, w), data)?.into())
+    Ok(ndarray::Array4::from_shape_vec((1, 3, h, w), data)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -353,13 +341,16 @@ fn rgb_to_nchw_tensor(rgb: &image::RgbImage) -> anyhow::Result<Tensor> {
 //   other kp visible → (body_cx, topmost_kp_y)
 //   no kp visible → YOLO bbox centre
 
-fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
+fn run_pose(model: &Mutex<OnnxSession>, img: &DynamicImage) -> Option<SalientPoint> {
     let orig_w = img.width() as f32;
     let orig_h = img.height() as f32;
     let (padded, scale) = prep_yolo_input(img);
-    let tensor = rgb_to_nchw_tensor(&padded).ok()?;
-    let outputs = model.run(tvec![tensor.into()]).ok()?;
-    let flat = outputs[0].as_slice::<f32>().ok()?;
+    let array = rgb_to_nchw_ndarray(&padded).ok()?;
+    let input = ort::value::Tensor::from_array(array).ok()?;
+    let mut guard = model.lock().ok()?;
+    let outputs = guard.run(ort::inputs![input]).ok()?;
+    let (_, first) = outputs.iter().next()?;
+    let (_, flat) = first.try_extract_tensor::<f32>().ok()?;
 
     // flat layout: [1, 56, 8400] → flat[c * 8400 + i]
     let n = flat.len() / 56;
@@ -443,13 +434,16 @@ fn run_pose(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
 // "Confidence" = max class score.  We return the centre of the highest-
 // confidence detection.
 
-fn run_objects(model: &OnnxModel, img: &DynamicImage) -> Option<SalientPoint> {
+fn run_objects(model: &Mutex<OnnxSession>, img: &DynamicImage) -> Option<SalientPoint> {
     let orig_w = img.width() as f32;
     let orig_h = img.height() as f32;
     let (padded, scale) = prep_yolo_input(img);
-    let tensor = rgb_to_nchw_tensor(&padded).ok()?;
-    let outputs = model.run(tvec![tensor.into()]).ok()?;
-    let flat = outputs[0].as_slice::<f32>().ok()?;
+    let array = rgb_to_nchw_ndarray(&padded).ok()?;
+    let input = ort::value::Tensor::from_array(array).ok()?;
+    let mut guard = model.lock().ok()?;
+    let outputs = guard.run(ort::inputs![input]).ok()?;
+    let (_, first) = outputs.iter().next()?;
+    let (_, flat) = first.try_extract_tensor::<f32>().ok()?;
 
     let n = flat.len() / 84;
     if n == 0 {
