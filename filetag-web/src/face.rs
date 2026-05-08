@@ -423,29 +423,77 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
     })
 }
 
+/// Hold the mutex for the *entire* duration of the load so that concurrent
+/// callers block until the first load completes and then get the cached
+/// result, rather than each starting their own (expensive) load in parallel.
 fn load_models_cached() -> anyhow::Result<Arc<FaceModels>> {
-    if let Some(models) = FACE_MODEL_CACHE.lock().unwrap().clone() {
-        return Ok(models);
-    }
-
-    let loaded = Arc::new(load_models()?);
-    let mut guard = FACE_MODEL_CACHE.lock().unwrap();
-    if let Some(models) = guard.as_ref() {
+    let mut guard = FACE_MODEL_CACHE
+        .lock()
+        .map_err(|_| anyhow::anyhow!("face model cache mutex poisoned"))?;
+    if let Some(ref models) = *guard {
         return Ok(models.clone());
     }
-    *guard = Some(loaded.clone());
-    Ok(loaded)
+    eprintln!("face: loading ONNX models …");
+    let models = Arc::new(load_models()?);
+    eprintln!("face: models loaded");
+    *guard = Some(models.clone());
+    Ok(models)
+}
+
+/// Run a single dummy inference pass through both models so that OpenVINO
+/// completes its second JIT-compilation phase at server startup rather than
+/// on the first user request.
+///
+/// OpenVINO compiles in two phases:
+///
+///   1. `commit_from_file` — model graph is translated to OpenVINO IR.
+///   2. First `session.run()` — kernel code is compiled and uploaded to the
+///      device (iGPU/CPU via the OpenVINO runtime).
+///
+/// Phase 2 can take 30–120 seconds on a low-power SoC.  Running a dummy
+/// inference here at startup ensures both phases are done before users interact.
+fn warmup_inference(models: &FaceModels) -> anyhow::Result<()> {
+    eprintln!("face: warming up inference (OpenVINO JIT) …");
+
+    // Detector: expects (1, 3, 640, 640) float32 NCHW.
+    {
+        let dummy = ndarray::Array4::<f32>::zeros((1, 3, 640, 640));
+        let input = ort::value::Tensor::from_array(dummy)?;
+        let mut det = models
+            .detector
+            .lock()
+            .map_err(|_| anyhow::anyhow!("detector mutex poisoned"))?;
+        let _ = det.run(ort::inputs![input])?;
+    }
+
+    // Embedder: expects (1, 3, 112, 112) float32 NCHW.
+    {
+        let dummy = ndarray::Array4::<f32>::zeros((1, 3, 112, 112));
+        let input = ort::value::Tensor::from_array(dummy)?;
+        let mut emb = models
+            .embedder
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedder mutex poisoned"))?;
+        let _ = emb.run(ort::inputs![input])?;
+    }
+
+    eprintln!("face: inference warm-up complete");
+    Ok(())
 }
 
 /// Public wrapper for use in `tokio::task::spawn_blocking` from startup code.
 ///
-/// With the OpenVINO feature enabled, `commit_from_file` compiles each model
-/// to an OpenVINO internal representation on first call.  This can take
-/// several minutes on a low-power device.  Calling this function at server
-/// startup (in the background) means the compilation is done before the user
-/// ever clicks Detect, so the operation appears instant.
+/// Loads models (holding the cache mutex so no second load can race) and then
+/// runs a dummy inference through both models so that OpenVINO completes both
+/// JIT-compilation phases before the first real user request arrives.
 pub fn prewarm_models() -> anyhow::Result<Arc<FaceModels>> {
-    load_models_cached()
+    let models = load_models_cached()?;
+    // Warm-up inference: errors are non-fatal — the models are still usable,
+    // just the first real request will pay the JIT cost.
+    if let Err(e) = warmup_inference(&models) {
+        eprintln!("face: warm-up inference failed (non-fatal): {e:#}");
+    }
+    Ok(models)
 }
 
 // ---------------------------------------------------------------------------
@@ -1620,10 +1668,24 @@ pub async fn api_face_analyse(
     .map_err(AppError)?;
 
     let rel_clone = rel.clone();
-    let (rows, img_w, img_h) = tokio::task::spawn_blocking(move || {
-        analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg)
-    })
+    // OpenVINO also JIT-compiles on the first session.run() call (second phase
+    // after commit_from_file).  This can take minutes on a low-power device.
+    // Wrap with a timeout so the request never hangs indefinitely.
+    let (rows, img_w, img_h) = tokio::time::timeout(
+        std::time::Duration::from_secs(600),
+        tokio::task::spawn_blocking(move || {
+            eprintln!("face: starting analyse_file_sync for {rel_clone}");
+            let r = analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg);
+            eprintln!("face: analyse_file_sync done for {rel_clone}");
+            r
+        }),
+    )
     .await
+    .map_err(|_| {
+        AppError(anyhow::anyhow!(
+            "detection timed out — OpenVINO warm-up may still be running; try again in a moment"
+        ))
+    })?
     .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
     .map_err(AppError)?;
 
