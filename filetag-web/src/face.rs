@@ -1,7 +1,7 @@
 // On-device face detection and recognition for `filetag-web`.
 //
 // Uses two ONNX models from the InsightFace **buffalo_l** pack
-// via `tract-onnx` (pure Rust, no system dependencies):
+// via `ort` (ONNX Runtime):
 //
 // * **det_10g** (~17 MB) — SCRFD-10GF face detector, outputs bounding boxes
 //   AND 5-point facial landmarks per face.
@@ -373,21 +373,6 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         detect_model_path().ok_or_else(|| anyhow::anyhow!("models directory not available"))?;
     let embed_path =
         embed_model_path().ok_or_else(|| anyhow::anyhow!("models directory not available"))?;
-
-    // Log model paths and sizes to aid diagnosing corrupted/mismatched files.
-    for (label, path) in [("detector", &detect_path), ("embedder", &embed_path)] {
-        match std::fs::metadata(path) {
-            Ok(m) => eprintln!(
-                "[face] loading {label}: {} ({} bytes)",
-                path.display(),
-                m.len()
-            ),
-            Err(e) => eprintln!(
-                "[face] loading {label}: {} (stat error: {e})",
-                path.display()
-            ),
-        }
-    }
 
     let detector = ort::session::Session::builder()?.commit_from_file(&detect_path)?;
     let embedder = ort::session::Session::builder()?.commit_from_file(&embed_path)?;
@@ -939,8 +924,6 @@ pub fn detect_and_embed(
     // Step 2: Global NMS across all tiles.
     // ------------------------------------------------------------------
     all_decoded.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    eprintln!("[face] before NMS: {} raw detections", all_decoded.len());
 
     let candidates_nms: Vec<(f32, f32, f32, f32, f32)> = all_decoded
         .iter()
@@ -1651,9 +1634,7 @@ pub async fn api_face_analyse_batch(
     let state_clone = state.clone();
 
     tokio::task::spawn(async move {
-        if let Err(e) = run_batch(state_clone, root_path, dir_abs, recursive).await {
-            eprintln!("[face] batch error: {e:#}");
-        }
+        let _ = run_batch(state_clone, root_path, dir_abs, recursive).await;
     });
 
     Ok(Json(serde_json::json!({"started": true})))
@@ -2150,9 +2131,7 @@ pub async fn api_face_models_download(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let state_clone = Arc::clone(&state);
     tokio::task::spawn(async move {
-        if let Err(e) = ensure_models(state_clone).await {
-            eprintln!("[face] model download failed: {e:#}");
-        }
+        let _ = ensure_models(state_clone).await;
     });
     Ok(Json(serde_json::json!({"started": true})))
 }

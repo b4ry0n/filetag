@@ -774,12 +774,22 @@ async function _faceApplyViewerOverlay(filePath) {
         const scaleY = img.offsetHeight / img.naturalHeight;
 
         for (const det of state.faceDetections) {
+            // Skip detections whose box falls entirely outside the image area.
+            if (det.x + det.w <= 0 || det.y + det.h <= 0 ||
+                det.x >= img.naturalWidth || det.y >= img.naturalHeight) continue;
+
+            const bx = Math.max(0, det.x);
+            const by = Math.max(0, det.y);
+            const bw = Math.min(det.x + det.w, img.naturalWidth)  - bx;
+            const bh = Math.min(det.y + det.h, img.naturalHeight) - by;
+            if (bw <= 0 || bh <= 0) continue;
+
             const box = document.createElement('div');
             box.className = 'face-box' + (det.subject_name ? ' assigned' : '');
-            box.style.left   = (det.x * scaleX) + 'px';
-            box.style.top    = (det.y * scaleY) + 'px';
-            box.style.width  = (det.w * scaleX) + 'px';
-            box.style.height = (det.h * scaleY) + 'px';
+            box.style.left   = (bx * scaleX) + 'px';
+            box.style.top    = (by * scaleY) + 'px';
+            box.style.width  = (bw * scaleX) + 'px';
+            box.style.height = (bh * scaleY) + 'px';
             box.title = det.subject_name || t('face.unknown');
             box.dataset.detId = det.id;
             box.onclick = (e) => { e.stopPropagation(); _faceShowAssignDialog(det, box); };
