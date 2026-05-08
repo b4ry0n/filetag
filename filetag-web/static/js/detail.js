@@ -141,7 +141,7 @@ function renderZipGrid(entries) {
             onclick="selectFile('${jesc(dbPath)}', event)"${dblAttr}>
             ${checkmark}${tagBadge}<div class="card-preview">${preview}</div>
             <div class="card-body"><div class="card-name">${esc(displayName)}</div>
-            <div class="card-meta">${formatSize(entry.size)}</div></div>
+            <div class="card-meta">${entry.size ? formatSize(entry.size) : '—'}</div></div>
         </div>`;
     }
     return html;
@@ -171,7 +171,7 @@ function renderZipList(entries) {
         const dbPath = state.zipPath + '::' + entry.name;
         const selected = state.selectedPaths.has(dbPath) ? ' selected' : '';
         const icon = fileIcon(displayName);
-        const size = formatSize(entry.size);
+        const size = entry.size ? formatSize(entry.size) : '—';
         const tags = entry.tag_count != null ? `${entry.tag_count} tags` : '';
         const dblAttr = entry.is_image
             ? ` ondblclick="openMediaViewer('${jesc(state.zipPath)}', ${entry.image_index})"` : '';
