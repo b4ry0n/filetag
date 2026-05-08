@@ -117,18 +117,25 @@ fn zip_read_entry(zip_path: &Path, entry_name: &str) -> anyhow::Result<(Vec<u8>,
 
 fn zip_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64, bool)>> {
     let file = std::fs::File::open(path)?;
-    let archive = zip::ZipArchive::new(file)?;
-    // Use file_names() instead of by_index() to avoid per-entry random I/O.
-    // The uncompressed size is not accessible without by_index() (it lives in
-    // ZipFileData which is pub(crate)), so we report 0; the UI shows '—'.
-    let mut entries: Vec<(String, u64, bool)> = archive
-        .file_names()
-        .filter(|name| !name.ends_with('/') && !is_ignored_archive_entry(name))
-        .map(|name| {
-            let is_im = is_zip_image(name);
-            (name.to_owned(), 0u64, is_im)
-        })
-        .collect();
+    let mut archive = zip::ZipArchive::new(file)?;
+    // by_index() seeks to each local file header (I/O per entry), but this
+    // function is always called from spawn_blocking so the async executor is
+    // not stalled.  We need by_index() here because file_names() does not
+    // expose the uncompressed size — it is in ZipFileData but pub(crate).
+    let mut entries: Vec<(String, u64, bool)> = Vec::new();
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i)
+            && !entry.is_dir()
+        {
+            let name = entry.name().to_owned();
+            if is_ignored_archive_entry(&name) {
+                continue;
+            }
+            let size = entry.size();
+            let is_im = is_zip_image(&name);
+            entries.push((name, size, is_im));
+        }
+    }
     entries.sort_by(|a, b| natord(&a.0, &b.0));
     Ok(entries)
 }
