@@ -706,9 +706,20 @@ fn decode_scrfd_classified(
                         let x2 = (cx + right) / det_scale;
                         let y2 = (cy + bottom) / det_scale;
 
-                        // Guard against NaN/Inf from corrupt tensor data.
+                        // Guard against NaN/Inf.
                         if !x1.is_finite() || !y1.is_finite() || !x2.is_finite() || !y2.is_finite()
                         {
+                            continue;
+                        }
+
+                        // Guard against implausibly large boxes.  On Linux x86_64 certain tile
+                        // contents trigger extreme model activations (sigmoid → 1.0, bbox head
+                        // → 10^15).  The maximum plausible face edge in original-image coordinates
+                        // is 2 × (DET_SIZE / det_scale); anything larger is garbage.
+                        let w = x2 - x1;
+                        let h = y2 - y1;
+                        let max_edge = DET_SIZE as f32 / det_scale.max(1e-4) * 2.0;
+                        if w <= 0.0 || h <= 0.0 || w > max_edge || h > max_edge {
                             continue;
                         }
 
