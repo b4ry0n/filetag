@@ -429,8 +429,29 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
             .map_err(anyhow::Error::from)
     };
 
+    // Watchdog: print a heartbeat every 30 s while commit_from_file is
+    // blocking.  This makes it clear in the server log that the process is
+    // alive even though OpenVINO's graph compilation produces no output.
+    let loading_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let flag_clone = loading_flag.clone();
+    let watchdog = std::thread::spawn(move || {
+        let mut secs = 0u64;
+        while flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            secs += 30;
+            if flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("face: still compiling ONNX models ({secs}s elapsed) …");
+            }
+        }
+    });
+
     let detector = mk_session(&detect_path)?;
+    eprintln!("face: detector loaded");
     let embedder = mk_session(&embed_path)?;
+    eprintln!("face: embedder loaded");
+
+    loading_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = watchdog.join();
 
     Ok(FaceModels {
         detector: Mutex::new(detector),
