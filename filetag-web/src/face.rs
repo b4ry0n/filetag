@@ -376,6 +376,21 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
     let embed_path =
         embed_model_path().ok_or_else(|| anyhow::anyhow!("models directory not available"))?;
 
+    // Log model paths and sizes to aid diagnosing corrupted/mismatched files.
+    for (label, path) in [("detector", &detect_path), ("embedder", &embed_path)] {
+        match std::fs::metadata(path) {
+            Ok(m) => eprintln!(
+                "[face] loading {label}: {} ({} bytes)",
+                path.display(),
+                m.len()
+            ),
+            Err(e) => eprintln!(
+                "[face] loading {label}: {} (stat error: {e})",
+                path.display()
+            ),
+        }
+    }
+
     // det_10g.onnx — SCRFD-10GF, 640×640 input.
     let detector = tract_onnx::onnx()
         .model_for_path(&detect_path)?
