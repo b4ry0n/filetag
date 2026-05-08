@@ -1604,13 +1604,43 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             info!(cli, "Linked database: {}", stored_path);
         }
         DbAction::Remove { path } => {
-            let abs = std::fs::canonicalize(path)
-                .or_else(|_| Ok::<PathBuf, std::io::Error>(path.clone()))?;
-            let stored_path = path_relative_to(&root, &abs).to_string_lossy().into_owned();
-            if db::unlink_database(&conn, &stored_path)? {
-                info!(cli, "Removed linked database: {}", stored_path);
-            } else {
-                anyhow::bail!("linked database '{}' not found in registry", stored_path);
+            // Resolve the user-supplied path to an absolute path (best effort).
+            let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            // Compute what the stored path *would* be in the new relative format.
+            let rel_path = path_relative_to(&root, &abs).to_string_lossy().into_owned();
+
+            // Look up the exact stored key by iterating the linked list.
+            // A match is found when either:
+            //   a) the stored path equals the computed relative path (new format), or
+            //   b) resolving the stored path against root gives the same absolute path
+            //      (handles legacy absolute paths, e.g. "/mnt/docs"), or
+            //   c) the stored path equals the raw user argument as a string.
+            let linked = db::list_linked(&conn)?;
+            let stored_key = linked.iter().find_map(|e| {
+                if e.path == rel_path {
+                    return Some(e.path.clone());
+                }
+                // Resolve stored path (may be relative or absolute) to absolute.
+                let resolved = root.join(&e.path);
+                let canon = std::fs::canonicalize(&resolved).unwrap_or(resolved);
+                if canon == abs {
+                    return Some(e.path.clone());
+                }
+                // Also accept if the stored path literally matches the user argument.
+                if std::path::Path::new(&e.path) == path.as_path() {
+                    return Some(e.path.clone());
+                }
+                None
+            });
+
+            match stored_key {
+                Some(key) => {
+                    db::unlink_database(&conn, &key)?;
+                    info!(cli, "Removed linked database: {}", key);
+                }
+                None => {
+                    anyhow::bail!("linked database '{}' not found in registry", path.display());
+                }
             }
         }
         DbAction::Prune => {
