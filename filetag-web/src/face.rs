@@ -397,7 +397,15 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         .min(8); // cap: more threads give diminishing returns on small batches
 
     let mk_session = |path: &std::path::Path| -> anyhow::Result<ort::session::Session> {
+        // Register OpenVINO as the preferred EP.  On systems without OpenVINO
+        // (e.g. macOS or a Linux build without --features openvino), the feature
+        // flag is absent so `register` returns MissingFeature and ort falls back
+        // silently to CPU/MLAS.  On a NAS built with `--features openvino` and
+        // ORT_DYLIB_PATH pointing to Intel's libonnxruntime.so, OpenVINO EP is
+        // initialised and the iGPU / CPU is used via the OpenVINO runtime.
         ort::session::Session::builder()?
+            .with_execution_providers([ort::ep::OpenVINO::default().build()])
+            .map_err(|e| anyhow::anyhow!("ort EP registration: {e}"))?
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(|e| anyhow::anyhow!("ort session options: {e}"))?
             .with_intra_threads(intra_threads)
