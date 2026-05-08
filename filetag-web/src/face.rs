@@ -566,9 +566,10 @@ fn decode_scrfd(outputs: &[TValue], score_threshold: f32, det_scale: f32) -> Vec
 
     // Diagnostic: log every tensor's shape so we can identify ordering issues.
     eprintln!(
-        "[face] decode_scrfd: {} output tensors, scale={:.4}",
+        "[face] decode_scrfd: {} output tensors, scale={:.4}, threshold={:.4}",
         outputs.len(),
-        det_scale
+        det_scale,
+        score_threshold
     );
     for (i, tv) in outputs.iter().enumerate() {
         let shape = tv.shape();
@@ -648,12 +649,13 @@ fn decode_scrfd_classified(
         let grid = ((n / num_anchors) as f64).sqrt() as usize;
 
         let mut hits = 0usize;
-        // Log first 5 raw score values and first 4 raw box values for diagnosis.
-        if si == 0 {
+        // Log first 5 raw score values, max score, and first raw box values for diagnosis.
+        {
+            let max_score = scores_raw.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
             let sv: Vec<f32> = scores_raw.iter().copied().take(5).collect();
             let bv: Vec<f32> = boxes_raw.iter().copied().take(8).collect();
-            eprintln!("[face]   stride=8 raw_scores[0..5]={sv:.4?}");
-            eprintln!("[face]   stride=8 raw_boxes[0..8]={bv:.4?}");
+            eprintln!("[face]   stride={stride} raw_scores[0..5]={sv:.4?} max={max_score:.4}");
+            eprintln!("[face]   stride={stride} raw_boxes[0..8]={bv:.4?}");
         }
         let mut anchor_idx = 0usize;
         for row in 0..grid {
@@ -678,6 +680,12 @@ fn decode_scrfd_classified(
                         let y1 = (cy - top) / det_scale;
                         let x2 = (cx + right) / det_scale;
                         let y2 = (cy + bottom) / det_scale;
+
+                        // Guard against NaN/Inf from corrupt tensor data.
+                        if !x1.is_finite() || !y1.is_finite() || !x2.is_finite() || !y2.is_finite()
+                        {
+                            continue;
+                        }
 
                         let mut lm = [0_f32; 10];
                         let ki = anchor_idx * 10;
