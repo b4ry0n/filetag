@@ -472,6 +472,11 @@ pub struct ApiFaceResult {
     pub path: String,
     /// All detections found in this file.
     pub detections: Vec<ApiFaceDetection>,
+    /// Original image width in pixels (full-resolution, before any downscaling).
+    /// The frontend uses this to map stored pixel coordinates onto the displayed image.
+    pub image_width: u32,
+    /// Original image height in pixels (full-resolution, before any downscaling).
+    pub image_height: u32,
 }
 
 /// Body for `POST /api/face/analyse`.

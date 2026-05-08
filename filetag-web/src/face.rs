@@ -1310,6 +1310,41 @@ fn load_image(abs: &Path) -> anyhow::Result<DynamicImage> {
     Ok(apply_exif_orientation_face(img, orient))
 }
 
+/// Return the original (post-EXIF-rotation) pixel dimensions for a file
+/// represented by `rel` inside `root`.
+///
+/// For regular image files this reads only the file header (fast).
+/// For virtual archive entries (`zip_rel::entry`) the entry bytes are
+/// extracted — the same path taken during analysis — so dimensions are
+/// exact and include any orientation swap applied by `load_image`.
+///
+/// Returns `(0, 0)` on any error so callers can fall through gracefully.
+fn image_dims_for_rel(root: &Path, rel: &str) -> (u32, u32) {
+    if let Some((zip_rel, entry_name)) = rel.split_once("::") {
+        let zip_abs = root.join(zip_rel);
+        if let Ok((bytes, _)) = crate::archive::archive_read_entry(&zip_abs, entry_name)
+            && let Ok(img) = image::load_from_memory(&bytes)
+        {
+            // Archive entries are not EXIF-rotated during analysis, but the
+            // dimensions we need are the raw decode dimensions (the stored
+            // bounding boxes use those coordinates).
+            return (img.width(), img.height());
+        }
+        return (0, 0);
+    }
+
+    let abs = root.join(rel);
+    // Try fast header-only read first (no full decode).
+    if let Ok((w, h)) = image::image_dimensions(&abs) {
+        // Check whether EXIF rotation swaps width/height.
+        let swapped = std::fs::read(&abs)
+            .map(|data| matches!(jpeg_exif_orientation_bytes(&data), 5..=8))
+            .unwrap_or(false);
+        return if swapped { (h, w) } else { (w, h) };
+    }
+    (0, 0)
+}
+
 /// Read the EXIF Orientation tag (1–8) from raw JPEG bytes.
 /// Returns 1 (normal) for non-JPEG files or when the tag is absent.
 fn jpeg_exif_orientation_bytes(data: &[u8]) -> u8 {
@@ -1521,7 +1556,7 @@ pub async fn api_face_analyse(
         .map_err(AppError)?;
 
     let rel_clone = rel.clone();
-    let rows = tokio::task::spawn_blocking(move || {
+    let (rows, img_w, img_h) = tokio::task::spawn_blocking(move || {
         analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg)
     })
     .await
@@ -1531,6 +1566,8 @@ pub async fn api_face_analyse(
     Ok(Json(ApiFaceResult {
         path: rel,
         detections: rows.iter().map(row_to_api).collect(),
+        image_width: img_w,
+        image_height: img_h,
     }))
 }
 
@@ -1546,7 +1583,7 @@ fn analyse_file_sync(
     rel: &str,
     models: &FaceModels,
     cfg: &FaceConfig,
-) -> anyhow::Result<Vec<db::FaceDetectionRow>> {
+) -> anyhow::Result<(Vec<db::FaceDetectionRow>, u32, u32)> {
     // Determine the file record, handling archive entries separately.
     let file_rec = if rel.contains("::") {
         // Virtual archive path.  Index via the archive-entry helper.
@@ -1570,17 +1607,19 @@ fn analyse_file_sync(
         match crate::archive::archive_read_entry(&zip_abs, entry_name) {
             Ok((bytes, _)) => match image::load_from_memory(&bytes) {
                 Ok(i) => i,
-                Err(_) => return Ok(vec![]),
+                Err(_) => return Ok((vec![], 0, 0)),
             },
-            Err(_) => return Ok(vec![]),
+            Err(_) => return Ok((vec![], 0, 0)),
         }
     } else {
         let abs = root.join(rel);
         match load_image(&abs) {
             Ok(i) => i,
-            Err(_) => return Ok(vec![]),
+            Err(_) => return Ok((vec![], 0, 0)),
         }
     };
+
+    let (img_w, img_h) = (img.width(), img.height());
 
     let raw = detect_and_embed(&img, models, cfg)?;
     for det in &raw {
@@ -1596,7 +1635,7 @@ fn analyse_file_sync(
         )?;
     }
 
-    db::face_detections_for_file(conn, file_id)
+    Ok((db::face_detections_for_file(conn, file_id)?, img_w, img_h))
 }
 
 /// `POST /api/face/analyse-batch`
@@ -1747,9 +1786,17 @@ pub async fn api_face_detections(
         None => vec![],
     };
 
+    let root = root_entry.root.clone();
+    let rel_clone = rel.clone();
+    let (img_w, img_h) = tokio::task::spawn_blocking(move || image_dims_for_rel(&root, &rel_clone))
+        .await
+        .unwrap_or((0, 0));
+
     Ok(Json(ApiFaceResult {
         path: rel,
         detections: detections.iter().map(row_to_api).collect(),
+        image_width: img_w,
+        image_height: img_h,
     }))
 }
 

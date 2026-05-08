@@ -14,6 +14,8 @@ function _initFaceState() {
         state.faceDetectionsPath = null;     // path for which detections were loaded
         state.faceDetecting = false;         // single-file detection in progress
         state.faceBoxesVisible = true;       // whether face boxes are shown on the preview
+        state.faceImageWidth = 0;            // original image width (from API)
+        state.faceImageHeight = 0;           // original image height (from API)
         state.people = [];                   // [{name, count, det_id}] for sidebar
         state.faceProgressTimer = null;      // setInterval handle for batch polling
         state.faceActivePerson = null;       // selected person name for sidebar highlight
@@ -317,6 +319,8 @@ async function faceDetectSingle(path) {
         const result = await apiPost('/api/face/analyse', { path, dir: currentAbsDir() });
         state.faceDetections = result.detections || [];
         state.faceDetectionsPath = path;
+        state.faceImageWidth  = result.image_width  || 0;
+        state.faceImageHeight = result.image_height || 0;
         await loadPeople();
         renderTags(); // refresh sidebar
         if (state.faceDetections.length === 0) {
@@ -339,9 +343,13 @@ async function faceLoadDetections(path) {
         const result = await api('/api/face/detections?' + new URLSearchParams({ path }) + dirParam('&'));
         state.faceDetections = result.detections || [];
         state.faceDetectionsPath = path;
+        state.faceImageWidth  = result.image_width  || 0;
+        state.faceImageHeight = result.image_height || 0;
     } catch (_) {
         state.faceDetections = [];
         state.faceDetectionsPath = path;
+        state.faceImageWidth  = 0;
+        state.faceImageHeight = 0;
     }
     _faceRenderOverlays(path);
     _faceRefreshDetailControls(path);
@@ -461,19 +469,24 @@ function _faceRenderOverlays(path) {
         return;
     }
 
-    const scaleX = img.offsetWidth / img.naturalWidth;
-    const scaleY = img.offsetHeight / img.naturalHeight;
+    // Use original image dimensions from the API for scaling; fall back to
+    // img.naturalWidth/Height (correct for regular images, wrong for zip-thumb previews).
+    const origW = state.faceImageWidth  || img.naturalWidth;
+    const origH = state.faceImageHeight || img.naturalHeight;
+    const scaleX = img.offsetWidth  / origW;
+    const scaleY = img.offsetHeight / origH;
 
     for (const det of state.faceDetections) {
         // Skip detections whose box falls entirely outside the image area —
         // these are artefacts from a previous (incorrect) analysis run.
         if (det.x + det.w <= 0 || det.y + det.h <= 0 ||
-            det.x >= img.naturalWidth || det.y >= img.naturalHeight) continue;
+            det.x >= origW || det.y >= origH) continue;
 
         const bx = Math.max(0, det.x);
         const by = Math.max(0, det.y);
-        const bw = Math.min(det.x + det.w, img.naturalWidth)  - bx;
-        const bh = Math.min(det.y + det.h, img.naturalHeight) - by;
+        const bw = Math.min(det.x + det.w, origW) - bx;
+        const bh = Math.min(det.y + det.h, origH) - by;
+        if (bw <= 0 || bh <= 0) continue;
 
         const box = document.createElement('div');
         box.className = 'face-box' + (det.subject_name ? ' assigned' : '');
@@ -770,18 +783,21 @@ async function _faceApplyViewerOverlay(filePath) {
     const doRender = () => {
         wrap.querySelectorAll('.face-box').forEach(b => b.remove());
         if (!img.naturalWidth) return;
-        const scaleX = img.offsetWidth  / img.naturalWidth;
-        const scaleY = img.offsetHeight / img.naturalHeight;
+        // Use original image dimensions from the API for scaling.
+        const origW = state.faceImageWidth  || img.naturalWidth;
+        const origH = state.faceImageHeight || img.naturalHeight;
+        const scaleX = img.offsetWidth  / origW;
+        const scaleY = img.offsetHeight / origH;
 
         for (const det of state.faceDetections) {
             // Skip detections whose box falls entirely outside the image area.
             if (det.x + det.w <= 0 || det.y + det.h <= 0 ||
-                det.x >= img.naturalWidth || det.y >= img.naturalHeight) continue;
+                det.x >= origW || det.y >= origH) continue;
 
             const bx = Math.max(0, det.x);
             const by = Math.max(0, det.y);
-            const bw = Math.min(det.x + det.w, img.naturalWidth)  - bx;
-            const bh = Math.min(det.y + det.h, img.naturalHeight) - by;
+            const bw = Math.min(det.x + det.w, origW) - bx;
+            const bh = Math.min(det.y + det.h, origH) - by;
             if (bw <= 0 || bh <= 0) continue;
 
             const box = document.createElement('div');
