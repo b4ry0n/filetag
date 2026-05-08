@@ -359,9 +359,16 @@ pub async fn ensure_models(state: Arc<AppState>) -> anyhow::Result<()> {
 type OnnxModel = RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
 
 /// Compiled ONNX models kept alive for the lifetime of the server.
+///
+/// The detector and embedder are wrapped in a `Mutex` to serialise concurrent
+/// `run()` calls.  `SimplePlan` is `Sync`, but tract's internal scratch
+/// buffers (e.g. `cached_mmm_scratch_space`) are stored in `RefCell`s inside
+/// the per-call `SessionState`.  In practice, concurrent calls from a
+/// background batch task and a foreground single-image request produced
+/// garbage detection outputs.  Serialising access eliminates that race.
 pub struct FaceModels {
-    pub detector: OnnxModel,
-    pub embedder: OnnxModel,
+    pub detector: Mutex<OnnxModel>,
+    pub embedder: Mutex<OnnxModel>,
 }
 
 static FACE_MODEL_CACHE: Mutex<Option<Arc<FaceModels>>> = Mutex::new(None);
@@ -411,7 +418,10 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         .into_optimized()?
         .into_runnable()?;
 
-    Ok(FaceModels { detector, embedder })
+    Ok(FaceModels {
+        detector: Mutex::new(detector),
+        embedder: Mutex::new(embedder),
+    })
 }
 
 fn load_models_cached() -> anyhow::Result<Arc<FaceModels>> {
@@ -936,7 +946,7 @@ fn detect_tile(
     offset_y: f32,
 ) -> anyhow::Result<Vec<ScrfdDetection>> {
     let tensor = det_image_to_tensor(padded_rgb)?;
-    let outputs = models.detector.run(tvec![tensor.into()])?;
+    let outputs = models.detector.lock().unwrap().run(tvec![tensor.into()])?;
     // decode_scrfd returns coordinates in original-image space already
     // (divided by `tile_scale`). We must still add the tile offset.
     let decoded = decode_scrfd(&outputs, score_threshold, tile_scale);
@@ -1130,7 +1140,7 @@ fn align_and_embed(
     }
 
     let tensor: Tensor = tract_ndarray::Array4::from_shape_vec((1, 3, 112, 112), data)?.into();
-    let outputs = models.embedder.run(tvec![tensor.into()])?;
+    let outputs = models.embedder.lock().unwrap().run(tvec![tensor.into()])?;
     let emb = outputs[0].to_array_view::<f32>()?;
 
     let raw: Vec<f32> = emb.iter().copied().collect();
