@@ -305,8 +305,9 @@ enum DbAction {
 
     /// Remove a linked database registration
     Remove {
-        /// Path to the linked database root
-        path: PathBuf,
+        /// Path to the linked database root, or full/partial UUID (like Docker)
+        #[arg(value_name = "PATH_OR_ID")]
+        target: String,
     },
 
     /// Remove registrations for missing databases
@@ -314,8 +315,9 @@ enum DbAction {
 
     /// Transfer tag records for files under a linked path from this DB to the linked DB
     Push {
-        /// Path to the linked database root (must be a child, i.e. under the current root)
-        path: PathBuf,
+        /// Path or UUID prefix of the linked database root (must be a child of the current root)
+        #[arg(value_name = "PATH_OR_ID")]
+        target: String,
 
         /// Only show what would be transferred
         #[arg(short = 'n', long)]
@@ -324,13 +326,17 @@ enum DbAction {
 
     /// Transfer tag records from a linked DB back to this DB
     Pull {
-        /// Path to the linked database root (must be a child, i.e. under the current root)
-        path: PathBuf,
+        /// Path or UUID prefix of the linked database root (must be a child of the current root)
+        #[arg(value_name = "PATH_OR_ID")]
+        target: String,
 
         /// Only show what would be transferred
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
+
+    /// Upgrade this database: ensure it has a UUID and convert absolute linked paths to relative
+    Upgrade,
 
     /// Register this database in the global registry (~/.config/filetag/)
     Register,
@@ -1516,31 +1522,104 @@ fn path_relative_to(from: &std::path::Path, to: &std::path::Path) -> PathBuf {
     result
 }
 
-/// Validate that `path` is a registered linked database.
-/// Returns the stored key (relative path from root) and its `.filetag/db.sqlite3` path.
+/// Find a registered linked database entry by path (relative or absolute) or UUID prefix.
+///
+/// Matching priority:
+///   1. Full UUID match (`db_id == arg`)
+///   2. UUID prefix match (`db_id.starts_with(arg)`) — like Docker short IDs; error on ambiguity
+///   3. Stored path exact match
+///   4. Computed relative path match (user gave absolute/relative path, we normalize it)
+///   5. Stored path resolves to the same absolute path as the argument
+fn resolve_linked_entry<'a>(
+    linked: &'a [db::LinkedDb],
+    root: &std::path::Path,
+    arg: &str,
+) -> Result<&'a db::LinkedDb> {
+    // --- ID-based matching ---
+    let id_matches: Vec<&db::LinkedDb> = linked
+        .iter()
+        .filter(|e| {
+            e.db_id
+                .as_deref()
+                .map(|id| id == arg || id.starts_with(arg))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if id_matches.len() == 1 {
+        return Ok(id_matches[0]);
+    }
+    if id_matches.len() > 1 {
+        let paths = id_matches
+            .iter()
+            .map(|e| e.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "ambiguous ID prefix '{}': matches {} databases ({})",
+            arg,
+            id_matches.len(),
+            paths
+        );
+    }
+
+    // --- Path-based matching ---
+    let abs_opt = std::fs::canonicalize(arg).ok();
+    let rel_path_opt = abs_opt
+        .as_ref()
+        .map(|abs| path_relative_to(root, abs).to_string_lossy().into_owned());
+
+    let path_match = linked.iter().find(|e| {
+        if e.path == arg {
+            return true;
+        }
+        if rel_path_opt.as_deref() == Some(&e.path) {
+            return true;
+        }
+        if let Some(ref abs) = abs_opt {
+            let stored = if std::path::Path::new(&e.path).is_absolute() {
+                std::path::PathBuf::from(&e.path)
+            } else {
+                root.join(&e.path)
+            };
+            if std::fs::canonicalize(&stored).unwrap_or(stored) == *abs {
+                return true;
+            }
+        }
+        false
+    });
+
+    match path_match {
+        Some(e) => Ok(e),
+        None => anyhow::bail!(
+            "'{}' does not match any linked database (use a path or UUID prefix)",
+            arg
+        ),
+    }
+}
+
+/// Validate that `target` (path or UUID prefix) is a registered linked database.
+/// Returns the stored key and its `.filetag/db.sqlite3` path.
 fn resolve_registered_linked(
     conn: &rusqlite::Connection,
     root: &std::path::Path,
-    path: &PathBuf,
+    target: &str,
 ) -> Result<(String, PathBuf)> {
-    let abs =
-        std::fs::canonicalize(path).with_context(|| format!("resolving {}", path.display()))?;
-    let linked_db_path = abs.join(".filetag").join("db.sqlite3");
+    let linked = db::list_linked(conn)?;
+    let entry = resolve_linked_entry(&linked, root, target)?;
+    let linked_root = if std::path::Path::new(&entry.path).is_absolute() {
+        std::path::PathBuf::from(&entry.path)
+    } else {
+        root.join(&entry.path)
+    };
+    let linked_db_path = linked_root.join(".filetag").join("db.sqlite3");
     if !linked_db_path.is_file() {
         anyhow::bail!(
-            "no filetag database found at {} (run 'filetag init' there first)",
-            abs.display()
+            "linked database at '{}' not found on disk (use 'filetag db prune' to clean up)",
+            linked_root.display()
         );
     }
-    let stored_path = path_relative_to(root, &abs).to_string_lossy().into_owned();
-    let linked = db::list_linked(conn)?;
-    if !linked.iter().any(|l| l.path == stored_path) {
-        anyhow::bail!(
-            "'{}' is not a linked database (use 'filetag db add' first)",
-            stored_path
-        );
-    }
-    Ok((stored_path, linked_db_path))
+    Ok((entry.path.clone(), linked_db_path))
 }
 
 /// Open a linked database connection with the standard PRAGMA settings.
@@ -1603,45 +1682,12 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             db::link_database(&conn, &stored_path, target_id.as_deref())?;
             info!(cli, "Linked database: {}", stored_path);
         }
-        DbAction::Remove { path } => {
-            // Resolve the user-supplied path to an absolute path (best effort).
-            let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-            // Compute what the stored path *would* be in the new relative format.
-            let rel_path = path_relative_to(&root, &abs).to_string_lossy().into_owned();
-
-            // Look up the exact stored key by iterating the linked list.
-            // A match is found when either:
-            //   a) the stored path equals the computed relative path (new format), or
-            //   b) resolving the stored path against root gives the same absolute path
-            //      (handles legacy absolute paths, e.g. "/mnt/docs"), or
-            //   c) the stored path equals the raw user argument as a string.
+        DbAction::Remove { target } => {
             let linked = db::list_linked(&conn)?;
-            let stored_key = linked.iter().find_map(|e| {
-                if e.path == rel_path {
-                    return Some(e.path.clone());
-                }
-                // Resolve stored path (may be relative or absolute) to absolute.
-                let resolved = root.join(&e.path);
-                let canon = std::fs::canonicalize(&resolved).unwrap_or(resolved);
-                if canon == abs {
-                    return Some(e.path.clone());
-                }
-                // Also accept if the stored path literally matches the user argument.
-                if std::path::Path::new(&e.path) == path.as_path() {
-                    return Some(e.path.clone());
-                }
-                None
-            });
-
-            match stored_key {
-                Some(key) => {
-                    db::unlink_database(&conn, &key)?;
-                    info!(cli, "Removed linked database: {}", key);
-                }
-                None => {
-                    anyhow::bail!("linked database '{}' not found in registry", path.display());
-                }
-            }
+            let entry = resolve_linked_entry(&linked, &root, target)?;
+            let key = entry.path.clone();
+            db::unlink_database(&conn, &key)?;
+            info!(cli, "Removed linked database: {}", key);
         }
         DbAction::Prune => {
             let linked = db::list_linked(&conn)?;
@@ -1667,8 +1713,8 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                 global_pruned.len()
             );
         }
-        DbAction::Push { path, dry_run } => {
-            let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, path)?;
+        DbAction::Push { target, dry_run } => {
+            let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, target)?;
             // Push only makes sense when the linked DB is under the current root (child relationship)
             if PathBuf::from(&linked_path).is_absolute() {
                 anyhow::bail!(
@@ -1757,8 +1803,8 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                 "Transferred {} record(s) to linked database {}", transferred, linked_path
             );
         }
-        DbAction::Pull { path, dry_run } => {
-            let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, path)?;
+        DbAction::Pull { target, dry_run } => {
+            let (linked_path, linked_db_path) = resolve_registered_linked(&conn, &root, target)?;
             // Pull only makes sense when the linked DB is under the current root (child relationship)
             if PathBuf::from(&linked_path).is_absolute() {
                 anyhow::bail!(
@@ -1873,6 +1919,68 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
                     }
                 }
             }
+        }
+        DbAction::Upgrade => {
+            // 1. Ensure this database has its own UUID (auto-generated by get_db_id if absent).
+            let own_id = db::get_db_id(&conn)?;
+            info!(cli, "Database UUID: {}", own_id);
+
+            // 2. Iterate linked entries and fix:
+            //    a) absolute paths → convert to relative
+            //    b) missing db_id → read from the linked database and store it
+            let linked = db::list_linked(&conn)?;
+            let mut fixed_paths = 0u32;
+            let mut fixed_ids = 0u32;
+
+            for entry in &linked {
+                let path_obj = std::path::Path::new(&entry.path);
+
+                // --- a) Absolute path → relative ---
+                if path_obj.is_absolute() {
+                    let new_rel = path_relative_to(&root, path_obj)
+                        .to_string_lossy()
+                        .into_owned();
+                    if db::set_linked_path(&conn, &entry.path, &new_rel)? {
+                        println!("  path: {} → {}", entry.path, new_rel);
+                        fixed_paths += 1;
+                    }
+                    // Use new_rel for subsequent db_id lookup
+                    let effective_path = new_rel;
+                    if entry.db_id.is_none() {
+                        let linked_root = if std::path::Path::new(&effective_path).is_absolute() {
+                            PathBuf::from(&effective_path)
+                        } else {
+                            root.join(&effective_path)
+                        };
+                        if let Ok((lc, _)) = db::open_root_db(&linked_root)
+                            && let Ok(lid) = db::get_db_id(&lc)
+                            && db::set_linked_db_id(&conn, &effective_path, &lid)?
+                        {
+                            println!("  id:   {} → {}", effective_path, lid);
+                            fixed_ids += 1;
+                        }
+                    }
+                } else {
+                    // --- b) Missing db_id for already-relative entry ---
+                    if entry.db_id.is_none() {
+                        let linked_root = root.join(&entry.path);
+                        if let Ok((lc, _)) = db::open_root_db(&linked_root)
+                            && let Ok(lid) = db::get_db_id(&lc)
+                            && db::set_linked_db_id(&conn, &entry.path, &lid)?
+                        {
+                            println!("  id:   {} → {}", entry.path, lid);
+                            fixed_ids += 1;
+                        }
+                    }
+                }
+            }
+
+            info!(
+                cli,
+                "Upgrade complete: {} path(s) relativised, {} UUID(s) added",
+                fixed_paths,
+                fixed_ids
+            );
         }
     }
     Ok(())

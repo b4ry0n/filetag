@@ -1654,6 +1654,24 @@ pub fn unlink_database(conn: &Connection, path: &str) -> Result<bool> {
     Ok(changed > 0)
 }
 
+/// Update the stored path for a linked database entry (e.g. absolute → relative).
+pub fn set_linked_path(conn: &Connection, old_path: &str, new_path: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE linked_databases SET path = ?1 WHERE path = ?2",
+        params![new_path, old_path],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Update (or set for the first time) the stored db_id for a linked entry.
+pub fn set_linked_db_id(conn: &Connection, path: &str, db_id: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE linked_databases SET db_id = ?1 WHERE path = ?2",
+        params![db_id, path],
+    )?;
+    Ok(changed > 0)
+}
+
 /// List all registered linked databases with their stored paths and IDs.
 pub fn list_linked(conn: &Connection) -> Result<Vec<LinkedDb>> {
     let mut stmt = conn.prepare("SELECT path, db_id FROM linked_databases ORDER BY path")?;
