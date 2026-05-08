@@ -258,6 +258,7 @@ function openSettings(tab = 'general') {
             document.getElementById('face-cluster-dist').value = fc.cluster_distance ?? 0.4;
             document.getElementById('face-tag-prefix').value = fc.tag_prefix || 'person';
             document.getElementById('face-auto-match-threshold').value = fc.auto_match_threshold ?? 0.25;
+            document.getElementById('face-tiling-enabled').checked = !!fc.tiling_enabled;
             const ready = !!fc.models_ready;
             document.getElementById('face-models-status').textContent = ready ? t('face.settings-models-ready') : t('face.settings-models-missing');
             document.getElementById('face-models-download-btn').hidden = ready;
@@ -1245,6 +1246,7 @@ function faceResetDefaults() {
     document.getElementById('face-cluster-dist').value       = 0.35;
     document.getElementById('face-tag-prefix').value         = 'person';
     document.getElementById('face-auto-match-threshold').value = 0.30;
+    document.getElementById('face-tiling-enabled').checked   = false;
 }
 
 async function faceSaveSettings() {
@@ -1256,6 +1258,7 @@ async function faceSaveSettings() {
             cluster_distance:      parseFloat(document.getElementById('face-cluster-dist').value) || 0.4,
             tag_prefix:            document.getElementById('face-tag-prefix').value.trim() || 'person',
             auto_match_threshold:  parseFloat(document.getElementById('face-auto-match-threshold').value) || 0,
+            tiling_enabled:        document.getElementById('face-tiling-enabled').checked,
             dir:                   currentAbsDir() || null,
         };
         await apiPost('/api/face/config', body);

@@ -555,6 +555,10 @@ pub struct FaceConfigResponse {
     pub min_face_px: u32,
     pub tag_prefix: String,
     pub auto_match_threshold: f32,
+    /// When true, large images are split into overlapping tiles during detection.
+    /// Increases accuracy for small faces in crowd shots at the cost of much
+    /// longer analysis time. Disabled by default.
+    pub tiling_enabled: bool,
     /// `true` when both ONNX model files are present on disk.
     pub models_ready: bool,
 }
@@ -568,6 +572,7 @@ pub struct FaceConfigRequest {
     pub min_face_px: Option<u32>,
     pub tag_prefix: Option<String>,
     pub auto_match_threshold: Option<f32>,
+    pub tiling_enabled: Option<bool>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }

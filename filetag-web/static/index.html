@@ -552,6 +552,14 @@
                         <small class="settings-desc-inline" data-i18n="face.settings-auto-match-desc">Automatically assign known persons when cosine distance ≤ this value during clustering. Set to 0 to disable.</small>
                         <input type="number" id="face-auto-match-threshold" value="0.30" min="0" max="1.0" step="0.05">
                     </label>
+                    <label class="toggle-row">
+                        <input type="checkbox" id="face-tiling-enabled">
+                        <div class="toggle-text">
+                            <span data-i18n="face.settings-tiling">Tiled detection</span>
+                            <small data-i18n="face.settings-tiling-desc">Split large images into overlapping tiles to detect small faces in crowd shots. Dramatically increases analysis time; disable for normal photos.</small>
+                        </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
+                    </label>
                     </div><!-- #face-settings-fields -->
                     <div class="modal-actions">
                         <button onclick="faceSaveSettings()" data-i18n="settings.save">Save</button>

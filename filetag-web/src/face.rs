@@ -119,6 +119,10 @@ pub struct FaceConfig {
     /// Cosine distance below which a new cluster is automatically matched to a
     /// known named person during clustering (0.0 = never auto-match).
     pub auto_match_threshold: f32,
+    /// When true, large images are processed in overlapping 640×640 tiles to
+    /// catch small faces.  Dramatically increases analysis time; disabled by
+    /// default.  Enable only when analysing crowd/group shots with tiny faces.
+    pub tiling_enabled: bool,
 }
 
 impl Default for FaceConfig {
@@ -129,6 +133,7 @@ impl Default for FaceConfig {
             min_face_px: 40,
             tag_prefix: "person".into(),
             auto_match_threshold: 0.30,
+            tiling_enabled: false,
         }
     }
 }
@@ -154,12 +159,20 @@ fn load_face_config(conn: &Connection) -> FaceConfig {
             .flatten()
             .unwrap_or_else(|| default.to_string())
     };
+    let get_bool = |key: &str, default: bool| -> bool {
+        db::get_setting(conn, key)
+            .ok()
+            .flatten()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(default)
+    };
     FaceConfig {
         confidence: get_f32("face.confidence", 0.5),
         cluster_distance: get_f32("face.cluster_distance", 0.35),
         min_face_px: get_u32("face.min_face_px", 40),
         tag_prefix: get_str("face.tag_prefix", "person"),
         auto_match_threshold: get_f32("face.auto_match_threshold", 0.30),
+        tiling_enabled: get_bool("face.tiling_enabled", false),
     }
 }
 
@@ -847,8 +860,10 @@ pub fn detect_and_embed(
     // ------------------------------------------------------------------
     let mut all_decoded: Vec<ScrfdDetection> = Vec::new();
 
-    if orig_w <= TILE_THRESHOLD && orig_h <= TILE_THRESHOLD {
-        // Small image — single inference pass (original behaviour).
+    if orig_w <= TILE_THRESHOLD && orig_h <= TILE_THRESHOLD || !cfg.tiling_enabled {
+        // Single inference pass: aspect-ratio-preserving resize + zero-pad to 640×640.
+        // This is the default path for all images.  Tiling is only used when explicitly
+        // enabled via the `face.tiling_enabled` setting (for crowd shots with tiny faces).
         let (padded_rgb, det_scale) = prep_detector_input(img);
         all_decoded.extend(detect_tile(
             &padded_rgb,
@@ -2128,6 +2143,7 @@ pub async fn api_face_config_get(
         min_face_px: cfg.min_face_px,
         tag_prefix: cfg.tag_prefix,
         auto_match_threshold: cfg.auto_match_threshold,
+        tiling_enabled: cfg.tiling_enabled,
         models_ready: models_ready(),
     })
 }
@@ -2165,6 +2181,9 @@ pub async fn api_face_config_set(
     }
     if let Some(v) = req.auto_match_threshold {
         db::set_setting(&conn, "face.auto_match_threshold", &v.to_string())?;
+    }
+    if let Some(v) = req.tiling_enabled {
+        db::set_setting(&conn, "face.tiling_enabled", if v { "1" } else { "0" })?;
     }
 
     Ok(Json(serde_json::json!({"ok": true})))
