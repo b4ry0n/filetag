@@ -413,8 +413,13 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
         // flag is absent so `register` returns MissingFeature and ort falls back
         // silently to CPU/MLAS.  On a NAS built with `--features openvino` and
         // ORT_DYLIB_PATH pointing to Intel's libonnxruntime.so, OpenVINO EP is
-        // initialised and the iGPU / CPU is used via the OpenVINO runtime.
-        let mut ov_ep = ort::ep::OpenVINO::default();
+        // initialised and the CPU is used via the OpenVINO runtime.
+        //
+        // Force CPU device: the iGPU path hangs indefinitely during driver
+        // initialisation on headless NAS hardware (no display attached).  The
+        // OpenVINO CPU backend (OneDNN/MKL) is reliable and still significantly
+        // faster than the plain ONNX Runtime MLAS fallback.
+        let mut ov_ep = ort::ep::OpenVINO::default().with_device_type("CPU");
         if let Some(ref dir) = ov_cache_dir {
             ov_ep = ov_ep.with_cache_dir(dir);
         }
