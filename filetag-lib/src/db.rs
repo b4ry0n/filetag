@@ -11,7 +11,50 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 13;
+const SCHEMA_VERSION: i32 = 14;
+
+// ---------------------------------------------------------------------------
+// Database identity
+// ---------------------------------------------------------------------------
+
+/// Generate a random UUID v4, formatted as lowercase hex with hyphens.
+fn generate_db_id() -> String {
+    let mut bytes = [0u8; 16];
+    rand::fill(&mut bytes);
+    // Set UUID v4 version and variant bits.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        u16::from_be_bytes([bytes[4], bytes[5]]),
+        u16::from_be_bytes([bytes[6], bytes[7]]),
+        u16::from_be_bytes([bytes[8], bytes[9]]),
+        u64::from_be_bytes([
+            0, 0, bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        ])
+    )
+}
+
+/// Return this database's own unique ID.
+///
+/// The ID is stored in the `settings` table under the key `"db_id"`.  If it
+/// is absent (e.g. an existing database that has not been migrated yet), a new
+/// UUID v4 is generated, persisted, and returned.
+pub fn get_db_id(conn: &Connection) -> Result<String> {
+    use rusqlite::OptionalExtension;
+    if let Some(id) = conn
+        .query_row("SELECT value FROM settings WHERE key = 'db_id'", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()?
+    {
+        return Ok(id);
+    }
+    let id = generate_db_id();
+    set_setting(conn, "db_id", &id)?;
+    Ok(id)
+}
 
 // ---------------------------------------------------------------------------
 // Filesystem boundary detection
@@ -407,6 +450,29 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
 
         conn.execute_batch("DROP TABLE IF EXISTS tag_synonyms;")?;
+    }
+
+    if version < 14 {
+        // Add db_id column to linked_databases so we can verify identity when
+        // a database tree is re-mounted at a different prefix.
+        conn.execute_batch("ALTER TABLE linked_databases ADD COLUMN db_id TEXT;")
+            .ok(); // ok(): fresh DBs already have the column from the CREATE TABLE below
+
+        // Generate a unique ID for this database if it does not have one yet
+        // (all existing databases being migrated from an earlier version).
+        let already_set: bool = conn
+            .query_row("SELECT 1 FROM settings WHERE key = 'db_id'", [], |_| {
+                Ok(true)
+            })
+            .unwrap_or(false);
+        if !already_set {
+            let id = generate_db_id();
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('db_id', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![id],
+            )?;
+        }
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -1557,12 +1623,24 @@ pub fn get_or_index_archive_entry(conn: &Connection, virtual_path: &str) -> Resu
 // Child database management
 // ---------------------------------------------------------------------------
 
-/// Register a linked database. Stores a path relative to the current root when the
-/// target is under this root (child), or an absolute path otherwise (partner/parent).
-pub fn link_database(conn: &Connection, path: &str) -> Result<()> {
+/// A registered linked database entry.
+#[derive(Debug, Clone)]
+pub struct LinkedDb {
+    /// Relative path from the parent root to the linked root directory (may
+    /// contain `../` components for partner databases outside the root).
+    pub path: String,
+    /// UUID v4 of the linked database at the time it was registered, or
+    /// `None` for legacy entries registered before schema v14.
+    pub db_id: Option<String>,
+}
+
+/// Register a linked database, storing its path and unique ID so the link can
+/// be verified even when the filesystem tree is re-mounted at a different
+/// prefix.
+pub fn link_database(conn: &Connection, path: &str, db_id: Option<&str>) -> Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO linked_databases (path) VALUES (?1)",
-        params![path],
+        "INSERT OR IGNORE INTO linked_databases (path, db_id) VALUES (?1, ?2)",
+        params![path, db_id],
     )?;
     Ok(())
 }
@@ -1576,10 +1654,15 @@ pub fn unlink_database(conn: &Connection, path: &str) -> Result<bool> {
     Ok(changed > 0)
 }
 
-/// List all registered linked database paths (relative or absolute).
-pub fn list_linked(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT path FROM linked_databases ORDER BY path")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+/// List all registered linked databases with their stored paths and IDs.
+pub fn list_linked(conn: &Connection) -> Result<Vec<LinkedDb>> {
+    let mut stmt = conn.prepare("SELECT path, db_id FROM linked_databases ORDER BY path")?;
+    let rows = stmt.query_map([], |row| {
+        Ok(LinkedDb {
+            path: row.get::<_, String>(0)?,
+            db_id: row.get::<_, Option<String>>(1)?,
+        })
+    })?;
     let mut result = Vec::new();
     for row in rows {
         result.push(row?);
@@ -1754,13 +1837,34 @@ pub fn collect_all_databases(
         // Collect linked databases before moving the connection.
         // Relative paths resolve under r; absolute paths (partner DBs) replace r entirely.
         let linked = list_linked(&c).unwrap_or_default();
-        for linked_path in linked {
-            let linked_root = r.join(&linked_path);
+        for linked_db in linked {
+            let linked_root = r.join(&linked_db.path);
             let linked_db_path = linked_root.join(DB_DIR).join(DB_FILE);
             match open_at(&linked_db_path) {
                 Ok(linked_conn) => {
                     // Run migration in case the linked DB is an older schema version
                     if migrate(&linked_conn).is_ok() {
+                        // Verify the stored ID matches the actual database ID.
+                        // A mismatch means a different database has been mounted at
+                        // the same path — skip it and warn rather than silently
+                        // mixing tags from the wrong source.
+                        if let Some(expected) = &linked_db.db_id {
+                            match get_db_id(&linked_conn) {
+                                Ok(actual) if actual != *expected => {
+                                    eprintln!(
+                                        "warning: skipping linked database {}: \
+                                         ID mismatch (expected {}, got {}). \
+                                         Re-link with `filetag db remove` + \
+                                         `filetag db add` to update the stored ID.",
+                                        linked_db_path.display(),
+                                        expected,
+                                        actual
+                                    );
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
                         queue.push((linked_conn, linked_root));
                     }
                 }

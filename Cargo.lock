@@ -619,6 +619,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "rand 0.10.1",
  "rusqlite",
  "serde",
  "serde_json",

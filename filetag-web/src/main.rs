@@ -99,11 +99,11 @@ async fn main() -> anyhow::Result<()> {
         }];
         // Voeg expliciet gelinkte databases toe
         let linked = db::list_linked(&dbs[0].conn)?;
-        for path in linked {
-            let abs = if std::path::Path::new(&path).is_absolute() {
-                std::path::PathBuf::from(&path)
+        for entry in linked {
+            let abs = if std::path::Path::new(&entry.path).is_absolute() {
+                std::path::PathBuf::from(&entry.path)
             } else {
-                root.join(&path)
+                root.join(&entry.path)
             };
             if let Ok(conn2) = Connection::open(abs.join(".filetag").join("db.sqlite3")) {
                 dbs.push(db::OpenDb {

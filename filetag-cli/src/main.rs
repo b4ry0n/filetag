@@ -1349,6 +1349,7 @@ fn cmd_info(cli: &Cli) -> Result<()> {
     let total_size: i64 =
         conn.query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |r| r.get(0))?;
 
+    let db_id = db::get_db_id(&conn).unwrap_or_else(|_| "(unavailable)".into());
     if cli.json {
         let j = JsonInfo {
             root: root.display().to_string(),
@@ -1357,9 +1358,13 @@ fn cmd_info(cli: &Cli) -> Result<()> {
             assignments: assignment_count,
             total_size,
         };
-        println!("{}", serde_json::to_string(&j)?);
+        // Append db_id to the JSON object manually to avoid a struct change.
+        let mut v = serde_json::to_value(&j)?;
+        v["db_id"] = serde_json::Value::String(db_id);
+        println!("{}", serde_json::to_string(&v)?);
     } else {
         println!("Database root: {}", root.display());
+        println!("Database ID:   {}", db_id);
         println!("Files:         {}", file_count);
         println!("Tags:          {}", tag_count);
         println!("Assignments:   {}", assignment_count);
@@ -1529,7 +1534,7 @@ fn resolve_registered_linked(
     }
     let stored_path = path_relative_to(root, &abs).to_string_lossy().into_owned();
     let linked = db::list_linked(conn)?;
-    if !linked.contains(&stored_path) {
+    if !linked.iter().any(|l| l.path == stored_path) {
         anyhow::bail!(
             "'{}' is not a linked database (use 'filetag db add' first)",
             stored_path
@@ -1559,18 +1564,20 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             if linked.is_empty() {
                 info!(cli, "No linked databases registered");
             } else {
-                for linked_path in &linked {
-                    let linked_root = root.join(linked_path);
+                for entry in &linked {
+                    let linked_root = root.join(&entry.path);
                     let db_path = linked_root.join(".filetag").join("db.sqlite3");
                     let status = if db_path.is_file() { "ok" } else { "missing" };
+                    let id_str = entry.db_id.as_deref().unwrap_or("(no id)");
                     if cli.json {
                         println!(
-                            "{{\"path\":{},\"status\":{}}}",
-                            serde_json::to_string(linked_path)?,
+                            "{{\"path\":{},\"db_id\":{},\"status\":{}}}",
+                            serde_json::to_string(&entry.path)?,
+                            serde_json::to_string(&entry.db_id)?,
                             serde_json::to_string(status)?
                         );
                     } else {
-                        println!("{}\t{}", linked_path, status);
+                        println!("{}\t{}\t{}", entry.path, id_str, status);
                     }
                 }
             }
@@ -1589,7 +1596,11 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
             // link survives being re-mounted at a different absolute prefix on
             // another machine (e.g. /mnt/docs → /mnt/user-docs via NFS).
             let stored_path = path_relative_to(&root, &abs).to_string_lossy().into_owned();
-            db::link_database(&conn, &stored_path)?;
+            // Read the target database's own ID so we can verify it later.
+            let target_id = db::open_root_db(&abs)
+                .ok()
+                .and_then(|(c, _)| db::get_db_id(&c).ok());
+            db::link_database(&conn, &stored_path, target_id.as_deref())?;
             info!(cli, "Linked database: {}", stored_path);
         }
         DbAction::Remove { path } => {
@@ -1605,12 +1616,12 @@ fn cmd_db(cli: &Cli, action: &DbAction) -> Result<()> {
         DbAction::Prune => {
             let linked = db::list_linked(&conn)?;
             let mut pruned = 0;
-            for linked_path in &linked {
-                let linked_root = root.join(linked_path);
+            for entry in &linked {
+                let linked_root = root.join(&entry.path);
                 let db_path = linked_root.join(".filetag").join("db.sqlite3");
                 if !db_path.is_file() {
-                    db::unlink_database(&conn, linked_path)?;
-                    println!("pruned: {}", linked_path);
+                    db::unlink_database(&conn, &entry.path)?;
+                    println!("pruned: {}", entry.path);
                     pruned += 1;
                 }
             }
