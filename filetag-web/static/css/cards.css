@@ -252,25 +252,19 @@
     word-break: break-word;
     line-height: 1.3;
     color: #fff;
-    /* 4-corner outline (diagonal only): subtler than 8-direction, avoids
-     * the "bloated" look on small text while still ensuring contrast. */
-    text-shadow:
-        -1px -1px 0 rgba(0,0,0,0.70),
-         1px -1px 0 rgba(0,0,0,0.70),
-        -1px  1px 0 rgba(0,0,0,0.70),
-         1px  1px 0 rgba(0,0,0,0.70),
-         0    0   4px rgba(0,0,0,0.50);
+    /* Crisp glyph-level stroke + soft blur for depth on light backgrounds */
+    -webkit-text-stroke: 0.5px rgba(0,0,0,0.65);
+    text-stroke: 0.5px rgba(0,0,0,0.65);
+    text-shadow: 0 1px 4px rgba(0,0,0,0.55);
 }
 
 .card-meta {
     font-size: clamp(9px, calc(var(--card-size, 140px) * 0.072), 13px);
     color: rgba(255,255,255,0.85);
     margin-top: 2px;
-    text-shadow:
-        -1px -1px 0 rgba(0,0,0,0.60),
-         1px -1px 0 rgba(0,0,0,0.60),
-        -1px  1px 0 rgba(0,0,0,0.60),
-         1px  1px 0 rgba(0,0,0,0.60);
+    -webkit-text-stroke: 0.4px rgba(0,0,0,0.55);
+    text-stroke: 0.4px rgba(0,0,0,0.55);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.50);
 }
 
 /* Icon-only cards: icon fills the full card; label overlays at bottom.
