@@ -902,81 +902,19 @@ pub async fn api_files(
             continue;
         }
 
-        // ---------------------------------------------------------------
-        // FAST PATH — skip file_type() entirely for entries with a file
-        // extension.
-        //
-        // Root cause of the 3-minute load time:
-        //   On NFS v3 (without READDIRPLUS) and some SMB mounts the kernel's
-        //   readdir buffer does not populate d_type (returns DT_UNKNOWN for
-        //   every entry).  When that happens, entry.file_type() falls back to
-        //   a separate lstat() RPC per entry.
-        //   4 000 files × ~40 ms/RPC = ~160 s ≈ 3 minutes.
-        //
-        // Observation: directory names practically never carry a file extension.
-        // Any entry whose name contains a non-terminal dot (e.g. "file.cbz",
-        // "photo.jpg") is therefore almost certainly a regular file.
-        //
-        // We detect this with a single pass over the name string — zero syscalls.
-        // The fast path deliberately does NOT check for symlinks; symlinks whose
-        // names carry an extension are treated as regular files.  Their tags
-        // remain accessible via the relative path.
-        //
-        // Known limitation: a directory named "Music.Old" would be misclassified
-        // as a file.  This edge case is rare in practice.
-        // ---------------------------------------------------------------
-        // Skip any leading dots and underscores before looking for a file
-        // extension.  Without this, names such as "_.Trash" or "_.TemporaryItems"
-        // (macOS NAS artefacts) would be misclassified as files because rfind('.')
-        // finds the dot at position 1 and the check fires too early.
-        let skip = name.bytes().take_while(|&b| b == b'.' || b == b'_').count();
-        if let Some(d) = name[skip..].rfind('.').map(|i| i + skip)
-            && d + 1 < name.len()
-        {
-            // Non-terminal dot → has file extension → fast path.
-            // We still call metadata() here to retrieve size and mtime.
-            // On NFSv4 the kernel attr cache is populated by the preceding
-            // readdir, so this is served from cache with no extra RPC.
-            // On NFSv3 without READDIRPLUS it costs one stat() per file;
-            // users on slow NFS v3 mounts may prefer to disable this by
-            // setting the `show_sizes` setting to `false` (future work).
-            let meta = entry.metadata().ok();
-            let size = meta.as_ref().map(|m| m.len() as i64);
-            let mtime = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i64);
-            let rel = format!("{}{}", prefix, name);
-            raw_files.push(RawFile {
-                name,
-                is_symlink: false,
-                db_path: rel.clone(),
-                covered_path: entry.path(),
-                check_covered: false,
-                size,
-                mtime,
-            });
-            continue;
-        }
-
-        // ---------------------------------------------------------------
-        // SLOW PATH — entries without a file extension (typically dirs).
-        // file_type() may call lstat() here, but there are few such entries
-        // in a typical media library so the overhead stays low.
-        // ---------------------------------------------------------------
-        let entry_ft = match entry.file_type() {
-            Ok(ft) => ft,
+        // One metadata() call per entry gives us type, size and mtime.
+        // On NFSv4 the kernel serves this from the readdir attr cache
+        // (no extra RPC).  symlink_metadata() does not follow the link so
+        // we can detect symlinks reliably.
+        let lmeta = match entry.path().symlink_metadata() {
+            Ok(m) => m,
             Err(_) => continue,
         };
-        let is_symlink = entry_ft.is_symlink();
 
-        if is_symlink {
-            // Symlinks: one stat() call to follow the link and learn about the
-            // target.  This is unavoidable but symlinks are rare in practice.
-            let tm = std::fs::metadata(entry.path()).ok(); // stat(), follows link
+        if lmeta.file_type().is_symlink() {
+            // Symlinks: one extra stat() to follow the link.
+            let tm = std::fs::metadata(entry.path()).ok();
             let target_is_dir = tm.as_ref().is_some_and(|m| m.is_dir());
-            // Broken symlinks (tm == None) are treated as files.
             let target_is_file = tm.as_ref().is_some_and(|m| m.is_file()) || tm.is_none();
 
             if target_is_dir {
@@ -1021,24 +959,29 @@ pub async fn api_files(
                     mtime,
                 });
             }
-        } else if entry_ft.is_dir() {
+        } else if lmeta.is_dir() {
             raw_dirs.push(RawDir {
                 db_path: format!("{}{}", prefix, name),
                 abs_path: entry.path(),
                 name,
                 is_symlink: false,
             });
-        } else if entry_ft.is_file() {
-            // Extensionless regular file (Makefile, README, etc.).
+        } else if lmeta.is_file() {
+            let size = Some(lmeta.len() as i64);
+            let mtime = lmeta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64);
             let rel = format!("{}{}", prefix, name);
             raw_files.push(RawFile {
                 name,
                 is_symlink: false,
-                db_path: rel.clone(),
+                db_path: rel,
                 covered_path: entry.path(),
                 check_covered: false,
-                size: None,
-                mtime: None,
+                size,
+                mtime,
             });
         }
     }
