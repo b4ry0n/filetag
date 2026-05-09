@@ -1853,6 +1853,161 @@ pub async fn api_ai_config_get(
 }
 
 // ---------------------------------------------------------------------------
+// Model discovery
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(crate) struct AiModelsQuery {
+    /// Base URL of the AI endpoint (http/https only).
+    endpoint: Option<String>,
+    /// `"openai"` (default) or `"ollama"`.
+    format: Option<String>,
+    /// Optional bearer token.
+    api_key: Option<String>,
+    /// Fallback: read config from this database root.
+    dir: Option<String>,
+}
+
+/// Fetch the list of available models from the configured AI endpoint.
+///
+/// - OpenAI-compatible: `GET /v1/models` → `data[].id`
+/// - Ollama: `GET /api/tags` → `models[].name`
+///
+/// Returns `{ "models": ["id1", "id2", ...] }` on success, or
+/// `{ "models": [], "error": "..." }` on failure.
+pub async fn api_ai_models(
+    Query(params): Query<AiModelsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    // Resolve endpoint / format / api_key: prefer explicit query params,
+    // fall back to saved config for the active root.
+    let (endpoint, format, api_key) = {
+        let from_query = params.endpoint.clone().filter(|s| !s.is_empty());
+        let from_query_fmt = params.format.clone().filter(|s| !s.is_empty());
+        let from_query_key = params.api_key.clone().filter(|s| !s.is_empty());
+
+        if from_query.is_some() {
+            (from_query, from_query_fmt, from_query_key)
+        } else {
+            // Load from DB settings.
+            let maybe = root_for_dir(
+                &state,
+                std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+            );
+            if let Some(db_root) = maybe {
+                if let Ok(conn) = open_conn(db_root) {
+                    let g = |key: &str| -> String {
+                        db::get_setting(&conn, key)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default()
+                    };
+                    let ep = g("ai.endpoint");
+                    let ep = if ep.is_empty() { None } else { Some(ep) };
+                    let fmt = g("ai.format");
+                    let fmt = if fmt.is_empty() { None } else { Some(fmt) };
+                    let key = g("ai.api_key");
+                    let key = if key.is_empty() { None } else { Some(key) };
+                    (ep, fmt, key)
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            }
+        }
+    };
+
+    let Some(endpoint) = endpoint else {
+        return Json(serde_json::json!({ "models": [], "error": "No endpoint configured" }));
+    };
+
+    // SSRF guard: only allow http/https.
+    let scheme = endpoint
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Json(
+            serde_json::json!({ "models": [], "error": "Endpoint must use http:// or https://" }),
+        );
+    }
+
+    let format = format.as_deref().unwrap_or("openai");
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(serde_json::json!({ "models": [], "error": e.to_string() }));
+        }
+    };
+
+    let url = if format == "ollama" {
+        format!("{}/api/tags", endpoint.trim_end_matches('/'))
+    } else {
+        format!("{}/v1/models", endpoint.trim_end_matches('/'))
+    };
+
+    let mut req = client.get(&url);
+    if let Some(key) = &api_key
+        && !key.is_empty()
+    {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(serde_json::json!({ "models": [], "error": e.to_string() }));
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        return Json(
+            serde_json::json!({ "models": [], "error": format!("HTTP {status} from endpoint") }),
+        );
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            return Json(serde_json::json!({ "models": [], "error": e.to_string() }));
+        }
+    };
+
+    let models: Vec<String> = if format == "ollama" {
+        // Ollama: { "models": [{ "name": "llama3.2:latest", ... }, ...] }
+        body["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        // OpenAI: { "data": [{ "id": "gpt-4o", ... }, ...] }
+        body["data"]
+            .as_array()
+            .map(|arr| {
+                let mut ids: Vec<String> = arr
+                    .iter()
+                    .filter_map(|m| m["id"].as_str().map(str::to_string))
+                    .collect();
+                ids.sort();
+                ids
+            })
+            .unwrap_or_default()
+    };
+
+    Json(serde_json::json!({ "models": models }))
+}
+
+// ---------------------------------------------------------------------------
 // Multi-file common-traits analysis
 // ---------------------------------------------------------------------------
 

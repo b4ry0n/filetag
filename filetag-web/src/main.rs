@@ -390,6 +390,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/ai/status", get(ai::api_ai_status))
         .route("/api/ai/config", get(ai::api_ai_config_get))
         .route("/api/ai/config", post(ai::api_ai_config_set))
+        .route("/api/ai/models", get(ai::api_ai_models))
         // Face detection routes
         .route("/api/face/analyse", post(face::api_face_analyse))
         .route(

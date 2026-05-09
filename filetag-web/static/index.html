@@ -471,7 +471,13 @@
                         <input type="text" id="ai-endpoint" placeholder="http://localhost:8080">
                     </label>
                     <label>Model
-                        <input type="text" id="ai-model" placeholder="e.g. qwen2.5-vl">
+                        <div class="input-with-btn">
+                            <input type="text" id="ai-model" placeholder="e.g. qwen2.5-vl">
+                            <button type="button" id="ai-fetch-models-btn" onclick="aiFetchModels()" title="Fetch available models from endpoint">Fetch</button>
+                        </div>
+                        <select id="ai-model-select" hidden size="6" style="margin-top:4px;width:100%" onchange="aiModelSelectChange(this)">
+                        </select>
+                        <small id="ai-model-msg" style="display:none;color:var(--warn)"></small>
                     </label>
                     <label>API key (optional)
                         <input type="password" id="ai-api-key" placeholder="Leave empty for local models">

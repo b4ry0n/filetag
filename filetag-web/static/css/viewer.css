@@ -369,6 +369,17 @@
     color: var(--fg);
 }
 .modal-body label:not(.toggle-row) button { font-size: 12px; font-weight: 500; }
+
+/* Input + inline button group (e.g. Model + Fetch button). */
+.input-with-btn {
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+}
+.input-with-btn input {
+    flex: 1;
+    min-width: 0;
+}
 .modal-body label:not(.toggle-row) .settings-desc-inline,
 .modal-body label:not(.toggle-row) small {
     text-transform: none;

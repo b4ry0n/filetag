@@ -269,6 +269,11 @@ function openSettings(tab = 'general') {
             document.getElementById('ai-enabled').checked = enabled;
             document.getElementById('ai-settings-fields').hidden = !enabled;
             document.getElementById('ai-test-result').hidden = true;
+            // Reset model picker state.
+            const modelSel = document.getElementById('ai-model-select');
+            const modelMsg = document.getElementById('ai-model-msg');
+            if (modelSel) { modelSel.hidden = true; modelSel.innerHTML = ''; }
+            if (modelMsg) { modelMsg.style.display = 'none'; modelMsg.textContent = ''; }
         });
     // Face settings — always fetch fresh so the form reflects the saved DB value.
     const dirQ = currentAbsDir() ? '?dir=' + encodeURIComponent(currentAbsDir()) : '';
@@ -1309,6 +1314,73 @@ function _updateVideoMaxMbVisibility() {
 
 function aiVideoModeChanged() {
     _updateVideoMaxMbVisibility();
+}
+
+/** Fetch available models from the currently entered endpoint and populate the
+ *  model field: auto-select when only one model is returned, show a select
+ *  list when multiple are available, or show an error message. */
+async function aiFetchModels() {
+    const btn     = document.getElementById('ai-fetch-models-btn');
+    const input   = document.getElementById('ai-model');
+    const sel     = document.getElementById('ai-model-select');
+    const msg     = document.getElementById('ai-model-msg');
+    const endpoint = document.getElementById('ai-endpoint').value.trim();
+    const format   = document.getElementById('ai-format').value;
+    const apiKey   = document.getElementById('ai-api-key').value.trim();
+
+    if (!endpoint) {
+        if (msg) { msg.textContent = 'Enter an endpoint URL first.'; msg.style.display = ''; }
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '…';
+    if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+    if (sel) { sel.hidden = true; sel.innerHTML = ''; }
+
+    try {
+        const qs = new URLSearchParams({ endpoint, format, dir: currentAbsDir() || '' });
+        if (apiKey) qs.set('api_key', apiKey);
+        const data = await api('/api/ai/models?' + qs);
+
+        const models = data.models || [];
+        if (data.error && models.length === 0) {
+            if (msg) { msg.textContent = data.error; msg.style.display = ''; }
+            return;
+        }
+
+        if (models.length === 0) {
+            if (msg) { msg.textContent = 'No models returned by endpoint.'; msg.style.display = ''; }
+            return;
+        }
+
+        if (models.length === 1) {
+            input.value = models[0];
+            if (msg) { msg.textContent = ''; msg.style.display = 'none'; }
+            return;
+        }
+
+        // Multiple models: show a <select> list.
+        sel.innerHTML = models.map(m =>
+            `<option value="${m.replace(/"/g, '&quot;')}">${m}</option>`
+        ).join('');
+        // Pre-select current value if it matches.
+        const cur = input.value.trim();
+        if (cur && models.includes(cur)) sel.value = cur;
+        sel.hidden = false;
+        sel.focus();
+    } catch (e) {
+        if (msg) { msg.textContent = String(e); msg.style.display = ''; }
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Fetch';
+    }
+}
+
+/** When the user picks from the model dropdown, copy to the text input. */
+function aiModelSelectChange(sel) {
+    const input = document.getElementById('ai-model');
+    if (input && sel.value) input.value = sel.value;
 }
 
 function aiToggleEnabled() {
