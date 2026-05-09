@@ -51,9 +51,16 @@ async function selectFile(path, event) {
     state.selectedPaths.clear();
     state.selectedPaths.add(path);
     _lastClickedPath = path;
-    await loadFileDetail(path);
+    // Highlight the card immediately so the UI responds without waiting for
+    // the network.  Keep the old detail panel visible until the new data
+    // arrives to avoid an empty-panel flash.
     _updateCardSelection();
-    renderDetail();
+    // Load the file detail and refresh the panel when done.
+    await loadFileDetail(path);
+    // Guard: another file may have been selected while we were waiting.
+    if (state.selectedPaths.size === 1 && state.selectedPaths.has(path)) {
+        renderDetail();
+    }
 }
 
 // Expose for global use
