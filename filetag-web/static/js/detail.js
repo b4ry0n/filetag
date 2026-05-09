@@ -1219,7 +1219,7 @@ function renderDetail() {
             </div>
             <div class="detail-meta">
                 <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.path')}</span><span class="detail-meta-value">${esc(d.path)}</span></div>
-                <div class="detail-meta-row"><span class="detail-meta-label">${t('detail.items')}</span><span class="detail-meta-value">${d.file_count}</span></div>
+                ${d.file_count != null ? `<div class="detail-meta-row"><span class="detail-meta-label">${t('detail.items')}</span><span class="detail-meta-value">${d.file_count}</span></div>` : ''}
             </div>
             </div>
             <div class="detail-v-handle" id="detail-v-handle"></div>

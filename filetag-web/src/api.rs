@@ -856,13 +856,25 @@ pub async fn api_files(
     };
 
     let conn = open_conn(db_root)?;
-    let mut tag_stmt = conn.prepare_cached(
-        "SELECT COUNT(*) FROM file_tags ft \
-         JOIN files f ON f.id = ft.file_id WHERE f.path = ?1",
-    )?;
 
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
+    // Phase 1: collect raw entries from the filesystem in a single read_dir
+    // pass, without any per-entry DB queries.
+    struct RawDir {
+        name: String,
+        is_symlink: bool,
+        db_path: String,
+    }
+    struct RawFile {
+        name: String,
+        is_symlink: bool,
+        db_path: String,
+        covered_path: std::path::PathBuf,
+        size: Option<i64>,
+        mtime: Option<i64>,
+    }
+
+    let mut raw_dirs: Vec<RawDir> = Vec::new();
+    let mut raw_files: Vec<RawFile> = Vec::new();
 
     let rd = std::fs::read_dir(abs_dir)
         .with_context(|| format!("reading directory {}", abs_dir.display()))?;
@@ -898,9 +910,6 @@ pub async fn api_files(
             || (is_symlink && target_meta.is_none());
 
         if effective_is_dir {
-            let child_count = std::fs::read_dir(entry.path())
-                .map(|rd| rd.flatten().count() as i64)
-                .unwrap_or(0);
             // For a symlinked directory use the canonical path for tag-count
             // queries so that tags on the real directory are reflected.
             let dir_db_path = if is_symlink {
@@ -917,23 +926,10 @@ pub async fn api_files(
             } else {
                 format!("{}{}", prefix, name)
             };
-            let dir_tag_count: i64 = tag_stmt
-                .query_row(rusqlite::params![&dir_db_path], |r| r.get(0))
-                .unwrap_or(0);
-            dirs.push(ApiDirEntry {
+            raw_dirs.push(RawDir {
                 name,
-                is_dir: true,
-                size: None,
-                mtime: None,
-                file_count: Some(child_count),
-                tag_count: if dir_tag_count > 0 {
-                    Some(dir_tag_count)
-                } else {
-                    None
-                },
-                root_path: None,
-                covered: None,
-                is_symlink: if is_symlink { Some(true) } else { None },
+                is_symlink,
+                db_path: dir_db_path,
             });
         } else if effective_is_file {
             let rel_path = format!("{}{}", prefix, name);
@@ -962,38 +958,100 @@ pub async fn api_files(
                 (rel_path.clone(), entry.path())
             };
 
-            let tag_count: i64 = tag_stmt
-                .query_row(rusqlite::params![&db_lookup_path], |r| r.get(0))
-                .unwrap_or(0);
-
-            files.push(ApiDirEntry {
+            raw_files.push(RawFile {
                 name,
-                is_dir: false,
+                is_symlink,
+                db_path: db_lookup_path,
+                covered_path,
                 size,
                 mtime,
-                file_count: None,
-                tag_count: Some(tag_count),
-                root_path: None,
-                covered: Some(file_is_covered(&state, &covered_path)),
-                is_symlink: if is_symlink { Some(true) } else { None },
             });
         }
     }
 
-    // Combineer en sorteer entries volgens gewenst beleid: directories eerst, dan files, beide alfabetisch
+    // Phase 2: single batch query for all tag counts (replaces N+1 queries).
+    let all_db_paths: Vec<String> = raw_dirs
+        .iter()
+        .map(|d| d.db_path.clone())
+        .chain(raw_files.iter().map(|f| f.db_path.clone()))
+        .collect();
+    let tag_counts = batch_tag_counts(&conn, &all_db_paths)?;
+
+    // Phase 3: build ApiDirEntry structs from the collected data.
+    let mut dirs: Vec<ApiDirEntry> = raw_dirs
+        .into_iter()
+        .map(|d| {
+            let tc = tag_counts.get(&d.db_path).copied().unwrap_or(0);
+            ApiDirEntry {
+                name: d.name,
+                is_dir: true,
+                size: None,
+                mtime: None,
+                file_count: None,
+                tag_count: if tc > 0 { Some(tc) } else { None },
+                root_path: None,
+                covered: None,
+                is_symlink: if d.is_symlink { Some(true) } else { None },
+            }
+        })
+        .collect();
+    let mut files: Vec<ApiDirEntry> = raw_files
+        .into_iter()
+        .map(|f| {
+            let tc = tag_counts.get(&f.db_path).copied().unwrap_or(0);
+            ApiDirEntry {
+                name: f.name,
+                is_dir: false,
+                size: f.size,
+                mtime: f.mtime,
+                file_count: None,
+                tag_count: Some(tc),
+                root_path: None,
+                covered: Some(file_is_covered(&state, &f.covered_path)),
+                is_symlink: if f.is_symlink { Some(true) } else { None },
+            }
+        })
+        .collect();
+
     dirs.sort_by_key(|a| a.name.to_lowercase());
     files.sort_by_key(|a| a.name.to_lowercase());
     let mut entries = Vec::with_capacity(dirs.len() + files.len());
     entries.extend(dirs);
     entries.extend(files);
 
-    // Toekomst: hier kan eenvoudig een andere sortering worden toegepast
-
     Ok(Json(ApiDirListing {
         path: db_rel,
         root_path: db_root.root.display().to_string(),
         entries,
     }))
+}
+
+/// Batch-query tag counts for a slice of relative DB paths in a single SQL
+/// round-trip.  Returns a map from path to count; paths absent from the DB
+/// (zero tags) are simply missing from the map.
+fn batch_tag_counts(
+    conn: &rusqlite::Connection,
+    paths: &[String],
+) -> rusqlite::Result<std::collections::HashMap<String, i64>> {
+    // SQLite's maximum variable count is 999; stay safely below it.
+    const CHUNK: usize = 900;
+    let mut map = std::collections::HashMap::with_capacity(paths.len());
+    for chunk in paths.chunks(CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let sql = format!(
+            "SELECT f.path, COUNT(ft.tag_id) FROM files f \
+             LEFT JOIN file_tags ft ON f.id = ft.file_id \
+             WHERE f.path IN ({placeholders}) GROUP BY f.path"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows.flatten() {
+            map.insert(row.0, row.1);
+        }
+    }
+    Ok(map)
 }
 
 // ---------------------------------------------------------------------------

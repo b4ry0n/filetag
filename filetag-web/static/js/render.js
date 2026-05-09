@@ -206,7 +206,8 @@ function renderGrid(items) {
         }
 
         const dirTagHint = isDir && entry.tag_count ? ` · ${entry.tag_count} tag${entry.tag_count === 1 ? '' : 's'}` : '';
-        const meta = isDir ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}${dirTagHint}` : formatSize(entry.size);
+        const dirCountHint = entry.file_count != null ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : '';
+        const meta = isDir ? (dirCountHint + dirTagHint) || '\u2014' : formatSize(entry.size);
 
         if (isDir) {
             // Virtual root entry (shown at the top level when multiple roots exist)
@@ -225,7 +226,7 @@ function renderGrid(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
+                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">
                     ${dirSymlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -293,7 +294,7 @@ function renderList(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count})">
+                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">`
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${dirSymlinkSuffix}</span>
                     <span class="size">${size}</span>
