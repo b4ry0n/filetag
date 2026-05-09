@@ -1659,9 +1659,12 @@ function renderInfo() {
 // ---------------------------------------------------------------------------
 
 function render() {
-    renderTags();
+    // Render content and breadcrumb first so the file grid appears as quickly
+    // as possible (especially with chunked rendering, the first items paint
+    // before the heavier tag sidebar and detail panel are built).
     renderBreadcrumb();
     renderContent();
+    renderTags();
     renderDetail();
     renderInfo();
     _thumbInit();

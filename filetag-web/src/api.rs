@@ -857,6 +857,13 @@ pub async fn api_files(
 
     let conn = open_conn(db_root)?;
 
+    // Pre-compute whether the current directory itself is covered by a database
+    // root.  All non-symlink files in this directory share the same device and
+    // are under the same root, so they can reuse this single result instead of
+    // each calling file_is_covered() (which does a stat() syscall per file —
+    // extremely expensive on NFS/SMB network shares with thousands of entries).
+    let dir_covered = file_is_covered(&state, abs_dir);
+
     // Phase 1: collect raw entries from the filesystem in a single read_dir
     // pass, without any per-entry DB queries.
     struct RawDir {
@@ -869,6 +876,11 @@ pub async fn api_files(
         is_symlink: bool,
         db_path: String,
         covered_path: std::path::PathBuf,
+        /// True when `covered_path` is a symlink target that may lie outside the
+        /// current root; in that case `file_is_covered` must be called individually.
+        /// For regular (non-symlink) files this is always false: they inherit
+        /// `dir_covered` and never need a per-file stat() call.
+        check_covered: bool,
         size: Option<i64>,
         mtime: Option<i64>,
     }
@@ -945,7 +957,7 @@ pub async fn api_files(
             // For symlinks, resolve to the canonical path for DB lookups.
             // Tags are stored under the real file's path because all write
             // operations canonicalise before hitting the DB.
-            let (db_lookup_path, covered_path) = if is_symlink {
+            let (db_lookup_path, covered_path, check_covered) = if is_symlink {
                 let canonical_opt = entry.path().canonicalize().ok();
                 let canon_rel = canonical_opt
                     .as_deref()
@@ -953,9 +965,13 @@ pub async fn api_files(
                     .map(|r| r.to_string_lossy().into_owned())
                     .unwrap_or_else(|| rel_path.clone());
                 let canon_abs = canonical_opt.unwrap_or_else(|| entry.path());
-                (canon_rel, canon_abs)
+                // Symlink targets may lie outside the database root or even on a
+                // different filesystem, so they need individual coverage checks.
+                (canon_rel, canon_abs, true)
             } else {
-                (rel_path.clone(), entry.path())
+                // Regular files in this directory always have the same device/root
+                // as abs_dir; reuse dir_covered — no per-file stat() call needed.
+                (rel_path.clone(), entry.path(), false)
             };
 
             raw_files.push(RawFile {
@@ -963,6 +979,7 @@ pub async fn api_files(
                 is_symlink,
                 db_path: db_lookup_path,
                 covered_path,
+                check_covered,
                 size,
                 mtime,
             });
@@ -1002,6 +1019,15 @@ pub async fn api_files(
         .into_iter()
         .map(|f| {
             let tc = tag_counts.get(&f.db_path).copied().unwrap_or(0);
+            // Avoid per-file stat() calls on network shares: regular files in
+            // this directory inherit dir_covered (same device/root as abs_dir).
+            // Only symlinks whose target might lie outside the root need an
+            // individual file_is_covered() check.
+            let covered = if f.check_covered {
+                file_is_covered(&state, &f.covered_path)
+            } else {
+                dir_covered
+            };
             ApiDirEntry {
                 name: f.name,
                 is_dir: false,
@@ -1010,7 +1036,7 @@ pub async fn api_files(
                 file_count: None,
                 tag_count: Some(tc),
                 root_path: None,
-                covered: Some(file_is_covered(&state, &f.covered_path)),
+                covered: Some(covered),
                 is_symlink: if f.is_symlink { Some(true) } else { None },
             }
         })

@@ -474,7 +474,7 @@ function _gridClass(base) {
 let _renderGen = 0;
 
 // Items rendered synchronously (first paint) and per subsequent chunk.
-const _RENDER_INITIAL = 60;
+const _RENDER_INITIAL = 15;
 const _RENDER_CHUNK   = 100;
 
 function renderContent() {
