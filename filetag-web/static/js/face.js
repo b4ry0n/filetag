@@ -558,8 +558,6 @@ let _faceDetailResizeTimer = null;
 window.addEventListener('resize', () => {
     clearTimeout(_faceDetailResizeTimer);
     _faceDetailResizeTimer = setTimeout(() => {
-        // Sync img max-height first, then re-render boxes against the new size
-        if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
         faceRerenderPreviewBoxes();
     }, 150);
 });

@@ -41,15 +41,15 @@
     cursor: pointer;
     z-index: 21;
 }
-/* img max-height: CSS fallback only — JS sets img.style.maxHeight to the
- * exact .detail-preview height after each render and separator drag.
- * 55vh matches the detail-top fallback and is quickly replaced by JS. */
+/* img/video: fill the .detail-preview area proportionally.
+ * max-height:100% works because .detail-preview is flex:1 1 0 inside
+ * .detail-top which has a definite height set directly by JS. */
 .detail-preview img,
 .detail-preview video {
     width: auto;
     height: auto;
     max-width: 100%;
-    max-height: 55vh;
+    max-height: 100%;
     object-fit: contain;
     display: block;
     cursor: pointer;
@@ -80,18 +80,16 @@
     flex-direction: column;
 }
 
-/* Scrollable top area (header, preview, meta) above the split line.
-   Height is controlled by --detail-top-height (set by JS after render/drag).
-   Fallback 55vh gives a sensible size before the user moves the separator.
-   Overflow is hidden so nothing bleeds through the split line. */
+/* Top section: header + preview + face-toolbar, above the split line.
+ * JS sets element.style.height directly in px (no CSS variable).
+ * Fallback 55vh is only active briefly before JS snapshots the real height. */
 .detail-top {
     flex: none;
-    height: var(--detail-top-height, 55vh);
-    max-height: 85vh;
-    overflow: hidden;
-    min-height: 60px;
+    height: 55vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    min-height: 60px;
 }
 
 .meta-overlay {

@@ -514,68 +514,73 @@ function _initSidebarSubjectDivider() {
 }
 
 /** Wire up row-resize drag for the detail-panel inner splitter.
- *  Exposed globally so detail.js can call it after rendering. */
-/** Wire up row-resize drag for the detail-panel inner splitter.
- *  Controls --detail-top-height so the top section (header+preview+meta)
- *  has a fixed height and the tags section fills the remaining space.
- *  On first render (no saved value) the natural content height is snapshotted
- *  so the divider starts exactly below the meta section. */
+ *
+ * Layout contract:
+ *   .detail         — flex column, full panel height
+ *   .detail-top     — flex:none, height set HERE in px directly on the element
+ *     .detail-header  — fixed ~38px
+ *     .detail-preview — flex:1 1 0, min-height:0  → fills remainder of .detail-top
+ *     #face-toolbar-row — shrinks to content
+ *   .detail-v-handle  — 5px drag zone
+ *   .detail-tags-section — flex:1 1 0, scrollable
+ *
+ * Because .detail-top has a definite px height (set below), .detail-preview
+ * also gets a definite height via flexbox, so max-height:100% on the img
+ * always resolves correctly — no CSS variables, no calc, no JS measuring.
+ */
 function initDetailVHandle(el) {
     if (!el) return;
-    const root      = document.documentElement;
     const detailTop = document.querySelector('#detail .detail-top');
     if (!detailTop) return;
 
-    // Measure natural (content) height by temporarily removing the forced value.
+    function setHeight(h) {
+        detailTop.style.height = h + 'px';
+    }
+
+    function clamp(h) {
+        const detail = el.closest('.detail');
+        const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
+        return Math.max(60, Math.min(max, h));
+    }
+
+    // Natural height: momentarily clear the forced height so the browser
+    // lays out to content size, measure, then restore.
     function naturalHeight() {
-        const was = root.style.getPropertyValue('--detail-top-height');
-        root.style.removeProperty('--detail-top-height');
+        const prev = detailTop.style.height;
+        detailTop.style.height = '';
         const h = detailTop.getBoundingClientRect().height;
-        if (was) root.style.setProperty('--detail-top-height', was);
+        detailTop.style.height = prev;
         return h;
     }
 
-    function snapOrSet(h) {
-        const nat = naturalHeight();
-        const snapped = Math.abs(h - nat) <= 20 ? nat : h;
-        // Always commit a pixel value — never remove --detail-top-height during
-        // or after interaction so height:auto never causes the preview to jump.
-        root.style.setProperty('--detail-top-height', snapped + 'px');
-        localStorage.setItem('ft-detail-top-height', snapped + 'px');
+    function afterDrag() {
+        if (typeof faceRerenderPreviewBoxes === 'function') faceRerenderPreviewBoxes();
     }
 
+    // Restore saved position, clamped to the current panel height.
     const saved = localStorage.getItem('ft-detail-top-height');
     if (saved) {
-        // Limiteer aan max-height (min(60vh, 420px))
-        const maxPx = Math.min(window.innerHeight * 0.6, 420);
+        const maxPx = Math.min(window.innerHeight * 0.85, window.innerHeight - 120);
         let px = parseInt(saved, 10);
         if (isNaN(px) || px < 60) px = 60;
         if (px > maxPx) px = maxPx;
-        root.style.setProperty('--detail-top-height', px + 'px');
-        localStorage.setItem('ft-detail-top-height', px + 'px');
+        setHeight(px);
     } else {
-        // No saved separator position: snapshot the natural height in px so the
-        // img never has to use the 55vh CSS fallback (which tracks the viewport).
+        // No saved value: snapshot the natural (content) height in px on the
+        // next frame so the CSS 55vh fallback is replaced immediately.
         requestAnimationFrame(() => {
-            root.style.removeProperty('--detail-top-height');
-            const h = detailTop.getBoundingClientRect().height;
-            if (h > 0) {
-                root.style.setProperty('--detail-top-height', h + 'px');
-            }
-            if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
+            const h = naturalHeight();
+            if (h > 0) setHeight(h);
         });
     }
 
-    // Double-click: reset to natural height, but commit as pixels so the
-    // preview can't jump to max-height:55vh (height:auto overflow issue).
+    // Double-click: snap back to content height.
     el.addEventListener('dblclick', () => {
-        root.style.removeProperty('--detail-top-height');
+        detailTop.style.height = '';
+        const h = detailTop.getBoundingClientRect().height;
+        if (h > 0) setHeight(h);
         localStorage.removeItem('ft-detail-top-height');
-        // Measure the natural height synchronously (getBCR forces layout) and
-        // immediately commit it as a pixel value.
-        const nat = detailTop.getBoundingClientRect().height;
-        root.style.setProperty('--detail-top-height', nat + 'px');
-        localStorage.setItem('ft-detail-top-height', nat + 'px');
+        afterDrag();
     });
 
     el.addEventListener('mousedown', (e) => {
@@ -588,28 +593,19 @@ function initDetailVHandle(el) {
         document.body.style.userSelect = 'none';
 
         function onMove(ev) {
-            const detail = el.closest('.detail');
-            const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
-            const h = Math.max(60, Math.min(max, startH + (ev.clientY - startY)));
-            // Always set a pixel value during drag — avoids height:auto jump.
-            const nat = naturalHeight();
-            const display = Math.abs(h - nat) <= 20 ? nat : h;
-            root.style.setProperty('--detail-top-height', display + 'px');
-            // Sync img max-height to the actual panel height (excludes face-toolbar)
-            if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
+            setHeight(clamp(startH + (ev.clientY - startY)));
         }
         function onUp(ev) {
             el.classList.remove('dragging');
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
-            // Commit: snap or save final position.
-            const detail = el.closest('.detail');
-            const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
-            const h = Math.max(60, Math.min(max, startH + (ev.clientY - startY)));
-            snapOrSet(h);
-            if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
-            // Re-render face boxes now that the img has its final size
-            if (typeof faceRerenderPreviewBoxes === 'function') faceRerenderPreviewBoxes();
+            const h = clamp(startH + (ev.clientY - startY));
+            // Snap to natural height if close enough.
+            const nat = naturalHeight();
+            const final = Math.abs(h - nat) <= 20 ? nat : h;
+            setHeight(final);
+            localStorage.setItem('ft-detail-top-height', final + 'px');
+            afterDrag();
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
         }
