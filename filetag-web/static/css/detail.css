@@ -1,7 +1,10 @@
-/* Detail preview image — scale like video: height-driven, not forced to full width */
+/* Detail preview image — scale like video: height-driven, not forced to full width.
+ * max-height must be in viewport units (55vh, matching .detail-preview) because
+ * max-height:100% does not resolve when the parent only has max-height and no
+ * explicit height — CSS percentage-height resolution requires a definite height. */
 .detail-img-zoomable {
     max-width: 100%;
-    max-height: 100%;
+    max-height: 55vh;
     width: auto;
     height: auto;
     object-fit: contain;
@@ -279,6 +282,7 @@
     justify-content: center;
     width: 100%;
     height: 100%;
+    max-height: 55vh;
     position: relative;
 }
 
