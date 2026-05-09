@@ -542,8 +542,20 @@ async fn main() -> anyhow::Result<()> {
     // compilation here means the user does not see a long hang when they first
     // click the Detect button.
     if face::models_ready() {
-        tokio::spawn(async {
-            match tokio::task::spawn_blocking(face::prewarm_models).await {
+        // Read the OpenVINO device setting from the first root before spawning.
+        let device = state
+            .roots
+            .first()
+            .and_then(|r| {
+                use filetag_lib::db;
+                let conn = crate::state::open_conn(r).ok()?;
+                db::get_setting(&conn, "face.openvino_device")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_else(|| "CPU".into());
+        tokio::spawn(async move {
+            match tokio::task::spawn_blocking(move || face::prewarm_models(device)).await {
                 Ok(Ok(_)) => eprintln!("face models pre-warmed"),
                 Ok(Err(e)) => eprintln!("face model pre-warm failed: {e:#}"),
                 Err(e) => eprintln!("face model pre-warm task panicked: {e}"),

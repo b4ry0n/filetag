@@ -559,6 +559,8 @@ pub struct FaceConfigResponse {
     /// Increases accuracy for small faces in crowd shots at the cost of much
     /// longer analysis time. Disabled by default.
     pub tiling_enabled: bool,
+    /// OpenVINO device string (e.g. `"CPU"`, `"GPU"`). Default: `"CPU"`.
+    pub openvino_device: String,
     /// `true` when both ONNX model files are present on disk.
     pub models_ready: bool,
 }
@@ -573,6 +575,7 @@ pub struct FaceConfigRequest {
     pub tag_prefix: Option<String>,
     pub auto_match_threshold: Option<f32>,
     pub tiling_enabled: Option<bool>,
+    pub openvino_device: Option<String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
 }
