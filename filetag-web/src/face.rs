@@ -445,17 +445,38 @@ pub fn load_models(openvino_device: &str) -> anyhow::Result<FaceModels> {
     };
 
     // Watchdog: print a heartbeat every 30 s while commit_from_file is
-    // blocking.  This makes it clear in the server log that the process is
-    // alive even though OpenVINO's graph compilation produces no output.
+    // blocking.  After COMPILE_TIMEOUT_SECS the watchdog concludes that
+    // OpenVINO is stuck (e.g. on a corrupt cache file from an interrupted
+    // previous run), clears the cache directory, and exits the process so
+    // that the supervisor (systemd/Docker) can restart cleanly.
+    const COMPILE_TIMEOUT_SECS: u64 = 600; // 10 minutes
     let loading_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let flag_clone = loading_flag.clone();
+    let ov_cache_for_watchdog = ov_cache_dir.clone();
     let watchdog = std::thread::spawn(move || {
         let mut secs = 0u64;
         while flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_secs(30));
             secs += 30;
-            if flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                eprintln!("face: still compiling ONNX models ({secs}s elapsed) …");
+            if !flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            eprintln!("face: still compiling ONNX models ({secs}s elapsed) …");
+            if secs >= COMPILE_TIMEOUT_SECS {
+                eprintln!(
+                    "face: compilation timed out after {secs}s — \
+                     OpenVINO cache may be corrupt. \
+                     Clearing cache and restarting…"
+                );
+                if let Some(ref dir) = ov_cache_for_watchdog {
+                    if let Err(e) = std::fs::remove_dir_all(dir) {
+                        eprintln!("face: failed to clear cache ({dir}): {e}");
+                    } else {
+                        eprintln!("face: cache cleared ({dir})");
+                    }
+                }
+                // Exit so the supervisor can restart with a clean cache.
+                std::process::exit(1);
             }
         }
     });
