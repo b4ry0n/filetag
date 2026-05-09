@@ -1659,17 +1659,22 @@ function renderInfo() {
 // ---------------------------------------------------------------------------
 
 function render() {
-    // Render content and breadcrumb first so the file grid appears as quickly
-    // as possible (especially with chunked rendering, the first items paint
-    // before the heavier tag sidebar and detail panel are built).
+    // Render breadcrumb and file grid first so the first chunk of items paints
+    // as quickly as possible.  The tag sidebar and detail panel can be heavy
+    // (many tags, many subjects), so defer them until after the first frame.
     renderBreadcrumb();
-    renderContent();
-    renderTags();
-    renderDetail();
-    renderInfo();
-    _thumbInit();
-    _dirThumbInit();
-    _kbRestoreFocus();
+    renderContent(); // first _RENDER_INITIAL items painted synchronously
+    // Yield to the browser so it can paint the content before building the
+    // tag sidebar and detail panel.  _thumbInit() runs inside the callback so
+    // it picks up the first chunk that was just painted.
+    requestAnimationFrame(() => {
+        renderTags();
+        renderDetail();
+        renderInfo();
+        _thumbInit();
+        _dirThumbInit();
+        _kbRestoreFocus();
+    });
 }
 
 // ---------------------------------------------------------------------------

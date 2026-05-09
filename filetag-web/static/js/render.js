@@ -577,7 +577,9 @@ function renderContent() {
         if (_renderGen !== myGen) return; // user navigated away; discard stale chunk
         const chunk = sorted.slice(_offset, _offset + _RENDER_CHUNK);
         if (!chunk.length) {
-            // All items appended — kick off thumbnail loading.
+            // All items appended — kick off thumbnail loading for any remaining
+            // elements that were added by the last chunk.
+            _thumbInit();
             setTimeout(_dirThumbSchedule, 0);
             return;
         }
@@ -588,11 +590,15 @@ function renderContent() {
         while (tmp.firstChild) frag.appendChild(tmp.firstChild);
         el.appendChild(frag);
         _offset += _RENDER_CHUNK;
-        // Yield to the browser so it can paint the newly appended chunk before
-        // we render the next one.  setTimeout(fn, 0) achieves this reliably.
-        setTimeout(_appendChunk, 0);
+        // Register newly appended elements with the thumbnail observer/queue so
+        // they load as the user scrolls to them.  Must be called after each
+        // append because _thumbInit() only sees elements already in the DOM.
+        _thumbInit();
+        // Use requestAnimationFrame so the browser paints the current chunk
+        // before we append the next one — giving a true progressive load feel.
+        requestAnimationFrame(_appendChunk);
     }
     // Trigger thumbnail loading for the first batch while chunks queue up.
     setTimeout(_dirThumbSchedule, 200);
-    setTimeout(_appendChunk, 0);
+    requestAnimationFrame(_appendChunk);
 }

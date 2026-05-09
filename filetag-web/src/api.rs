@@ -900,26 +900,44 @@ pub async fn api_files(
             continue;
         }
 
-        // Use symlink_metadata so the entry itself is always visible, even for
-        // broken symlinks whose target no longer exists.
-        let link_meta = match std::fs::symlink_metadata(entry.path()) {
-            Ok(m) => m,
+        // Determine whether the entry is a symlink.  `DirEntry::file_type()`
+        // uses the `d_type` field from the kernel's readdir buffer on Linux/macOS
+        // (O(1), no extra syscall on most filesystems) and falls back to
+        // `lstat()` only when `d_type` is unavailable (e.g. some NFS mounts).
+        let entry_ft = match entry.file_type() {
+            Ok(ft) => ft,
             Err(_) => continue,
         };
-        let is_symlink = link_meta.file_type().is_symlink();
+        let is_symlink = entry_ft.is_symlink();
 
-        // Follow the symlink (or just stat the file) to learn about the target.
-        // IMPORTANT: use the free function std::fs::metadata() which calls
-        // stat() and follows symlinks.  DirEntry::metadata() calls lstat() and
-        // does NOT follow symlinks, so is_file()/is_dir() would always be false
-        // for a symlink entry.  May be None for broken symlinks.
-        let target_meta = std::fs::metadata(entry.path()).ok();
+        // For symlinks we need two stats: lstat (to confirm it's a symlink) and
+        // stat (to follow the link to the target).  For regular files and
+        // directories we only need one stat via entry.metadata() — this avoids
+        // a second syscall/network round-trip per entry on NFS/SMB shares.
+        let (link_meta, target_meta) = if is_symlink {
+            let lm = match std::fs::symlink_metadata(entry.path()) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let tm = std::fs::metadata(entry.path()).ok(); // follow the link
+            (lm, tm)
+        } else {
+            let m = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            // Non-symlink: target == entry, so target_meta is not needed separately.
+            (m, None)
+        };
+
+        // Determine effective kind from the target (or entry itself for non-symlinks).
+        // `link_meta` covers non-symlinks and is used as fallback for broken symlinks.
+        let effective_meta = target_meta.as_ref().unwrap_or(&link_meta);
 
         // Determine effective kind from the target.  Broken symlinks are shown
         // as files (type inferred from the link name's extension).
-        let effective_is_dir = target_meta.as_ref().is_some_and(|m| m.is_dir());
-        let effective_is_file = target_meta.as_ref().is_some_and(|m| m.is_file())
-            || (is_symlink && target_meta.is_none());
+        let effective_is_dir = effective_meta.is_dir() && !(is_symlink && target_meta.is_none());
+        let effective_is_file = effective_meta.is_file() || (is_symlink && target_meta.is_none());
 
         if effective_is_dir {
             // For a symlinked directory use the canonical path for tag-count
@@ -946,11 +964,12 @@ pub async fn api_files(
         } else if effective_is_file {
             let rel_path = format!("{}{}", prefix, name);
 
-            // Size and mtime come from the target when available.
-            let size = target_meta.as_ref().map(|m| m.len() as i64);
-            let mtime = target_meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
+            // Size and mtime come from the effective metadata (target for symlinks,
+            // or entry itself for regular files).
+            let size = Some(effective_meta.len() as i64);
+            let mtime = effective_meta
+                .modified()
+                .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_nanos() as i64);
 
