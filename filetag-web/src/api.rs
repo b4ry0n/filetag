@@ -900,50 +900,26 @@ pub async fn api_files(
             continue;
         }
 
-        // Determine whether the entry is a symlink.  `DirEntry::file_type()`
-        // uses the `d_type` field from the kernel's readdir buffer on Linux/macOS
-        // (O(1), no extra syscall on most filesystems) and falls back to
-        // `lstat()` only when `d_type` is unavailable (e.g. some NFS mounts).
+        // `DirEntry::file_type()` reads the `d_type` field returned by the
+        // kernel's readdir buffer — O(1), no extra syscall on most filesystems
+        // (including NFS with `d_type` support).  Falls back to `lstat()` only
+        // when `d_type` is DT_UNKNOWN (some older NFS mounts, tmpfs, etc.).
         let entry_ft = match entry.file_type() {
             Ok(ft) => ft,
             Err(_) => continue,
         };
         let is_symlink = entry_ft.is_symlink();
 
-        // For symlinks we need two stats: lstat (to confirm it's a symlink) and
-        // stat (to follow the link to the target).  For regular files and
-        // directories we only need one stat via entry.metadata() — this avoids
-        // a second syscall/network round-trip per entry on NFS/SMB shares.
-        let (link_meta, target_meta) = if is_symlink {
-            let lm = match std::fs::symlink_metadata(entry.path()) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let tm = std::fs::metadata(entry.path()).ok(); // follow the link
-            (lm, tm)
-        } else {
-            let m = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            // Non-symlink: target == entry, so target_meta is not needed separately.
-            (m, None)
-        };
+        if is_symlink {
+            // Symlinks: one stat() call to follow the link and learn about the
+            // target.  This is unavoidable but symlinks are rare in practice.
+            let tm = std::fs::metadata(entry.path()).ok(); // stat(), follows link
+            let target_is_dir = tm.as_ref().is_some_and(|m| m.is_dir());
+            // Broken symlinks (tm == None) are treated as files.
+            let target_is_file = tm.as_ref().is_some_and(|m| m.is_file()) || tm.is_none();
 
-        // Determine effective kind from the target (or entry itself for non-symlinks).
-        // `link_meta` covers non-symlinks and is used as fallback for broken symlinks.
-        let effective_meta = target_meta.as_ref().unwrap_or(&link_meta);
-
-        // Determine effective kind from the target.  Broken symlinks are shown
-        // as files (type inferred from the link name's extension).
-        let effective_is_dir = effective_meta.is_dir() && !(is_symlink && target_meta.is_none());
-        let effective_is_file = effective_meta.is_file() || (is_symlink && target_meta.is_none());
-
-        if effective_is_dir {
-            // For a symlinked directory use the canonical path for tag-count
-            // queries so that tags on the real directory are reflected.
-            let dir_db_path = if is_symlink {
-                entry
+            if target_is_dir {
+                let db_path = entry
                     .path()
                     .canonicalize()
                     .ok()
@@ -952,31 +928,20 @@ pub async fn api_files(
                             .ok()
                             .map(|r| r.to_string_lossy().into_owned())
                     })
-                    .unwrap_or_else(|| format!("{}{}", prefix, name))
-            } else {
-                format!("{}{}", prefix, name)
-            };
-            raw_dirs.push(RawDir {
-                name,
-                is_symlink,
-                db_path: dir_db_path,
-            });
-        } else if effective_is_file {
-            let rel_path = format!("{}{}", prefix, name);
-
-            // Size and mtime come from the effective metadata (target for symlinks,
-            // or entry itself for regular files).
-            let size = Some(effective_meta.len() as i64);
-            let mtime = effective_meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i64);
-
-            // For symlinks, resolve to the canonical path for DB lookups.
-            // Tags are stored under the real file's path because all write
-            // operations canonicalise before hitting the DB.
-            let (db_lookup_path, covered_path, check_covered) = if is_symlink {
+                    .unwrap_or_else(|| format!("{}{}", prefix, name));
+                raw_dirs.push(RawDir {
+                    name,
+                    is_symlink: true,
+                    db_path,
+                });
+            } else if target_is_file {
+                let rel_path = format!("{}{}", prefix, name);
+                let size = tm.as_ref().map(|m| m.len() as i64);
+                let mtime = tm
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos() as i64);
                 let canonical_opt = entry.path().canonicalize().ok();
                 let canon_rel = canonical_opt
                     .as_deref()
@@ -984,23 +949,44 @@ pub async fn api_files(
                     .map(|r| r.to_string_lossy().into_owned())
                     .unwrap_or_else(|| rel_path.clone());
                 let canon_abs = canonical_opt.unwrap_or_else(|| entry.path());
-                // Symlink targets may lie outside the database root or even on a
-                // different filesystem, so they need individual coverage checks.
-                (canon_rel, canon_abs, true)
-            } else {
-                // Regular files in this directory always have the same device/root
-                // as abs_dir; reuse dir_covered — no per-file stat() call needed.
-                (rel_path.clone(), entry.path(), false)
-            };
-
+                raw_files.push(RawFile {
+                    name,
+                    is_symlink: true,
+                    db_path: canon_rel,
+                    covered_path: canon_abs,
+                    check_covered: true,
+                    size,
+                    mtime,
+                });
+            }
+        } else if entry_ft.is_dir() {
+            // Regular directory — no stat() needed.
+            raw_dirs.push(RawDir {
+                db_path: format!("{}{}", prefix, name),
+                name,
+                is_symlink: false,
+            });
+        } else if entry_ft.is_file() {
+            // Regular file — deliberately skip stat() / entry.metadata().
+            //
+            // On NFS and SMB shares every metadata() call is a separate network
+            // round-trip (an individual GETATTR or stat RPC per file).  For a
+            // directory with thousands of entries this is the dominant cost: a
+            // directory with 4 000 files × ~40 ms per NFS round-trip = ~2.5 min.
+            //
+            // Size and mtime are returned as null (shown as '—' / '' in the UI).
+            // Non-symlink regular files in the same directory are always covered
+            // by the same database root as `abs_dir`, so `dir_covered` is reused
+            // without a per-file check.
+            let rel_path = format!("{}{}", prefix, name);
             raw_files.push(RawFile {
                 name,
-                is_symlink,
-                db_path: db_lookup_path,
-                covered_path,
-                check_covered,
-                size,
-                mtime,
+                is_symlink: false,
+                db_path: rel_path.clone(),
+                covered_path: entry.path(),
+                check_covered: false,
+                size: None,
+                mtime: None,
             });
         }
     }
