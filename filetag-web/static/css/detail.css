@@ -41,8 +41,9 @@
     cursor: pointer;
     z-index: 21;
 }
-/* img and video: size to intrinsic dimensions, clamped to container.
- * .detail-preview has height:55vh so max-height:100% resolves correctly. */
+/* img: constrained by width (landscape) or height (portrait); auto on the other
+ * axis lets the browser scale proportionally. max-height uses vh directly so it
+ * always resolves regardless of intermediate wrapper chains. */
 .detail-preview img,
 .detail-preview video {
     width: auto;
@@ -51,7 +52,7 @@
     max-height: 55vh;
     object-fit: contain;
     display: block;
-    margin: 0 auto;
+    cursor: pointer;
     background: #000;
     transition: transform 0.2s;
     user-select: none;
@@ -233,15 +234,11 @@
 
 
 
-/* Clickable preview hint — shrinks to the image size, not full container width */
+/* preview-zoomable is a click-target only; display:contents removes its box
+ * so children lay out directly inside .detail-preview (or .face-preview-wrap).
+ * onclick and DOM position are preserved — only the visual box disappears. */
 .detail-preview .preview-zoomable {
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    max-width: 100%;
-    max-height: 100%;
-    position: relative;
+    display: contents;
 }
 
 /* Text / code preview */

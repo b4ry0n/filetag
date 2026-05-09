@@ -2,10 +2,12 @@
    Face detection UI styles
    --------------------------------------------------------------------------- */
 
-/* Wrapper around the preview image that allows absolute-positioned overlays */
+/* Wrapper around the preview image that allows absolute-positioned overlays.
+ * max-width:100% prevents landscape images from overflowing the flex container. */
 .face-preview-wrap {
     position: relative;
     display: inline-block;
+    max-width: 100%;
     line-height: 0;
 }
 
