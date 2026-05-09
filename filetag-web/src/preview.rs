@@ -1604,7 +1604,10 @@ fn find_cover_image(dir: &Path) -> Option<PathBuf> {
                     };
                     // Check hidden/plain prefix.
                     let candidate_stem = if hidden {
-                        name_stem.strip_prefix('.')?
+                        let Some(s) = name_stem.strip_prefix('.') else {
+                            continue;
+                        };
+                        s
                     } else {
                         if name_stem.starts_with('.') {
                             continue;
