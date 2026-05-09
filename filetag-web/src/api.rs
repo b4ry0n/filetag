@@ -857,11 +857,9 @@ pub async fn api_files(
 
     let conn = open_conn(db_root)?;
 
-    // Pre-compute whether the current directory itself is covered by a database
-    // root.  All non-symlink files in this directory share the same device and
-    // are under the same root, so they can reuse this single result instead of
-    // each calling file_is_covered() (which does a stat() syscall per file —
-    // extremely expensive on NFS/SMB network shares with thousands of entries).
+    // Pre-compute covered status for the current directory.  Regular files
+    // inherit this value; only symlinks whose target may lie outside the root
+    // need an individual file_is_covered() check.
     let dir_covered = file_is_covered(&state, abs_dir);
 
     // Phase 1: collect raw entries from the filesystem in a single read_dir
@@ -878,10 +876,8 @@ pub async fn api_files(
         is_symlink: bool,
         db_path: String,
         covered_path: std::path::PathBuf,
-        /// True when `covered_path` is a symlink target that may lie outside the
-        /// current root; in that case `file_is_covered` must be called individually.
-        /// For regular (non-symlink) files this is always false: they inherit
-        /// `dir_covered` and never need a per-file stat() call.
+        /// True when `covered_path` is a symlink target that may lie outside
+        /// the current root; regular files always use `dir_covered`.
         check_covered: bool,
         size: Option<i64>,
         mtime: Option<i64>,
@@ -902,10 +898,8 @@ pub async fn api_files(
             continue;
         }
 
-        // One metadata() call per entry gives us type, size and mtime.
-        // On NFSv4 the kernel serves this from the readdir attr cache
-        // (no extra RPC).  symlink_metadata() does not follow the link so
-        // we can detect symlinks reliably.
+        // symlink_metadata() gives us type, size and mtime without following
+        // symlinks, so we can detect them reliably.
         let lmeta = match entry.path().symlink_metadata() {
             Ok(m) => m,
             Err(_) => continue,
@@ -986,23 +980,16 @@ pub async fn api_files(
         }
     }
 
-    // Phase 2: single batch query for all tag counts (replaces N+1 queries).
-    // Use unwrap_or_default so that a transient DB error (e.g. SQLITE_BUSY on a
-    // network share) silently falls back to showing 0 tags rather than returning
-    // HTTP 500 and leaving the page blank — matching the old per-entry behaviour.
+    // Phase 2: single batch query for all tag counts.
     let all_db_paths: Vec<String> = raw_dirs
         .iter()
         .map(|d| d.db_path.clone())
         .chain(raw_files.iter().map(|f| f.db_path.clone()))
         .collect();
-    let tag_counts = batch_tag_counts(&conn, &all_db_paths).unwrap_or_default();
+    let tag_counts = batch_tag_counts(&conn, &all_db_paths)?;
 
     // Phase 3: build ApiDirEntry structs from the collected data.
-    //
-    // For directories we count direct (non-hidden) children with a single
-    // read_dir() call per subdirectory.  On NFSv4 the kernel serves these
-    // from the attr cache; on NFSv3 each call is one READDIR RPC.  We
-    // use flatten() + count() so we never call file_type() per child entry.
+    // Count direct (non-hidden) children for each subdirectory.
     let mut dirs: Vec<ApiDirEntry> = raw_dirs
         .into_iter()
         .map(|d| {
@@ -1036,6 +1023,8 @@ pub async fn api_files(
             // this directory inherit dir_covered (same device/root as abs_dir).
             // Only symlinks whose target might lie outside the root need an
             // individual file_is_covered() check.
+            // Symlinks may point outside the current root, so check individually.
+            // Regular files inherit dir_covered (same filesystem as abs_dir).
             let covered = if f.check_covered {
                 file_is_covered(&state, &f.covered_path)
             } else {

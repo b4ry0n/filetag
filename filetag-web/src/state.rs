@@ -218,14 +218,8 @@ impl From<rusqlite::Error> for AppError {
 // Database connection helpers
 // ---------------------------------------------------------------------------
 
-/// Open a connection to a known database root.  Sets WAL mode, foreign keys,
-/// and a generous busy timeout.  Suitable for settings/config reads and any
-/// operation that targets the root DB itself.
-///
-/// Does NOT run migrations — those already ran at server startup via
-/// `open_root_db`.  Skipping migration avoids the exclusive-lock overhead on
-/// every request, which is especially important on network filesystems where
-/// each lock operation costs hundreds of milliseconds.
+/// Open a connection to a known database root without running migrations.
+/// Use for settings/config reads and any operation targeting the root DB.
 pub fn open_conn(db_root: &TagRoot) -> anyhow::Result<Connection> {
     db::open_db_fast(&db_root.db_path).context("opening database")
 }

@@ -184,11 +184,11 @@ pub fn find_and_open_fast(start: &Path) -> Result<(Connection, PathBuf)> {
     Ok((conn, root))
 }
 
-fn open_at(path: &Path) -> Result<Connection> {
-    let conn =
-        Connection::open(path).with_context(|| format!("opening database {}", path.display()))?;
-    // Set busy_timeout FIRST so it applies to the subsequent PRAGMA operations
-    // (including the WAL switch, which briefly needs an exclusive lock).
+/// Open an existing, already-migrated database without running migrations.
+/// Use this for every read/write request after server startup.
+pub fn open_db_fast(db_path: &Path) -> Result<Connection> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("opening database {}", db_path.display()))?;
     conn.execute_batch(
         "PRAGMA busy_timeout = 5000;
          PRAGMA journal_mode = WAL;
@@ -198,15 +198,8 @@ fn open_at(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Open an existing, already-migrated database directly without running
-/// migrations.  Use this for every read/write request after server startup:
-/// it avoids the exclusive-lock overhead of `migrate()` on every connection,
-/// which is critical for performance on network filesystems (SMB/NFS).
-///
-/// Only call `open_root_db` (which runs migrations) when you intentionally
-/// need to apply schema upgrades, e.g. at server startup.
-pub fn open_db_fast(db_path: &Path) -> Result<Connection> {
-    open_at(db_path)
+fn open_at(path: &Path) -> Result<Connection> {
+    open_db_fast(path)
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
