@@ -3,11 +3,10 @@
    --------------------------------------------------------------------------- */
 
 /* Wrapper around the preview image that allows absolute-positioned overlays.
- * max-width:100% prevents landscape images from overflowing the flex container. */
+ * Wraps only the <img> element; sized to the img's rendered dimensions. */
 .face-preview-wrap {
     position: relative;
     display: inline-block;
-    max-width: 100%;
     line-height: 0;
 }
 
@@ -20,8 +19,7 @@
 
 .face-preview-wrap img {
     display: block;
-    max-width: 100%;
-    max-height: 55vh;
+    /* max-height controlled by .detail-preview img in detail.css */
 }
 
 /* In the viewer, restore the cv-page height constraint so the image

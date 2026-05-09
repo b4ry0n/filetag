@@ -517,7 +517,9 @@ function _faceRenderOverlays(path) {
     }
 }
 
-/** Wrap the .preview-zoomable anchor's img inside a .face-preview-wrap div. */
+/** Wrap the preview img inside a .face-preview-wrap div for face-box overlays.
+ * Only the <img> is wrapped — .preview-zoomable keeps its own box as the
+ * position:relative anchor for the hover-zone overlay. */
 function _faceWrapPreviewImg() {
     // Check if already wrapped
     if (document.querySelector('.face-preview-wrap')) return;
@@ -528,8 +530,8 @@ function _faceWrapPreviewImg() {
 
     const wrap = document.createElement('div');
     wrap.className = 'face-preview-wrap';
-    anchor.parentNode.insertBefore(wrap, anchor);
-    wrap.appendChild(anchor);
+    img.parentNode.insertBefore(wrap, img);
+    wrap.appendChild(img);
 }
 
 /** Refresh only the face toolbar div without rebuilding the full detail panel. */
@@ -538,6 +540,18 @@ function _faceRefreshDetailControls(path) {
     if (!el) return;
     el.innerHTML = faceDetailToolbar(path);
 }
+
+// ---------------------------------------------------------------------------
+// Re-render face boxes when the viewport size changes (e.g. window resize
+// changes vh, or the user resizes the browser). Debounced to 150 ms.
+// ---------------------------------------------------------------------------
+
+let _faceDetailResizeTimer = null;
+window.addEventListener('resize', () => {
+    if (!state.faceDetections || !state.faceDetections.length || !state.faceDetectionsPath) return;
+    clearTimeout(_faceDetailResizeTimer);
+    _faceDetailResizeTimer = setTimeout(() => _faceRenderOverlays(state.faceDetectionsPath), 150);
+});
 
 // ---------------------------------------------------------------------------
 // Assign dialog
