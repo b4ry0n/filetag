@@ -218,14 +218,16 @@ impl From<rusqlite::Error> for AppError {
 // Database connection helpers
 // ---------------------------------------------------------------------------
 
-/// Open a connection to a known database root. Sets WAL mode, foreign keys,
-/// and a generous busy timeout. Suitable for settings/config reads and any
+/// Open a connection to a known database root.  Sets WAL mode, foreign keys,
+/// and a generous busy timeout.  Suitable for settings/config reads and any
 /// operation that targets the root DB itself.
+///
+/// Does NOT run migrations — those already ran at server startup via
+/// `open_root_db`.  Skipping migration avoids the exclusive-lock overhead on
+/// every request, which is especially important on network filesystems where
+/// each lock operation costs hundreds of milliseconds.
 pub fn open_conn(db_root: &TagRoot) -> anyhow::Result<Connection> {
-    // Use open_root_db so that pending schema migrations are always applied
-    // before any query runs (avoids "no such column" errors on older DBs).
-    let (conn, _) = db::open_root_db(&db_root.root).context("opening database")?;
-    Ok(conn)
+    db::open_db_fast(&db_root.db_path).context("opening database")
 }
 
 /// The ONE sanctioned way to open a database for any operation that reads or
@@ -264,7 +266,7 @@ pub fn open_for_file_op_under(
     };
 
     let start = fs_path.parent().unwrap_or(&fs_path);
-    let (conn, effective_root) = db::find_and_open(start)?;
+    let (conn, effective_root) = db::find_and_open_fast(start)?;
 
     // Compute the path relative to the found (child) database root.
     let effective_rel = if let Some(entry) = path.split_once("::").map(|(_, e)| e) {

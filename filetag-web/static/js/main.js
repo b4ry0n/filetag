@@ -296,13 +296,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // target.  When currentBasePath is null (first visit with multiple roots,
     // no session) the backend requires a `dir` parameter and will return 400.
     // These calls will be retried below once loadFiles() has resolved the root.
+    // Run sequentially rather than in parallel to avoid simultaneous SQLite
+    // lock contention on network shares (SMB/NFS), where each concurrent open
+    // causes dozens of extra round-trips due to WAL locking overhead.
     const _hadContext = currentAbsDir() != null;
-    await Promise.all([
-        _hadContext ? loadInfo().catch(e => console.error('loadInfo failed:', e)) : Promise.resolve(),
-        _hadContext ? loadTags().catch(e => console.error('loadTags failed:', e)) : Promise.resolve(),
-        _hadContext ? loadSettings().catch(() => {}) : Promise.resolve(),
-        loadAuthStatus(),
-    ]);
+    await loadAuthStatus();
+    if (_hadContext) {
+        await loadInfo().catch(e => console.error('loadInfo failed:', e));
+        await loadTags().catch(e => console.error('loadTags failed:', e));
+        await loadSettings().catch(() => {});
+    }
     if (_hadContext && typeof loadFaceConfig === 'function') {
         Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
     }
@@ -340,11 +343,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // If db-specific data was not loaded before loadFiles (no context at startup),
     // load it now that currentBasePath has been resolved from the server response.
     if (!_hadContext && currentAbsDir() != null) {
-        await Promise.all([
-            loadInfo().catch(e => console.error('loadInfo failed:', e)),
-            loadTags().catch(e => console.error('loadTags failed:', e)),
-            loadSettings().catch(() => {}),
-        ]);
+        await loadInfo().catch(e => console.error('loadInfo failed:', e));
+        await loadTags().catch(e => console.error('loadTags failed:', e));
+        await loadSettings().catch(() => {});
         if (typeof loadFaceConfig === 'function') {
             Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
         }
