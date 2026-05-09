@@ -900,10 +900,52 @@ pub async fn api_files(
             continue;
         }
 
-        // `DirEntry::file_type()` reads the `d_type` field returned by the
-        // kernel's readdir buffer — O(1), no extra syscall on most filesystems
-        // (including NFS with `d_type` support).  Falls back to `lstat()` only
-        // when `d_type` is DT_UNKNOWN (some older NFS mounts, tmpfs, etc.).
+        // ---------------------------------------------------------------
+        // FAST PATH — skip file_type() entirely for entries with a file
+        // extension.
+        //
+        // Root cause of the 3-minute load time:
+        //   On NFS v3 (without READDIRPLUS) and some SMB mounts the kernel's
+        //   readdir buffer does not populate d_type (returns DT_UNKNOWN for
+        //   every entry).  When that happens, entry.file_type() falls back to
+        //   a separate lstat() RPC per entry.
+        //   4 000 files × ~40 ms/RPC = ~160 s ≈ 3 minutes.
+        //
+        // Observation: directory names practically never carry a file extension.
+        // Any entry whose name contains a non-terminal dot (e.g. "file.cbz",
+        // "photo.jpg") is therefore almost certainly a regular file.
+        //
+        // We detect this with a single pass over the name string — zero syscalls.
+        // The fast path deliberately does NOT check for symlinks; symlinks whose
+        // names carry an extension are treated as regular files.  Their tags
+        // remain accessible via the relative path.
+        //
+        // Known limitation: a directory named "Music.Old" would be misclassified
+        // as a file.  This edge case is rare in practice.
+        // ---------------------------------------------------------------
+        let skip = usize::from(name.starts_with('.'));
+        if let Some(d) = name[skip..].rfind('.').map(|i| i + skip)
+            && d + 1 < name.len()
+        {
+            // Non-terminal dot → has file extension → fast path.
+            let rel = format!("{}{}", prefix, name);
+            raw_files.push(RawFile {
+                name,
+                is_symlink: false,
+                db_path: rel.clone(),
+                covered_path: entry.path(),
+                check_covered: false,
+                size: None,
+                mtime: None,
+            });
+            continue;
+        }
+
+        // ---------------------------------------------------------------
+        // SLOW PATH — entries without a file extension (typically dirs).
+        // file_type() may call lstat() here, but there are few such entries
+        // in a typical media library so the overhead stays low.
+        // ---------------------------------------------------------------
         let entry_ft = match entry.file_type() {
             Ok(ft) => ft,
             Err(_) => continue,
@@ -960,29 +1002,18 @@ pub async fn api_files(
                 });
             }
         } else if entry_ft.is_dir() {
-            // Regular directory — no stat() needed.
             raw_dirs.push(RawDir {
                 db_path: format!("{}{}", prefix, name),
                 name,
                 is_symlink: false,
             });
         } else if entry_ft.is_file() {
-            // Regular file — deliberately skip stat() / entry.metadata().
-            //
-            // On NFS and SMB shares every metadata() call is a separate network
-            // round-trip (an individual GETATTR or stat RPC per file).  For a
-            // directory with thousands of entries this is the dominant cost: a
-            // directory with 4 000 files × ~40 ms per NFS round-trip = ~2.5 min.
-            //
-            // Size and mtime are returned as null (shown as '—' / '' in the UI).
-            // Non-symlink regular files in the same directory are always covered
-            // by the same database root as `abs_dir`, so `dir_covered` is reused
-            // without a per-file check.
-            let rel_path = format!("{}{}", prefix, name);
+            // Extensionless regular file (Makefile, README, etc.).
+            let rel = format!("{}{}", prefix, name);
             raw_files.push(RawFile {
                 name,
                 is_symlink: false,
-                db_path: rel_path.clone(),
+                db_path: rel.clone(),
                 covered_path: entry.path(),
                 check_covered: false,
                 size: None,
