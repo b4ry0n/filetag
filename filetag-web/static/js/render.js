@@ -294,7 +294,7 @@ function renderList(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">`
+                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${dirSymlinkSuffix}</span>
                     <span class="size">${size}</span>
