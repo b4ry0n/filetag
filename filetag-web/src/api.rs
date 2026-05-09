@@ -970,12 +970,15 @@ pub async fn api_files(
     }
 
     // Phase 2: single batch query for all tag counts (replaces N+1 queries).
+    // Use unwrap_or_default so that a transient DB error (e.g. SQLITE_BUSY on a
+    // network share) silently falls back to showing 0 tags rather than returning
+    // HTTP 500 and leaving the page blank — matching the old per-entry behaviour.
     let all_db_paths: Vec<String> = raw_dirs
         .iter()
         .map(|d| d.db_path.clone())
         .chain(raw_files.iter().map(|f| f.db_path.clone()))
         .collect();
-    let tag_counts = batch_tag_counts(&conn, &all_db_paths)?;
+    let tag_counts = batch_tag_counts(&conn, &all_db_paths).unwrap_or_default();
 
     // Phase 3: build ApiDirEntry structs from the collected data.
     let mut dirs: Vec<ApiDirEntry> = raw_dirs
