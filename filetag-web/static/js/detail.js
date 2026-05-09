@@ -907,8 +907,8 @@ async function _thumbFetchOne(el) {
                 _thumbSalient.set(url, { cx: parseFloat(salientCx), cy: parseFloat(salientCy) });
             }
             if (el.isConnected) _thumbReplace(el, url);
-        } else if (resp.status === 503) {
-            // Server busy: re-queue at back with a short delay.
+        } else if (resp.status === 202 || resp.status === 503) {
+            // Server busy (queue full) or still generating: re-queue after a short delay.
             await new Promise(resolve => setTimeout(resolve, 250));
             if (el.isConnected) {
                 _thumbQueue.push(el);

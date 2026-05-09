@@ -1127,7 +1127,7 @@ async fn thumb_archive_entry(
     let _permit = match THUMB_LIMITER.try_acquire() {
         Ok(p) => p,
         Err(_) => {
-            return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+            return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
         }
     };
 
@@ -1250,8 +1250,7 @@ pub async fn thumb_handler(
                 let _permit = match THUMB_LIMITER.try_acquire() {
                     Ok(p) => p,
                     Err(_) => {
-                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
-                            .into_response();
+                        return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
                     }
                 };
                 let abs2 = abs.clone();
@@ -1390,8 +1389,7 @@ pub async fn thumb_handler(
                 let _permit = match THUMB_LIMITER.try_acquire() {
                     Ok(p) => p,
                     Err(_) => {
-                        return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full")
-                            .into_response();
+                        return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
                     }
                 };
                 if let Some(data) = image_thumb_jpeg(&abs, features).await {
@@ -1456,7 +1454,7 @@ where
         let _permit = match THUMB_LIMITER.try_acquire() {
             Ok(p) => p,
             Err(_) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+                return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
             }
         };
         if let Some(data) = generate(abs).await {

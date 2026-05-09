@@ -352,7 +352,7 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
     let _permit = match THUMB_LIMITER.try_acquire() {
         Ok(p) => p,
         Err(_) => {
-            return (StatusCode::SERVICE_UNAVAILABLE, "thumbnail queue full").into_response();
+            return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
         }
     };
 
@@ -879,7 +879,7 @@ pub async fn api_vthumbs(
         let _permit = match VTHUMB_LIMITER.try_acquire() {
             Ok(p) => p,
             Err(_) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "vthumb queue full").into_response();
+                return (StatusCode::ACCEPTED, "vthumb queue full").into_response();
             }
         };
 
