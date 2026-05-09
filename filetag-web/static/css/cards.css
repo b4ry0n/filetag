@@ -219,6 +219,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Push the visual centre up so the icon sits in the area above
+     * the card-body label, not in the middle of the full card height */
+    padding-bottom: calc(var(--card-size, 140px) * 0.32);
+    box-sizing: border-box;
+    color: #888;
 }
 
 .card-icon svg {
@@ -275,7 +280,6 @@
 
 /* Folder cards */
 .card.folder .card-preview { background: transparent; }
-.card.folder .card-icon { color: #fab005; }
 
 /*
  * Inline directory sprite: fills the card-preview just like an image thumbnail.
