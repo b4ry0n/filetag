@@ -1607,10 +1607,7 @@ pub async fn api_face_analyse(
     let (rows, img_w, img_h) = tokio::time::timeout(
         std::time::Duration::from_secs(120),
         tokio::task::spawn_blocking(move || {
-            eprintln!("face: starting analyse_file_sync for {rel_clone}");
-            let r = analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg);
-            eprintln!("face: analyse_file_sync done for {rel_clone}");
-            r
+            analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg)
         }),
     )
     .await
