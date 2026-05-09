@@ -265,9 +265,16 @@ function renderGrid(items) {
 // ---------------------------------------------------------------------------
 
 function renderList(items) {
-    let html = `<div class="list-header">
+    return `<div class="list-header">
         <span></span><span>Name</span><span>Size</span><span>Modified</span><span>Tags</span>
-    </div>`;
+    </div>` + _renderListRows(items);
+}
+
+// Render list rows without the header.  Used by renderList and by the
+// chunked-rendering path in renderContent so that the header is only
+// emitted once (with the first chunk).
+function _renderListRows(items) {
+    let html = '';
 
     for (const entry of items) {
         const isDir = entry.is_dir;
@@ -462,7 +469,19 @@ function _gridClass(base) {
     return base;
 }
 
+// Generation counter: incremented before every render so that background
+// chunks that belong to a superseded navigation detect it and stop.
+let _renderGen = 0;
+
+// Items rendered synchronously (first paint) and per subsequent chunk.
+const _RENDER_INITIAL = 60;
+const _RENDER_CHUNK   = 100;
+
 function renderContent() {
+    // Bump generation so any pending chunks from a previous renderContent call stop.
+    _renderGen++;
+    const myGen = _renderGen;
+
     // Remove any floating directory trickplay overlays left over from the
     // previous render (e.g. when the user double-clicks into a directory
     // before the mouse-leave event fires).
@@ -519,23 +538,61 @@ function renderContent() {
         }))
         : items;
 
+    // Pre-sort: dirs first, then files — mirrors renderGrid's internal sort and
+    // lets us pass correct slices to both grid and list chunked rendering.
+    const _dirs  = displayItems.filter(e =>  e.is_dir);
+    const _files = displayItems.filter(e => !e.is_dir);
+    const sorted = [..._dirs, ..._files];
 
+    // Entry count is known immediately — set it before the first paint.
+    const _parts = [];
+    if (_dirs.length  > 0) _parts.push(`${_dirs.length} folder${_dirs.length === 1 ? '' : 's'}`);
+    if (_files.length > 0) _parts.push(`${_files.length} file${_files.length === 1 ? '' : 's'}`);
+    document.getElementById('entry-count').textContent = _parts.join(', ');
 
-    if (state.viewMode === 'grid') {
+    const isGrid = state.viewMode === 'grid';
+
+    // --- First paint: render up to _RENDER_INITIAL items synchronously ---
+    if (isGrid) {
         el.className = _gridClass('file-grid');
-        el.innerHTML = renderGrid(displayItems);
+        // renderGrid re-sorts internally; pre-sorted slice keeps dirs-first order.
+        el.innerHTML = renderGrid(sorted.slice(0, _RENDER_INITIAL));
     } else {
         el.className = _gridClass('file-list');
-        el.innerHTML = renderList(displayItems);
+        // Header emitted once; _renderListRows renders rows in order.
+        el.innerHTML = `<div class="list-header">
+        <span></span><span>Name</span><span>Size</span><span>Modified</span><span>Tags</span>
+    </div>` + _renderListRows(sorted.slice(0, _RENDER_INITIAL));
     }
-    // Trigger dir-thumb pool after each content render.
-    setTimeout(_dirThumbSchedule, 200);
 
-    // Entry count
-    const dirs = displayItems.filter(e => e.is_dir).length;
-    const files = displayItems.filter(e => !e.is_dir).length;
-    const parts = [];
-    if (dirs > 0) parts.push(`${dirs} folder${dirs === 1 ? '' : 's'}`);
-    if (files > 0) parts.push(`${files} file${files === 1 ? '' : 's'}`);
-    document.getElementById('entry-count').textContent = parts.join(', ');
+    if (sorted.length <= _RENDER_INITIAL) {
+        // Everything fits in the first paint — schedule thumbnails and done.
+        setTimeout(_dirThumbSchedule, 200);
+        return;
+    }
+
+    // --- Background chunks: append remaining items without blocking the UI ---
+    let _offset = _RENDER_INITIAL;
+    function _appendChunk() {
+        if (_renderGen !== myGen) return; // user navigated away; discard stale chunk
+        const chunk = sorted.slice(_offset, _offset + _RENDER_CHUNK);
+        if (!chunk.length) {
+            // All items appended — kick off thumbnail loading.
+            setTimeout(_dirThumbSchedule, 0);
+            return;
+        }
+        const tmp = document.createElement('div');
+        tmp.innerHTML = isGrid ? renderGrid(chunk) : _renderListRows(chunk);
+        // Append via DocumentFragment for a single reflow.
+        const frag = document.createDocumentFragment();
+        while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+        el.appendChild(frag);
+        _offset += _RENDER_CHUNK;
+        // Yield to the browser so it can paint the newly appended chunk before
+        // we render the next one.  setTimeout(fn, 0) achieves this reliably.
+        setTimeout(_appendChunk, 0);
+    }
+    // Trigger thumbnail loading for the first batch while chunks queue up.
+    setTimeout(_dirThumbSchedule, 200);
+    setTimeout(_appendChunk, 0);
 }

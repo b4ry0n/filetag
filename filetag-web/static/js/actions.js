@@ -157,6 +157,14 @@ async function enterRoot(rootPath) {
     state.activeTags.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
+
+    // Show spinner immediately so the user gets feedback before the server responds.
+    const _contentEl = document.getElementById('content');
+    if (_contentEl) {
+        _contentEl.className = '';
+        _contentEl.innerHTML = '<div class="nav-loading"><div class="nav-loading-spinner"></div></div>';
+    }
+
     await Promise.all([loadInfo(), loadTags(), loadFiles(''), loadSettings()]);
     render();
 }
@@ -176,6 +184,14 @@ async function goVirtualRoot() {
     state.info = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
+
+    // Show spinner immediately.
+    const _contentEl = document.getElementById('content');
+    if (_contentEl) {
+        _contentEl.className = '';
+        _contentEl.innerHTML = '<div class="nav-loading"><div class="nav-loading-spinner"></div></div>';
+    }
+
     await loadFiles('');
     render();
 }
