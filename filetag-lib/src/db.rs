@@ -1857,6 +1857,18 @@ pub fn collect_all_databases(
         let linked = list_linked(&c).unwrap_or_default();
         for linked_db in linked {
             let linked_root = r.join(&linked_db.path);
+            // Canonicaliseer de path om .. componenten op te lossen
+            let linked_root = match std::fs::canonicalize(&linked_root) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!(
+                        "warning: skipping linked database {}: {}",
+                        linked_root.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
             let linked_db_path = linked_root.join(DB_DIR).join(DB_FILE);
             match open_at(&linked_db_path) {
                 Ok(linked_conn) => {

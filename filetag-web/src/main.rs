@@ -105,11 +105,29 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 root.join(&entry.path)
             };
-            if let Ok(conn2) = Connection::open(abs.join(".filetag").join("db.sqlite3")) {
-                dbs.push(db::OpenDb {
-                    conn: conn2,
-                    root: abs,
-                });
+            // Canonicaliseer de path om .. componenten op te lossen
+            let abs = match std::fs::canonicalize(&abs) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("warning: skipping linked database {}: {}", entry.path, e);
+                    continue;
+                }
+            };
+            let db_path = abs.join(".filetag").join("db.sqlite3");
+            match Connection::open(&db_path) {
+                Ok(conn2) => {
+                    dbs.push(db::OpenDb {
+                        conn: conn2,
+                        root: abs,
+                    });
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: could not open linked database {}: {}",
+                        db_path.display(),
+                        e
+                    );
+                }
             }
         }
         dbs
@@ -539,11 +557,7 @@ async fn main() -> anyhow::Result<()> {
     // so the first user request does not pay the model-load cost.
     if face::models_ready() {
         tokio::spawn(async {
-            match tokio::task::spawn_blocking(face::load_models_cached_pub).await {
-                Ok(Ok(_)) => eprintln!("face models pre-warmed"),
-                Ok(Err(e)) => eprintln!("face model pre-warm failed: {e:#}"),
-                Err(e) => eprintln!("face model pre-warm task panicked: {e}"),
-            }
+            let _ = tokio::task::spawn_blocking(face::load_models_cached_pub).await;
         });
     }
 

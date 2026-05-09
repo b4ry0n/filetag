@@ -406,11 +406,8 @@ pub fn load_models() -> anyhow::Result<FaceModels> {
             .map_err(anyhow::Error::from)
     };
 
-    eprintln!("face: loading ONNX models …");
     let detector = mk_session(&detect_path)?;
-    eprintln!("face: detector loaded");
     let embedder = mk_session(&embed_path)?;
-    eprintln!("face: embedder loaded");
 
     Ok(FaceModels {
         detector: Mutex::new(detector),
