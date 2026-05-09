@@ -759,7 +759,13 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
 function renderTags() {
     const el = document.getElementById('tag-list');
     const hasPeople = typeof renderPeopleSection === 'function' && state.faceConfig != null;
-    if (!state.tags.length && (!state.subjects || !state.subjects.length) && !hasPeople) {
+    // Show "No tags" only when every section is both empty and hidden/disabled.
+    const anySectionEnabled = state.sectionVisibility.tags !== false
+        || state.sectionVisibility.subjects !== false
+        || state.sectionVisibility.ai !== false
+        || state.sectionVisibility.distribution !== false
+        || (state.sectionVisibility.people !== false && hasPeople);
+    if (!anySectionEnabled && !state.tags.length && (!state.subjects || !state.subjects.length) && !hasPeople) {
         el.innerHTML = '<div class="empty-state"><span class="empty-state-text">No tags</span></div>';
         return;
     }
@@ -823,13 +829,15 @@ function renderTags() {
         }
 
         // AI section (collapsed by default, auto-expands when filter matches AI tags).
+        // Show the section header even when aiNode is null (no ai/* tags yet) so
+        // that the section remains visible after the user enables it in the gear menu.
         let aiSectionHtml = '';
-        if (state.sectionVisibility.ai !== false && aiNode) {
+        if (state.sectionVisibility.ai !== false) {
             const aiSectionKey = '\x01section:ai';
-            const aiExpanded = state.expandedGroups.has(aiSectionKey) || aiHasFilterMatch;
-            const aiTotal = _nodeCount(aiNode);
-            const activeInAi = _anyDescendantActive(aiNode.children)
-                || (aiNode.tag && state.activeTags.has('ai'));
+            const aiExpanded = (state.expandedGroups.has(aiSectionKey) || aiHasFilterMatch) && !!aiNode;
+            const aiTotal = aiNode ? _nodeCount(aiNode) : 0;
+            const activeInAi = aiNode && (_anyDescendantActive(aiNode.children)
+                || (aiNode.tag && state.activeTags.has('ai')));
             const aiActiveClass = activeInAi ? ' active' : '';
             const aiBodyHtml = aiExpanded ? renderTagTreeNodes(aiNode.children, 0) : '';
             const chevronCls = aiExpanded ? '' : ' chevron-collapsed';
@@ -887,9 +895,10 @@ function renderTags() {
 
         // Determine which sections are expanded (have a body) for flex sizing.
         const _tagsExpanded     = state.sectionVisibility.tags !== false && !state.expandedGroups.has('\x01section:tags:hide');
-        const _subjectsExpanded = !!(visSubjectsHtml) && !state.expandedGroups.has('\x01section:subjects:hide');
+        // Subjects/AI only get expanded flex space when they have actual content (not just the empty header).
+        const _subjectsExpanded = !!(visSubjectsHtml) && !!(state.subjects && state.subjects.length) && !state.expandedGroups.has('\x01section:subjects:hide');
         const _peopleExpanded   = !!(visPeopleHtml) && !state.expandedGroups.has('\x01section:people:hide');
-        const _aiExpanded       = !!(visAiHtml) && (state.expandedGroups.has('\x01section:ai') || aiHasFilterMatch);
+        const _aiExpanded       = !!(visAiHtml) && !!aiNode && (state.expandedGroups.has('\x01section:ai') || aiHasFilterMatch);
         // Wrap HTML in a section-panel div; expanded sections get flex:1 to share space.
         function _sp(key, html, expanded) {
             if (!html) return '';
@@ -937,18 +946,19 @@ function renderTags() {
  * Uses the same visual language as tags.
  */
 function _renderSubjectsInline() {
-    if (!state.subjects || !state.subjects.length) return '';
+    const hasSubjects = state.subjects && state.subjects.length > 0;
     // Exclude auto-generated face cluster placeholders (e.g. person/unknown-5).
-    const visible = state.subjects.filter(s => !/\/unknown-\d+$/.test(s.name));
-    if (!visible.length) return '';
-    const subjectTags = visible.map(s => ({
-        name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
-    }));
-    const totalCount = visible.reduce((acc, s) => acc + (s.count || 0), 0);
-    const tree = buildTagTree(subjectTags);
+    const visible = hasSubjects
+        ? state.subjects.filter(s => !/\/unknown-\d+$/.test(s.name))
+        : [];
 
-    // In picker mode: always show expanded (user needs to pick a subject).
+    // In picker mode: always show the section (user needs to be able to pick/clear a subject).
     if (state.tagPickerMode) {
+        if (!visible.length) return '';
+        const subjectTags = visible.map(s => ({
+            name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
+        }));
+        const tree = buildTagTree(subjectTags);
         const noSubjActive = state.tagPickerSubject === null;
         const noSubjCls = 'tag-item picker-no-subject-zone' + (noSubjActive ? ' picker-checked' : '');
         const noSubjIndicator = noSubjActive
@@ -963,20 +973,32 @@ function _renderSubjectsInline() {
             + renderSubjectTreeNodes(tree, 0);
     }
 
+    // Normal mode: always render the section header so it remains visible when the
+    // user has enabled it in the gear menu, even if there are no subjects yet.
     const sectionKey = '\x01section:subjects:hide';
     const collapsed = state.expandedGroups.has(sectionKey);
     const chevronCls = collapsed ? ' chevron-collapsed' : '';
     const activeSubject = state.mode === 'search' && state.searchQuery
         && state.searchQuery.startsWith('subject:');
     const activeClass = activeSubject ? ' active' : '';
-    const bodyHtml = collapsed ? '' : renderSubjectTreeNodes(tree, 0);
+    const totalCount = visible.reduce((acc, s) => acc + (s.count || 0), 0);
+
+    let bodyHtml = '';
+    if (!collapsed && visible.length > 0) {
+        const subjectTags = visible.map(s => ({
+            name: s.name, count: s.count, color: null, synonyms: [], has_values: false,
+        }));
+        const tree = buildTagTree(subjectTags);
+        bodyHtml = renderSubjectTreeNodes(tree, 0);
+    }
+
     return `<div class="ai-section-divider${activeClass}" data-section-key="subjects" data-section-label="Subjects"
         onclick="openSectionExclusive('subjects', event)"
         ondragover="_sectionDragOver(event)" ondragleave="_sectionDragLeave(event)" ondrop="_sectionDrop(event,'subjects')">
         ${_sectionDragHandle('subjects')}
         <button class="section-chevron-btn" onclick="sectionChevronClick('subjects',event)" title="Toggle independently"><svg class="chevron-icon${chevronCls}" viewBox="0 0 12 12" width="12" height="12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         Subjects<span class="count">${totalCount}</span>
-    </div>${collapsed ? '' : `<div class="subjects-section-body">${bodyHtml}</div>`}`;
+    </div>${(!collapsed && bodyHtml) ? `<div class="subjects-section-body">${bodyHtml}</div>` : ''}`;
 }
 
 /**
