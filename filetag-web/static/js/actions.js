@@ -105,6 +105,15 @@ async function navigateTo(path) {
     if ('faceActivePerson' in state) state.faceActivePerson = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
+
+    // Show a spinner immediately so the user gets instant feedback that the
+    // double-click was registered, before the server responds.
+    const _contentEl = document.getElementById('content');
+    if (_contentEl) {
+        _contentEl.className = '';
+        _contentEl.innerHTML = '<div class="nav-loading"><div class="nav-loading-spinner"></div></div>';
+    }
+
     await loadFiles(path);
     _navPush(); // record this directory in the navigation history
     await loadSettings();
