@@ -110,6 +110,9 @@
 .detail-top {
     flex: none;
     height: var(--detail-top-height, auto);
+    /* Fallback max-height so auto mode can't push video controls outside
+     * the panel (clipped by .detail overflow:hidden). */
+    max-height: var(--detail-top-height, calc(100% - 60px));
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 60px;

@@ -538,14 +538,10 @@ function initDetailVHandle(el) {
     function snapOrSet(h) {
         const nat = naturalHeight();
         const snapped = Math.abs(h - nat) <= 20 ? nat : h;
-        const isNatural = snapped === nat;
-        if (isNatural) {
-            root.style.removeProperty('--detail-top-height');
-            localStorage.removeItem('ft-detail-top-height');
-        } else {
-            root.style.setProperty('--detail-top-height', snapped + 'px');
-            localStorage.setItem('ft-detail-top-height', snapped + 'px');
-        }
+        // Always commit a pixel value — never remove --detail-top-height during
+        // or after interaction so height:auto never causes the preview to jump.
+        root.style.setProperty('--detail-top-height', snapped + 'px');
+        localStorage.setItem('ft-detail-top-height', snapped + 'px');
     }
 
     const saved = localStorage.getItem('ft-detail-top-height');
@@ -560,10 +556,16 @@ function initDetailVHandle(el) {
     }
     // If no saved value, leave the variable unset → height:auto → natural position.
 
-    // Double-click: snap back to natural height.
+    // Double-click: reset to natural height, but commit as pixels so the
+    // preview can't jump to max-height:55vh (height:auto overflow issue).
     el.addEventListener('dblclick', () => {
         root.style.removeProperty('--detail-top-height');
         localStorage.removeItem('ft-detail-top-height');
+        // Measure the natural height synchronously (getBCR forces layout) and
+        // immediately commit it as a pixel value.
+        const nat = detailTop.getBoundingClientRect().height;
+        root.style.setProperty('--detail-top-height', nat + 'px');
+        localStorage.setItem('ft-detail-top-height', nat + 'px');
     });
 
     el.addEventListener('mousedown', (e) => {
@@ -579,14 +581,10 @@ function initDetailVHandle(el) {
             const detail = el.closest('.detail');
             const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
             const h = Math.max(60, Math.min(max, startH + (ev.clientY - startY)));
-            // Live snap preview within 20px of natural position.
+            // Always set a pixel value during drag — avoids height:auto jump.
             const nat = naturalHeight();
             const display = Math.abs(h - nat) <= 20 ? nat : h;
-            if (display === nat) {
-                root.style.removeProperty('--detail-top-height');
-            } else {
-                root.style.setProperty('--detail-top-height', display + 'px');
-            }
+            root.style.setProperty('--detail-top-height', display + 'px');
         }
         function onUp(ev) {
             el.classList.remove('dragging');
