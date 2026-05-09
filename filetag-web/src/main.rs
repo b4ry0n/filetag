@@ -535,27 +535,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Pre-warm ONNX/OpenVINO models in a background task if they are already
-    // on disk.  With the OpenVINO feature enabled, commit_from_file() compiles
-    // each model to an internal representation the first time it is called —
-    // this can take several minutes on a low-power device.  Starting the
-    // compilation here means the user does not see a long hang when they first
-    // click the Detect button.
+    // Pre-warm ONNX models in a background task if they are already on disk,
+    // so the first user request does not pay the model-load cost.
     if face::models_ready() {
-        // Read the OpenVINO device setting from the first root before spawning.
-        let device = state
-            .roots
-            .first()
-            .and_then(|r| {
-                use filetag_lib::db;
-                let conn = crate::state::open_conn(r).ok()?;
-                db::get_setting(&conn, "face.openvino_device")
-                    .ok()
-                    .flatten()
-            })
-            .unwrap_or_else(|| "CPU".into());
-        tokio::spawn(async move {
-            match tokio::task::spawn_blocking(move || face::prewarm_models(device)).await {
+        tokio::spawn(async {
+            match tokio::task::spawn_blocking(face::load_models_cached_pub).await {
                 Ok(Ok(_)) => eprintln!("face models pre-warmed"),
                 Ok(Err(e)) => eprintln!("face model pre-warm failed: {e:#}"),
                 Err(e) => eprintln!("face model pre-warm task panicked: {e}"),

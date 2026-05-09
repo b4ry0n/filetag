@@ -36,9 +36,3 @@ hex = "0.4"
 
 [features]
 rar = ["dep:unrar"]
-# Build with `--features openvino` on systems where Intel OpenVINO is installed.
-# Set ORT_DYLIB_PATH to the libonnxruntime.so that comes with the OpenVINO toolkit
-# (e.g. the one bundled with the onnxruntime-openvino Python package).
-# When active, load-dynamic takes precedence over download-binaries: the prebuilt
-# binary is not used, and ORT is loaded at runtime from ORT_DYLIB_PATH instead.
-openvino = ["ort/load-dynamic", "ort/openvino"]

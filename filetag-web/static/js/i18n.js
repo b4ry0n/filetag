@@ -140,14 +140,12 @@ const TRANSLATIONS = {
         'face.settings-auto-match-desc': 'Automatically assign known persons when cosine distance ≤ this value during clustering. Set to 0 to disable.',
         'face.settings-tiling': 'Tiled detection',
         'face.settings-tiling-desc': 'Split large images into overlapping tiles to detect small faces in crowd shots. Dramatically increases analysis time; keep disabled for normal photos.',
-        'face.settings-openvino-device': 'OpenVINO device',
-        'face.settings-openvino-device-desc': 'CPU is safe on all hardware. GPU uses the Intel iGPU (requires display driver). Has no effect without the OpenVINO build flag.',
         'face.suggestions': 'Suggestions',
         'face.unassigned': 'Unassigned',
         'face.no-faces-found': 'No faces detected in this image.',
         'face.toggle-boxes': 'Show/hide face boxes',
         'face.detect-error': 'Face detection failed',
-        'face.detect-timeout': 'Detection request timed out — the model may still be loading (OpenVINO). Try again in a moment.',
+        'face.detect-timeout': 'Detection request timed out. Try again in a moment.',
 
         // Chat panel
         'chat.title': 'Chat',
@@ -441,14 +439,12 @@ const TRANSLATIONS = {
         'face.settings-auto-match-desc': 'Wijs bekende personen automatisch toe tijdens clustering als cosinus-afstand ≤ deze waarde. Stel 0 in om uit te schakelen.',
         'face.settings-tiling': 'Tegeldetectie',
         'face.settings-tiling-desc': 'Verdeelt grote afbeeldingen in overlappende tegels om kleine gezichten in groepsfoto’s te detecteren. Verhoogt de analysetijd drastisch; laat uitgeschakeld voor normale foto’s.',
-        'face.settings-openvino-device': 'OpenVINO-apparaat',
-        'face.settings-openvino-device-desc': 'CPU is veilig op alle hardware. GPU gebruikt de Intel iGPU (vereist beeldschermstuurprogramma). Heeft geen effect zonder de OpenVINO-bouwvlag.',
         'face.suggestions': 'Suggesties',
         'face.unassigned': 'Niet toegewezen',
         'face.no-faces-found': 'Geen gezichten gevonden in dit beeld.',
         'face.toggle-boxes': 'Gezichtskaders tonen/verbergen',
         'face.detect-error': 'Gezichtsdetectie mislukt',
-        'face.detect-timeout': 'Detectie time-out — het model wordt mogelijk nog geladen (OpenVINO). Probeer opnieuw.',
+        'face.detect-timeout': 'Detectie time-out. Probeer opnieuw.',
 
         // Chat panel
         'chat.title': 'Chat',

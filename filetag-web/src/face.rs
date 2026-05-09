@@ -124,11 +124,6 @@ pub struct FaceConfig {
     /// catch small faces.  Dramatically increases analysis time; disabled by
     /// default.  Enable only when analysing crowd/group shots with tiny faces.
     pub tiling_enabled: bool,
-    /// OpenVINO device string passed to `with_device_type()`.  Typical values:
-    /// `"CPU"` (default, always safe), `"GPU"` (Intel iGPU/dGPU, requires
-    /// display driver), `"AUTO:CPU"` (OpenVINO auto-select, CPU candidates only).
-    /// Has no effect on non-OpenVINO builds.
-    pub openvino_device: String,
 }
 
 impl Default for FaceConfig {
@@ -140,7 +135,6 @@ impl Default for FaceConfig {
             tag_prefix: "person".into(),
             auto_match_threshold: 0.30,
             tiling_enabled: false,
-            openvino_device: "CPU".into(),
         }
     }
 }
@@ -180,7 +174,6 @@ fn load_face_config(conn: &Connection) -> FaceConfig {
         tag_prefix: get_str("face.tag_prefix", "person"),
         auto_match_threshold: get_f32("face.auto_match_threshold", 0.30),
         tiling_enabled: get_bool("face.tiling_enabled", false),
-        openvino_device: get_str("face.openvino_device", "CPU"),
     }
 }
 
@@ -387,13 +380,9 @@ pub struct FaceModels {
 }
 
 static FACE_MODEL_CACHE: Mutex<Option<Arc<FaceModels>>> = Mutex::new(None);
-/// The OpenVINO device string used when the models in FACE_MODEL_CACHE were
-/// loaded.  Stored in a separate Mutex so it can be updated when the user
-/// changes the device setting and the cache is cleared.
-static FACE_MODEL_DEVICE: Mutex<Option<String>> = Mutex::new(None);
 
-/// Load both models from disk via ONNX Runtime using the given OpenVINO device.
-pub fn load_models(openvino_device: &str) -> anyhow::Result<FaceModels> {
+/// Load both models from disk via ONNX Runtime (CPU/MLAS backend).
+pub fn load_models() -> anyhow::Result<FaceModels> {
     let detect_path =
         detect_model_path().ok_or_else(|| anyhow::anyhow!("models directory not available"))?;
     let embed_path =
@@ -407,35 +396,8 @@ pub fn load_models(openvino_device: &str) -> anyhow::Result<FaceModels> {
         .unwrap_or(4)
         .min(8); // cap: more threads give diminishing returns on small batches
 
-    // OpenVINO model cache: after the first compilation run, the compiled
-    // kernels are stored here and loaded on subsequent starts in seconds
-    // instead of minutes.  Stored alongside the ONNX models so it is
-    // naturally cleared when the user removes the models directory.
-    // On non-OpenVINO builds this directory is created but never written to.
-    let ov_cache_dir: Option<String> = models_dir().and_then(|d| {
-        let cache = d.join("ov_cache");
-        std::fs::create_dir_all(&cache).ok()?;
-        cache.to_str().map(str::to_string)
-    });
-
     let mk_session = |path: &std::path::Path| -> anyhow::Result<ort::session::Session> {
-        // Register OpenVINO as the preferred EP.  On systems without OpenVINO
-        // (e.g. macOS or a Linux build without --features openvino), the feature
-        // flag is absent so `register` returns MissingFeature and ort falls back
-        // silently to CPU/MLAS.  On a NAS built with `--features openvino` and
-        // ORT_DYLIB_PATH pointing to Intel's libonnxruntime.so, OpenVINO EP is
-        // initialised and the CPU is used via the OpenVINO runtime.
-        //
-        // Use the configured OpenVINO device type.  The default is "CPU", which
-        // is safe on headless hardware.  Users with working GPU drivers can set
-        // face.openvino_device = "GPU" in the face settings.
-        let mut ov_ep = ort::ep::OpenVINO::default().with_device_type(openvino_device);
-        if let Some(ref dir) = ov_cache_dir {
-            ov_ep = ov_ep.with_cache_dir(dir);
-        }
         ort::session::Session::builder()?
-            .with_execution_providers([ov_ep.build()])
-            .map_err(|e| anyhow::anyhow!("ort EP registration: {e}"))?
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(|e| anyhow::anyhow!("ort session options: {e}"))?
             .with_intra_threads(intra_threads)
@@ -444,50 +406,11 @@ pub fn load_models(openvino_device: &str) -> anyhow::Result<FaceModels> {
             .map_err(anyhow::Error::from)
     };
 
-    // Watchdog: print a heartbeat every 30 s while commit_from_file is
-    // blocking.  After COMPILE_TIMEOUT_SECS the watchdog concludes that
-    // OpenVINO is stuck (e.g. on a corrupt cache file from an interrupted
-    // previous run), clears the cache directory, and exits the process so
-    // that the supervisor (systemd/Docker) can restart cleanly.
-    const COMPILE_TIMEOUT_SECS: u64 = 600; // 10 minutes
-    let loading_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let flag_clone = loading_flag.clone();
-    let ov_cache_for_watchdog = ov_cache_dir.clone();
-    let watchdog = std::thread::spawn(move || {
-        let mut secs = 0u64;
-        while flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            secs += 30;
-            if !flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                break;
-            }
-            eprintln!("face: still compiling ONNX models ({secs}s elapsed) …");
-            if secs >= COMPILE_TIMEOUT_SECS {
-                eprintln!(
-                    "face: compilation timed out after {secs}s — \
-                     OpenVINO cache may be corrupt. \
-                     Clearing cache and restarting…"
-                );
-                if let Some(ref dir) = ov_cache_for_watchdog {
-                    if let Err(e) = std::fs::remove_dir_all(dir) {
-                        eprintln!("face: failed to clear cache ({dir}): {e}");
-                    } else {
-                        eprintln!("face: cache cleared ({dir})");
-                    }
-                }
-                // Exit so the supervisor can restart with a clean cache.
-                std::process::exit(1);
-            }
-        }
-    });
-
+    eprintln!("face: loading ONNX models …");
     let detector = mk_session(&detect_path)?;
     eprintln!("face: detector loaded");
     let embedder = mk_session(&embed_path)?;
     eprintln!("face: embedder loaded");
-
-    loading_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-    let _ = watchdog.join();
 
     Ok(FaceModels {
         detector: Mutex::new(detector),
@@ -495,114 +418,24 @@ pub fn load_models(openvino_device: &str) -> anyhow::Result<FaceModels> {
     })
 }
 
-/// Read `face.openvino_device` from the first available database root.
-/// Returns `"CPU"` if no root or setting is available.
-fn read_openvino_device_from_db(state: &crate::state::AppState) -> String {
-    state
-        .roots
-        .first()
-        .and_then(|r| open_conn(r).ok())
-        .and_then(|conn| {
-            db::get_setting(&conn, "face.openvino_device")
-                .ok()
-                .flatten()
-        })
-        .unwrap_or_else(|| "CPU".into())
-}
-
 /// Hold the mutex for the *entire* duration of the load so that concurrent
 /// callers block until the first load completes and then get the cached
 /// result, rather than each starting their own (expensive) load in parallel.
-///
-/// `device` is the OpenVINO device string from the settings table.  If the
-/// cached models were built for a different device, the cache is cleared and
-/// the models are reloaded with the new device.
-fn load_models_cached(device: &str) -> anyhow::Result<Arc<FaceModels>> {
+fn load_models_cached() -> anyhow::Result<Arc<FaceModels>> {
     let mut guard = FACE_MODEL_CACHE
         .lock()
         .map_err(|_| anyhow::anyhow!("face model cache mutex poisoned"))?;
-    // If the device changed since the last load, discard the cached models.
-    {
-        let prev = FACE_MODEL_DEVICE
-            .lock()
-            .map_err(|_| anyhow::anyhow!("face model device mutex poisoned"))?;
-        if let Some(ref p) = *prev
-            && p != device
-        {
-            eprintln!("face: OpenVINO device changed ({p} → {device}), reloading models");
-            *guard = None;
-        }
-    }
     if let Some(ref models) = *guard {
         return Ok(models.clone());
     }
-    eprintln!("face: loading ONNX models (device={device}) …");
-    let models = Arc::new(load_models(device)?);
-    eprintln!("face: models loaded");
-    *FACE_MODEL_DEVICE
-        .lock()
-        .map_err(|_| anyhow::anyhow!("face model device mutex poisoned"))? =
-        Some(device.to_string());
+    let models = Arc::new(load_models()?);
     *guard = Some(models.clone());
     Ok(models)
 }
 
-/// Run a single dummy inference pass through both models so that OpenVINO
-/// completes its second JIT-compilation phase at server startup rather than
-/// on the first user request.
-///
-/// OpenVINO compiles in two phases:
-///
-///   1. `commit_from_file` — model graph is translated to OpenVINO IR.
-///   2. First `session.run()` — kernel code is compiled and uploaded to the
-///      device (iGPU/CPU via the OpenVINO runtime).
-///
-/// Phase 2 can take 30–120 seconds on a low-power SoC.  Running a dummy
-/// inference here at startup ensures both phases are done before users interact.
-fn warmup_inference(models: &FaceModels) -> anyhow::Result<()> {
-    eprintln!("face: warming up inference (OpenVINO JIT) …");
-
-    // Detector: expects (1, 3, 640, 640) float32 NCHW.
-    {
-        let dummy = ndarray::Array4::<f32>::zeros((1, 3, 640, 640));
-        let input = ort::value::Tensor::from_array(dummy)?;
-        let mut det = models
-            .detector
-            .lock()
-            .map_err(|_| anyhow::anyhow!("detector mutex poisoned"))?;
-        let _ = det.run(ort::inputs![input])?;
-    }
-
-    // Embedder: expects (1, 3, 112, 112) float32 NCHW.
-    {
-        let dummy = ndarray::Array4::<f32>::zeros((1, 3, 112, 112));
-        let input = ort::value::Tensor::from_array(dummy)?;
-        let mut emb = models
-            .embedder
-            .lock()
-            .map_err(|_| anyhow::anyhow!("embedder mutex poisoned"))?;
-        let _ = emb.run(ort::inputs![input])?;
-    }
-
-    eprintln!("face: inference warm-up complete");
-    Ok(())
-}
-
-/// Public wrapper for use in `tokio::task::spawn_blocking` from startup code.
-///
-/// Loads models (holding the cache mutex so no second load can race) and then
-/// runs a dummy inference through both models so that OpenVINO completes both
-/// JIT-compilation phases before the first real user request arrives.
-///
-/// `device` is the OpenVINO device string (e.g. `"CPU"`, `"GPU"`).
-pub fn prewarm_models(device: String) -> anyhow::Result<Arc<FaceModels>> {
-    let models = load_models_cached(&device)?;
-    // Warm-up inference: errors are non-fatal — the models are still usable,
-    // just the first real request will pay the JIT cost.
-    if let Err(e) = warmup_inference(&models) {
-        eprintln!("face: warm-up inference failed (non-fatal): {e:#}");
-    }
-    Ok(models)
+/// Public entry point used by the startup pre-warm task in `main.rs`.
+pub fn load_models_cached_pub() -> anyhow::Result<Arc<FaceModels>> {
+    load_models_cached()
 }
 
 // ---------------------------------------------------------------------------
@@ -1759,30 +1592,23 @@ pub async fn api_face_analyse(
     let root_entry = root_from_dir(&state, req.dir.as_deref())?;
     let (conn, eff_root, rel) = open_for_file_op(root_entry, &req.path)?;
     let cfg = load_face_config(&conn);
-    let device = cfg.openvino_device.clone();
 
-    // OpenVINO compiles models to an internal representation on first use;
-    // this can take several minutes.  Use a generous timeout so the request
-    // returns an error rather than hanging indefinitely.
     let models = tokio::time::timeout(
-        std::time::Duration::from_secs(600),
-        tokio::task::spawn_blocking(move || load_models_cached(&device)),
+        std::time::Duration::from_secs(120),
+        tokio::task::spawn_blocking(load_models_cached),
     )
     .await
     .map_err(|_| {
         AppError(anyhow::anyhow!(
-            "model loading timed out — OpenVINO may still be compiling; try again in a moment"
+            "model loading timed out; try again in a moment"
         ))
     })?
     .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
     .map_err(AppError)?;
 
     let rel_clone = rel.clone();
-    // OpenVINO also JIT-compiles on the first session.run() call (second phase
-    // after commit_from_file).  This can take minutes on a low-power device.
-    // Wrap with a timeout so the request never hangs indefinitely.
     let (rows, img_w, img_h) = tokio::time::timeout(
-        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(120),
         tokio::task::spawn_blocking(move || {
             eprintln!("face: starting analyse_file_sync for {rel_clone}");
             let r = analyse_file_sync(&conn, &eff_root, &rel_clone, models.as_ref(), &cfg);
@@ -1793,7 +1619,7 @@ pub async fn api_face_analyse(
     .await
     .map_err(|_| {
         AppError(anyhow::anyhow!(
-            "detection timed out — OpenVINO warm-up may still be running; try again in a moment"
+            "detection timed out; try again in a moment"
         ))
     })?
     .map_err(|e| AppError(anyhow::anyhow!("join error: {e}")))?
@@ -1921,20 +1747,12 @@ async fn run_batch(
     dir: PathBuf,
     recursive: bool,
 ) -> anyhow::Result<()> {
-    // Read device from the first root's settings.
-    let device = read_openvino_device_from_db(&state);
-
-    // Same generous timeout as in api_face_analyse.
     let models = tokio::time::timeout(
-        std::time::Duration::from_secs(600),
-        tokio::task::spawn_blocking(move || load_models_cached(&device)),
+        std::time::Duration::from_secs(120),
+        tokio::task::spawn_blocking(load_models_cached),
     )
     .await
-    .map_err(|_| {
-        anyhow::anyhow!(
-            "model loading timed out — OpenVINO may still be compiling; try again in a moment"
-        )
-    })?
+    .map_err(|_| anyhow::anyhow!("model loading timed out; try again in a moment"))?
     .map_err(|e| anyhow::anyhow!("model load task panicked: {e}"))??;
 
     let files = collect_images(&dir, recursive);
@@ -2379,7 +2197,6 @@ pub async fn api_face_config_get(
         tag_prefix: cfg.tag_prefix,
         auto_match_threshold: cfg.auto_match_threshold,
         tiling_enabled: cfg.tiling_enabled,
-        openvino_device: cfg.openvino_device,
         models_ready: models_ready(),
     })
 }
@@ -2420,13 +2237,6 @@ pub async fn api_face_config_set(
     }
     if let Some(v) = req.tiling_enabled {
         db::set_setting(&conn, "face.tiling_enabled", if v { "1" } else { "0" })?;
-    }
-    if let Some(v) = req.openvino_device {
-        // Clear the model cache so the next detection reloads with the new device.
-        if let Ok(mut guard) = FACE_MODEL_CACHE.lock() {
-            *guard = None;
-        }
-        db::set_setting(&conn, "face.openvino_device", &v)?;
     }
 
     Ok(Json(serde_json::json!({"ok": true})))
