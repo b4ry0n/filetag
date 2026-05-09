@@ -716,6 +716,41 @@ function _thumbFlush() {
     }
 }
 
+/** Re-sort both thumbnail queues by distance from the current viewport centre.
+ *
+ *  The IntersectionObserver promotes elements to the front of the queue when
+ *  they first enter the viewport, then unobserves them.  After that, if the
+ *  user scrolls away and back again, those elements are already somewhere in
+ *  the queue but are no longer observed — so they won't be re-promoted
+ *  automatically.  By re-sorting on scroll we ensure that whatever is visible
+ *  right now is always processed first, regardless of scroll history.
+ *
+ *  getBoundingClientRect() is viewport-relative and does NOT force a full
+ *  layout reflow when called inside a requestAnimationFrame callback.
+ */
+let _thumbViewportSortPending = false;
+function _thumbViewportSort() {
+    _thumbViewportSortPending = false;
+    if (_thumbQueue.length < 2 && _dirThumbQueue.length < 2) return;
+    const centre = window.innerHeight / 2;
+    const dist = el => {
+        if (!el.isConnected) return Infinity;
+        const r = el.getBoundingClientRect();
+        return Math.abs(r.top + r.height / 2 - centre);
+    };
+    if (_thumbQueue.length > 1) {
+        _thumbQueue.sort((a, b) => dist(a) - dist(b));
+    }
+    if (_dirThumbQueue.length > 1) {
+        _dirThumbQueue.sort((a, b) => dist(a) - dist(b));
+    }
+}
+window.addEventListener('scroll', () => {
+    if (_thumbViewportSortPending) return;
+    _thumbViewportSortPending = true;
+    requestAnimationFrame(_thumbViewportSort);
+}, { passive: true });
+
 function _thumbInit() {
     _thumbFlush();
     document.querySelectorAll('.card-icon[data-thumb-src]').forEach(el => {
