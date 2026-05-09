@@ -35,8 +35,8 @@
 }
 
 .card.selected {
-    background: var(--primary-light);
     border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary), 0 0 12px 2px rgba(34,139,230,0.25);
     position: relative;
 }
 
