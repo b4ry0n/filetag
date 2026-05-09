@@ -925,7 +925,11 @@ pub async fn api_files(
         // Known limitation: a directory named "Music.Old" would be misclassified
         // as a file.  This edge case is rare in practice.
         // ---------------------------------------------------------------
-        let skip = usize::from(name.starts_with('.'));
+        // Skip any leading dots and underscores before looking for a file
+        // extension.  Without this, names such as "_.Trash" or "_.TemporaryItems"
+        // (macOS NAS artefacts) would be misclassified as files because rfind('.')
+        // finds the dot at position 1 and the check fires too early.
+        let skip = name.bytes().take_while(|&b| b == b'.' || b == b'_').count();
         if let Some(d) = name[skip..].rfind('.').map(|i| i + skip)
             && d + 1 < name.len()
         {
