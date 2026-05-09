@@ -546,11 +546,22 @@ function _faceRefreshDetailControls(path) {
 // changes vh, or the user resizes the browser). Debounced to 150 ms.
 // ---------------------------------------------------------------------------
 
+/** Public: re-render face bounding boxes on the detail preview. Called by
+ * main.js after separator drag and by the resize handler below. */
+function faceRerenderPreviewBoxes() {
+    if (state.faceDetections && state.faceDetections.length && state.faceDetectionsPath) {
+        _faceRenderOverlays(state.faceDetectionsPath);
+    }
+}
+
 let _faceDetailResizeTimer = null;
 window.addEventListener('resize', () => {
-    if (!state.faceDetections || !state.faceDetections.length || !state.faceDetectionsPath) return;
     clearTimeout(_faceDetailResizeTimer);
-    _faceDetailResizeTimer = setTimeout(() => _faceRenderOverlays(state.faceDetectionsPath), 150);
+    _faceDetailResizeTimer = setTimeout(() => {
+        // Sync img max-height first, then re-render boxes against the new size
+        if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
+        faceRerenderPreviewBoxes();
+    }, 150);
 });
 
 // ---------------------------------------------------------------------------

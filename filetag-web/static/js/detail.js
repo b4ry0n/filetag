@@ -5,6 +5,23 @@ window.toggleMetaOverlay = function(e) {
     if (!overlay) return;
     overlay.style.display = (overlay.style.display === 'none' || !overlay.style.display) ? 'flex' : 'none';
 };
+
+/**
+ * Measure the actual rendered height of .detail-preview and set
+ * img.style.maxHeight to that value. This is the only reliable way to
+ * constrain the image because .detail-top also contains a variable-height
+ * face-toolbar-row that cannot be subtracted via CSS alone.
+ * Called after each detail render and after separator drag/resize.
+ */
+function syncPreviewHeight() {
+    const preview = document.querySelector('#detail .detail-preview');
+    if (!preview) return;
+    const h = preview.getBoundingClientRect().height;
+    if (h <= 0) return;
+    const img = preview.querySelector('img');
+    if (img) img.style.maxHeight = h + 'px';
+}
+
 // ---------------------------------------------------------------------------
 // Zip directory: open, refresh, helper, grid + list render
 // ---------------------------------------------------------------------------
@@ -1412,6 +1429,11 @@ function renderDetail() {
     if (typeof faceOnDetailRendered === 'function' && (type_ === 'image' || type_ === 'raw')) {
         faceOnDetailRendered(f.path, type_);
     }
+
+    // After the DOM has been laid out (rAF), sync the img max-height to the
+    // actual .detail-preview panel height. This accounts for the face-toolbar-row
+    // height that the CSS formula cannot know statically.
+    requestAnimationFrame(syncPreviewHeight);
 
     // Async-fetch text/markdown content after DOM is set
     if (type_ === 'text') {

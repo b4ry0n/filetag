@@ -41,15 +41,15 @@
     cursor: pointer;
     z-index: 21;
 }
-/* img: constrained by width (landscape) or height (portrait).
- * max-height is an absolute calc so it always resolves regardless of the
- * face-preview-wrap chain. 38px subtracts the detail-header min-height. */
+/* img max-height: CSS fallback only — JS sets img.style.maxHeight to the
+ * exact .detail-preview height after each render and separator drag.
+ * 55vh matches the detail-top fallback and is quickly replaced by JS. */
 .detail-preview img,
 .detail-preview video {
     width: auto;
     height: auto;
     max-width: 100%;
-    max-height: calc(var(--detail-top-height, 55vh) - 38px);
+    max-height: 55vh;
     object-fit: contain;
     display: block;
     cursor: pointer;
@@ -81,17 +81,14 @@
 }
 
 /* Scrollable top area (header, preview, meta) above the split line.
-   Height is controlled by --detail-top-height (set in JS after render).
-   When the variable is unset the property becomes invalid → height: auto,
-   so the element sizes to content and .detail-tags-section fills the rest. */
+   Height is controlled by --detail-top-height (set by JS after render/drag).
+   Fallback 55vh gives a sensible size before the user moves the separator.
+   Overflow is hidden so nothing bleeds through the split line. */
 .detail-top {
     flex: none;
-    height: var(--detail-top-height, auto);
-    /* Fallback max-height so auto mode can't push video controls outside
-     * the panel (clipped by .detail overflow:hidden). */
-    max-height: var(--detail-top-height, calc(100% - 60px));
-    overflow-y: auto;
-    overflow-x: hidden;
+    height: var(--detail-top-height, 55vh);
+    max-height: 85vh;
+    overflow: hidden;
     min-height: 60px;
     display: flex;
     flex-direction: column;
@@ -216,13 +213,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 60px;
-    /* Height follows the splitter via --detail-top-height (set by JS).
-     * 38px subtracts the detail-header min-height so the panel fills
-     * exactly the space the user allocated above the split line.
-     * Fallback 55vh is used before the user has moved the splitter. */
-    height: calc(var(--detail-top-height, 55vh) - 38px);
-    flex: 1 1 auto;
+    /* Grows to fill whatever height .detail-top gives after header and
+     * face-toolbar-row. JS measures the actual height and sets
+     * img.style.maxHeight so the image is always properly contained. */
+    flex: 1 1 0;
+    min-height: 0;
     overflow: hidden;
     position: relative;
 }

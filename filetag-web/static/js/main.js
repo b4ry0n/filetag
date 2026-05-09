@@ -553,8 +553,18 @@ function initDetailVHandle(el) {
         if (px > maxPx) px = maxPx;
         root.style.setProperty('--detail-top-height', px + 'px');
         localStorage.setItem('ft-detail-top-height', px + 'px');
+    } else {
+        // No saved separator position: snapshot the natural height in px so the
+        // img never has to use the 55vh CSS fallback (which tracks the viewport).
+        requestAnimationFrame(() => {
+            root.style.removeProperty('--detail-top-height');
+            const h = detailTop.getBoundingClientRect().height;
+            if (h > 0) {
+                root.style.setProperty('--detail-top-height', h + 'px');
+            }
+            if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
+        });
     }
-    // If no saved value, leave the variable unset → height:auto → natural position.
 
     // Double-click: reset to natural height, but commit as pixels so the
     // preview can't jump to max-height:55vh (height:auto overflow issue).
@@ -585,6 +595,8 @@ function initDetailVHandle(el) {
             const nat = naturalHeight();
             const display = Math.abs(h - nat) <= 20 ? nat : h;
             root.style.setProperty('--detail-top-height', display + 'px');
+            // Sync img max-height to the actual panel height (excludes face-toolbar)
+            if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
         }
         function onUp(ev) {
             el.classList.remove('dragging');
@@ -595,6 +607,9 @@ function initDetailVHandle(el) {
             const max = detail ? detail.getBoundingClientRect().height - 60 - 6 : 800;
             const h = Math.max(60, Math.min(max, startH + (ev.clientY - startY)));
             snapOrSet(h);
+            if (typeof syncPreviewHeight === 'function') syncPreviewHeight();
+            // Re-render face boxes now that the img has its final size
+            if (typeof faceRerenderPreviewBoxes === 'function') faceRerenderPreviewBoxes();
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
         }
