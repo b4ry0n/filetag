@@ -1,15 +1,3 @@
-/* Detail preview image — fill the preview box with aspect-ratio preserved.
- * .detail-preview has an explicit height:55vh so height:100% resolves here. */
-.detail-preview .detail-img-zoomable {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
-    transition: transform 0.2s;
-    cursor: pointer;
-    user-select: none;
-    will-change: transform;
-}
 .meta-info-btn {
     position: absolute;
     left: 8px;
@@ -53,26 +41,17 @@
     cursor: pointer;
     z-index: 21;
 }
-.detail-preview img {
-    max-width: 100%;
-    max-height: 100%;
+/* img and video: size to intrinsic dimensions, clamped to container.
+ * .detail-preview has height:55vh so max-height:100% resolves correctly. */
+.detail-preview img,
+.detail-preview video {
     width: auto;
     height: auto;
+    max-width: 100%;
+    max-height: 100%;
     object-fit: contain;
     display: block;
     margin: 0 auto;
-    background: #000;
-    transition: transform 0.2s;
-    user-select: none;
-    will-change: transform;
-    position: relative;
-    z-index: 1;
-}
-.detail-preview video {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
     background: #000;
     transition: transform 0.2s;
     user-select: none;
@@ -253,19 +232,6 @@
 }
 
 
-
-.detail-preview audio,
-.detail-preview img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    display: block;
-    margin: 0 auto;
-    transition: transform 0.2s;
-    cursor: pointer;
-    user-select: none;
-    will-change: transform;
-}
 
 /* Clickable preview hint */
 .detail-preview .preview-zoomable {
