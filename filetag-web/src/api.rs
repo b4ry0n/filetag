@@ -870,6 +870,8 @@ pub async fn api_files(
         name: String,
         is_symlink: bool,
         db_path: String,
+        /// Absolute path used for counting direct children (see Phase 3).
+        abs_path: std::path::PathBuf,
     }
     struct RawFile {
         name: String,
@@ -928,6 +930,19 @@ pub async fn api_files(
             && d + 1 < name.len()
         {
             // Non-terminal dot → has file extension → fast path.
+            // We still call metadata() here to retrieve size and mtime.
+            // On NFSv4 the kernel attr cache is populated by the preceding
+            // readdir, so this is served from cache with no extra RPC.
+            // On NFSv3 without READDIRPLUS it costs one stat() per file;
+            // users on slow NFS v3 mounts may prefer to disable this by
+            // setting the `show_sizes` setting to `false` (future work).
+            let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len() as i64);
+            let mtime = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64);
             let rel = format!("{}{}", prefix, name);
             raw_files.push(RawFile {
                 name,
@@ -935,8 +950,8 @@ pub async fn api_files(
                 db_path: rel.clone(),
                 covered_path: entry.path(),
                 check_covered: false,
-                size: None,
-                mtime: None,
+                size,
+                mtime,
             });
             continue;
         }
@@ -972,6 +987,7 @@ pub async fn api_files(
                     })
                     .unwrap_or_else(|| format!("{}{}", prefix, name));
                 raw_dirs.push(RawDir {
+                    abs_path: entry.path(),
                     name,
                     is_symlink: true,
                     db_path,
@@ -1004,6 +1020,7 @@ pub async fn api_files(
         } else if entry_ft.is_dir() {
             raw_dirs.push(RawDir {
                 db_path: format!("{}{}", prefix, name),
+                abs_path: entry.path(),
                 name,
                 is_symlink: false,
             });
@@ -1034,16 +1051,29 @@ pub async fn api_files(
     let tag_counts = batch_tag_counts(&conn, &all_db_paths).unwrap_or_default();
 
     // Phase 3: build ApiDirEntry structs from the collected data.
+    //
+    // For directories we count direct (non-hidden) children with a single
+    // read_dir() call per subdirectory.  On NFSv4 the kernel serves these
+    // from the attr cache; on NFSv3 each call is one READDIR RPC.  We
+    // use flatten() + count() so we never call file_type() per child entry.
     let mut dirs: Vec<ApiDirEntry> = raw_dirs
         .into_iter()
         .map(|d| {
             let tc = tag_counts.get(&d.db_path).copied().unwrap_or(0);
+            let file_count = std::fs::read_dir(&d.abs_path).ok().map(|rd| {
+                rd.flatten()
+                    .filter(|e| {
+                        !e.file_name().to_string_lossy().starts_with('.')
+                            && e.file_name().to_string_lossy() != ".filetag"
+                    })
+                    .count() as i64
+            });
             ApiDirEntry {
                 name: d.name,
                 is_dir: true,
                 size: None,
                 mtime: None,
-                file_count: None,
+                file_count,
                 tag_count: if tc > 0 { Some(tc) } else { None },
                 root_path: None,
                 covered: None,

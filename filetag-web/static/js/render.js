@@ -205,8 +205,8 @@ function renderGrid(items) {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
         }
 
-        const dirTagHint = isDir && entry.tag_count ? ` · ${entry.tag_count} tag${entry.tag_count === 1 ? '' : 's'}` : '';
-        const dirCountHint = entry.file_count != null ? `${entry.file_count} file${entry.file_count === 1 ? '' : 's'}` : '';
+        const dirCountHint = entry.file_count != null ? `${entry.file_count} item${entry.file_count === 1 ? '' : 's'}` : '';
+        const dirTagHint = isDir && entry.tag_count ? `${dirCountHint ? ' · ' : ''}${entry.tag_count} tag${entry.tag_count === 1 ? '' : 's'}` : '';
         const meta = isDir ? (dirCountHint + dirTagHint) || '\u2014' : formatSize(entry.size);
 
         if (isDir) {
@@ -282,7 +282,9 @@ function _renderListRows(items) {
         const path = isDir ? null : fullPath(entry);
         const selected = state.selectedFile && state.selectedFile.path === path ? ' selected' : '';
         const icon = isDir ? ICONS.folder : fileIcon(name);
-        const size = isDir ? '' : formatSize(entry.size);
+        const size = isDir
+            ? (entry.file_count != null ? `${entry.file_count} item${entry.file_count === 1 ? '' : 's'}` : '')
+            : formatSize(entry.size);
         const date = isDir ? '' : formatDate(entry.mtime);
         const tags = isDir
             ? (entry.tag_count ? `${entry.tag_count} tag${entry.tag_count === 1 ? '' : 's'}` : '')
