@@ -1532,9 +1532,11 @@ async function comicImportMetadata(path) {
     if (btn) { btn.disabled = true; btn.textContent = t('comic.importing'); }
     try {
         const result = await apiPost('/api/comic/import-metadata', { path, dir: currentAbsDir() });
+        await loadTags();
         if (state.selectedFile && state.selectedFile.path === path) {
             await loadFileDetail(path);
         }
+        ftEmit('ft:file-tags', { paths: [path] });
         showToast(t('comic.imported', { n: result.imported }), 4000);
     } catch (e) {
         const msg = e.message || String(e);
