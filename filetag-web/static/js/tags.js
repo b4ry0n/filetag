@@ -1926,9 +1926,6 @@ async function renderTmDetail(name) {
             <button class="tm-syn-remove" onclick="tmRemoveSynonym('${jesc(name)}','${jesc(a)}')" title="Remove">\u2715</button>
         </span>`).join('');
 
-    const suffix = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
-    const defaultPrefix = name.includes('/') ? name.split('/')[0] : '';
-
     const valRows = values.map(v => `
         <div class="tm-val-row">
             <span class="tm-val-name" onclick="tmValueSearch('${jesc(name)}','${jesc(v.value)}')" title="Search ${esc(name)}=${esc(v.value)}">${esc(v.value)}</span>
@@ -1994,15 +1991,6 @@ async function renderTmDetail(name) {
                 <label class="tm-merge-alias-label"><input type="checkbox" id="tm-merge-keep-alias" checked> Keep <em>${esc(name)}</em> as an alias of the target tag</label>
             </div>
 
-            <div class="tm-op-row">
-                <label class="tm-op-label">Move to group</label>
-                <div class="tm-op-inputs">
-                    <input id="tm-move-input" class="tm-input" type="text"
-                        placeholder="Prefix (e.g. genre)" value="${esc(defaultPrefix)}">
-                    <button class="tm-btn" onclick="tmDoMove('${jesc(name)}')">Move</button>
-                </div>
-                <div class="tm-op-hint">Renames to <em>prefix/${esc(suffix)}</em>.</div>
-            </div>
         </section>
 
         <div class="tm-danger-zone">
@@ -2104,25 +2092,6 @@ async function tmDoMerge(sourceName) {
     _tmSelectedTag = targetName;
     renderTmList();
     await renderTmDetail(targetName);
-    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    render();
-}
-
-async function tmDoMove(tagName) {
-    const input = document.getElementById('tm-move-input');
-    const newPrefix = input ? input.value.trim() : '';
-    if (!newPrefix) return;
-    const suffix = tagName.includes('/') ? tagName.slice(tagName.indexOf('/') + 1) : tagName;
-    const newName = `${newPrefix}/${suffix}`;
-    if (newName === tagName) return;
-    if (!confirm(`Rename "${tagName}" to "${newName}"?`)) return;
-    const res = await apiPost('/api/rename-tag', { name: tagName, new_name: newName, dir: currentAbsDir() });
-    if (res && res.merged) showToast(`Merged into "${newName}".`);
-    else showToast(`Moved to "${newName}".`);
-    await loadTags();
-    _tmSelectedTag = newName;
-    renderTmList();
-    await renderTmDetail(newName);
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();
 }
