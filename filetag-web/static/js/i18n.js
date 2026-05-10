@@ -150,11 +150,13 @@ const TRANSLATIONS = {
         'face.no-images-in-selection': 'No images in selection.',
 
         // ComicInfo metadata import
-        'comic.import-btn':     'Import ComicInfo.xml',
-        'comic.importing':      'Importing…',
-        'comic.imported':       '{n} tag(s) imported from ComicInfo.xml',
-        'comic.not-found':      'No ComicInfo.xml found in this archive.',
-        'comic.error':          'ComicInfo import failed',
+        'comic.import-btn':             'Import ComicInfo.xml',
+        'comic.import-selection-btn':   'Import ComicInfo.xml for selection',
+        'comic.importing':              'Importing…',
+        'comic.imported':               '{n} tag(s) imported from ComicInfo.xml',
+        'comic.imported-bulk':          'ComicInfo.xml imported for {n} comic(s)',
+        'comic.not-found':              'No ComicInfo.xml found in this archive.',
+        'comic.error':                  'ComicInfo import failed',
 
         'chat.title': 'Chat',
         'chat.send':  'Send',
@@ -457,11 +459,13 @@ const TRANSLATIONS = {
         'face.no-images-in-selection': 'Geen afbeeldingen in de selectie.',
 
         // ComicInfo metadata import
-        'comic.import-btn':     'ComicInfo.xml importeren',
-        'comic.importing':      'Importeren…',
-        'comic.imported':       '{n} tag(s) geïmporteerd uit ComicInfo.xml',
-        'comic.not-found':      'Geen ComicInfo.xml gevonden in dit archief.',
-        'comic.error':          'ComicInfo-import mislukt',
+        'comic.import-btn':             'ComicInfo.xml importeren',
+        'comic.import-selection-btn':   'ComicInfo.xml importeren voor selectie',
+        'comic.importing':              'Importeren…',
+        'comic.imported':               '{n} tag(s) geïmporteerd uit ComicInfo.xml',
+        'comic.imported-bulk':          'ComicInfo.xml geïmporteerd voor {n} strip(s)',
+        'comic.not-found':              'Geen ComicInfo.xml gevonden in dit archief.',
+        'comic.error':                  'ComicInfo-import mislukt',
 
         'chat.send':  'Verstuur',
         'chat.hint':  'Stel een vraag over het geselecteerde bestand of de geselecteerde bestanden.',

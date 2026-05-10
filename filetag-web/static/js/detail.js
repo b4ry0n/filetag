@@ -1194,6 +1194,17 @@ function renderDetail() {
                     <button class="ai-analyse-btn bulk-ai-btn" onclick="faceDetectSelection()">${esc(t('face.detect-selection-btn'))}</button>
                 </div>
             </div>` : '';
+        const COMIC_EXTS = new Set(['cbz', 'cbr', 'cb7']);
+        const comicPaths = paths.filter(p => {
+            const ext = (p.split('.').pop() || '').toLowerCase();
+            return COMIC_EXTS.has(ext);
+        });
+        const comicBulkSection = comicPaths.length > 0 ? `
+            <div class="bulk-ai-section">
+                <div class="bulk-ai-row">
+                    <button class="ai-analyse-btn bulk-ai-btn" id="comic-import-bulk-btn" onclick="comicImportSelection()">${esc(t('comic.import-selection-btn'))}</button>
+                </div>
+            </div>` : '';
         panel.innerHTML = `
             <div class="detail-header">
                 <h3>${t('bulk.n-selected', {n: count})}</h3>
@@ -1230,6 +1241,7 @@ function renderDetail() {
                 ${aiClearBulkBtn}
                 ${aiBulkSection}
                 ${faceBulkSection}
+                ${comicBulkSection}
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
         attachTagAutocomplete(document.getElementById('bulk-tag-input'), () => doBulkAddTag());
@@ -1546,6 +1558,39 @@ async function comicImportMetadata(path) {
             showToast(t('comic.error') + ': ' + msg, 5000);
         }
         if (btn) { btn.disabled = false; btn.textContent = t('comic.import-btn'); }
+    }
+}
+
+/** Import ComicInfo.xml for all comic archives in the current selection. */
+async function comicImportSelection() {
+    const COMIC_EXTS = new Set(['cbz', 'cbr', 'cb7']);
+    const paths = [...state.selectedPaths].filter(p => {
+        const ext = (p.split('.').pop() || '').toLowerCase();
+        return COMIC_EXTS.has(ext);
+    });
+    if (paths.length === 0) return;
+
+    const btn = document.getElementById('comic-import-bulk-btn');
+    if (btn) { btn.disabled = true; btn.textContent = t('comic.importing'); }
+    try {
+        const dir = currentAbsDir();
+        let imported = 0;
+        for (const path of paths) {
+            try {
+                const result = await apiPost('/api/comic/import-metadata', { path, dir });
+                imported += result.imported ?? 0;
+            } catch (_) {
+                // skip archives without ComicInfo.xml silently
+            }
+        }
+        await loadTags();
+        if (state.selectedFile && paths.includes(state.selectedFile.path)) {
+            await loadFileDetail(state.selectedFile.path);
+        }
+        ftEmit('ft:file-tags', { paths });
+        showToast(t('comic.imported-bulk', { n: paths.length }), 4000);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = t('comic.import-selection-btn'); }
     }
 }
 
