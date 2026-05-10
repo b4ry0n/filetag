@@ -3,12 +3,12 @@
    --------------------------------------------------------------------------- */
 
 /* Wrapper around the preview image that allows absolute-positioned overlays.
- * display:inline-block with no explicit size: the wrapper shrinks to the
- * rendered image dimensions. Percentage-positioned .face-box children then
- * auto-scale with the image — no JS recalculation needed on resize. */
+ * height:100% fills .preview-zoomable so max-height:100% on the img resolves.
+ * Percentage-positioned .face-box children auto-scale with the image. */
 .face-preview-wrap {
     position: relative;
     display: inline-block;
+    height: 100%;
     line-height: 0;
 }
 
@@ -19,10 +19,6 @@
     max-height: 100%;
 }
 
-.face-preview-wrap img {
-    display: block;
-    /* max-height controlled by .detail-preview img in detail.css */
-}
 
 /* In the viewer, restore the cv-page height constraint so the image
    does not grow to its natural resolution when wrapped for overlays. */

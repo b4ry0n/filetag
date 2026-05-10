@@ -470,14 +470,6 @@ function _faceRenderOverlays(path) {
         return;
     }
 
-    // Constrain the image height to the preview panel so portrait images do
-    // not overflow. The wrapper has no explicit size and shrinks to the image.
-    const preview = document.querySelector('#detail .detail-preview');
-    if (preview) {
-        const h = preview.getBoundingClientRect().height;
-        if (h > 0) img.style.maxHeight = h + 'px';
-    }
-
     // If layout hasn't happened yet (offsetWidth = 0), retry on the next frame.
     if (!img.offsetWidth || !img.offsetHeight) {
         requestAnimationFrame(() => _faceRenderOverlays(path));
@@ -554,28 +546,10 @@ function _faceRefreshDetailControls(path) {
 // changes vh, or the user resizes the browser). Debounced to 150 ms.
 // ---------------------------------------------------------------------------
 
-/** Public: update img.style.maxHeight after separator drag so the image
- * (and its wrapper) resize to fit the new panel height. Box percentages
- * auto-scale with the wrapper — no DOM rebuild needed. */
-function faceRerenderPreviewBoxes() {
-    const wrap = document.querySelector('#detail .face-preview-wrap');
-    if (!wrap) return;
-    const img = wrap.querySelector('img');
-    if (!img) return;
-    const preview = document.querySelector('#detail .detail-preview');
-    if (!preview) return;
-    const h = preview.getBoundingClientRect().height;
-    if (h > 0) img.style.maxHeight = h + 'px';
-}
+/** Public: no-op — face boxes use percentage positions and scale automatically.
+ * Called by main.js after separator drag; kept for API compatibility. */
+function faceRerenderPreviewBoxes() {}
 
-// Window resize: the panel height is fixed in px by JS so the image does not
-// change — no action needed. Keep the listener only for the horizontal case
-// where panel width changes (landscape images may reflow).
-let _faceDetailResizeTimer = null;
-window.addEventListener('resize', () => {
-    clearTimeout(_faceDetailResizeTimer);
-    _faceDetailResizeTimer = setTimeout(faceRerenderPreviewBoxes, 150);
-});
 
 // ---------------------------------------------------------------------------
 // Assign dialog
