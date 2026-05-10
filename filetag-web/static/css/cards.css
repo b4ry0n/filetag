@@ -278,6 +278,23 @@
     background: var(--bg-surface);
 }
 
+/* Icon-only cards (no thumbnail) — use theme text colours so the label is
+ * readable against the card background in both light and dark mode.
+ * Thumbnail cards keep the hardcoded white-with-stroke overlay style above,
+ * which works over photo backgrounds regardless of the colour scheme. */
+.card:has(.card-icon) .card-name {
+    color: var(--text);
+    -webkit-text-stroke: 0;
+    paint-order: normal;
+    text-shadow: none;
+}
+.card:has(.card-icon) .card-meta {
+    color: var(--text-secondary);
+    -webkit-text-stroke: 0;
+    paint-order: normal;
+    text-shadow: none;
+}
+
 /* Folder cards */
 .card.folder .card-preview { background: transparent; }
 
