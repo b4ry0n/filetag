@@ -445,24 +445,24 @@ fn xml_unescape(s: &str) -> String {
 /// ready to be applied with `db::apply_tag`.
 ///
 /// Tag mapping:
-/// * `Series`       → `comic/series`  with value
-/// * `Number`       → `comic/issue`   with value
-/// * `Volume`       → `comic/volume`  with value
-/// * `Title`        → `comic/title`   with value (skipped when identical to Series)
-/// * `Year`         → `year`          with value
-/// * `Publisher`    → `comic/publisher` with value
-/// * `LanguageISO`  → `language`      with value
-/// * `Format`       → `comic/format`  with value
-/// * `AgeRating`    → `comic/age-rating` with value
-/// * `Writer`       → `comic/writer`  with value  (comma-list → multiple)
-/// * `Penciller`    → `comic/penciller` with value (comma-list → multiple)
-/// * `Inker`        → `comic/inker`   with value  (comma-list → multiple)
-/// * `Colorist`     → `comic/colorist` with value (comma-list → multiple)
-/// * `CoverArtist`  → `comic/cover-artist` with value (comma-list → multiple)
-/// * `Genre`        → `genre`         with value  (comma-list → multiple)
-/// * `Tags`         → `comic/tags`   with value  (comma-list → multiple)
-/// * `Manga`        → `manga`         no value    (only when "Yes" / "YesAndRightToLeft")
-/// * `BlackAndWhite`→ `black-and-white` no value  (only when "Yes")
+/// * `Series`       → `comic/series`        with value
+/// * `Number`       → `comic/number`        with value
+/// * `Volume`       → `comic/volume`        with value
+/// * `Title`        → `comic/title`         with value (skipped when identical to Series)
+/// * `Year`         → `comic/year`          with value
+/// * `Publisher`    → `comic/publisher`     with value
+/// * `LanguageISO`  → `comic/language`      with value
+/// * `Format`       → `comic/format`        with value
+/// * `AgeRating`    → `comic/age-rating`    with value
+/// * `Writer`       → `comic/writer`        with value  (comma-list → multiple)
+/// * `Penciller`    → `comic/penciller`     with value  (comma-list → multiple)
+/// * `Inker`        → `comic/inker`         with value  (comma-list → multiple)
+/// * `Colorist`     → `comic/colorist`      with value  (comma-list → multiple)
+/// * `CoverArtist`  → `comic/cover-artist`  with value  (comma-list → multiple)
+/// * `Genre`        → `comic/genre`         with value  (comma-list → multiple)
+/// * `Tags`         → `comic/tags/VALUE`    no value    (comma-list → multiple flat tags)
+/// * `Manga`        → `comic/manga`         no value    (only when "Yes" / "YesAndRightToLeft")
+/// * `BlackAndWhite`→ `comic/black-and-white` no value  (only when "Yes")
 pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
     let xml = std::str::from_utf8(xml_bytes)
         .unwrap_or("")
@@ -477,50 +477,32 @@ pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
 
     let mut tags: Vec<(String, String)> = Vec::new();
 
-    // Single-value fields: value becomes part of the hierarchical tag path.
-    for (xml_tag, ft_prefix) in [
+    // Single-value fields
+    for (xml_tag, ft_tag) in [
         ("Series", "comic/series"),
-        ("Number", "comic/issue"),
+        ("Number", "comic/number"),
         ("Volume", "comic/volume"),
+        ("Year", "comic/year"),
         ("Publisher", "comic/publisher"),
+        ("LanguageISO", "comic/language"),
         ("Format", "comic/format"),
         ("AgeRating", "comic/age-rating"),
     ] {
         if let Some(v) = xml_element(&xml, xml_tag) {
-            let v = xml_unescape(v);
-            if !v.is_empty() {
-                tags.push((format!("{ft_prefix}/{v}"), String::new()));
-            }
+            tags.push((ft_tag.to_owned(), xml_unescape(v)));
         }
     }
 
-    // Title: hierarchical tag, skip when identical to Series.
-    let series_val = xml_element(&xml, "Series")
-        .map(xml_unescape)
-        .unwrap_or_default();
-    if let Some(v) = xml_element(&xml, "Title") {
-        let v = xml_unescape(v);
-        if !v.is_empty() && v != series_val {
-            tags.push((format!("comic/title/{v}"), String::new()));
-        }
+    // Title: skip when identical to Series (avoids duplicate information)
+    let series_val = xml_element(&xml, "Series").unwrap_or("").to_owned();
+    if let Some(v) = xml_element(&xml, "Title")
+        && v != series_val
+    {
+        tags.push(("comic/title".to_owned(), xml_unescape(v)));
     }
 
-    // Key=value exceptions: tag name is fixed, raw value stored as tag value.
-    if let Some(v) = xml_element(&xml, "Year") {
-        let v = xml_unescape(v);
-        if !v.is_empty() {
-            tags.push(("comic/year".to_owned(), v));
-        }
-    }
-    if let Some(v) = xml_element(&xml, "LanguageISO") {
-        let v = xml_unescape(v);
-        if !v.is_empty() {
-            tags.push(("comic/language".to_owned(), v));
-        }
-    }
-
-    // Comma-list creator fields: each name becomes a hierarchical sub-tag.
-    for (xml_tag, ft_prefix) in [
+    // Comma-list creator fields
+    for (xml_tag, ft_tag) in [
         ("Writer", "comic/writer"),
         ("Penciller", "comic/penciller"),
         ("Inker", "comic/inker"),
@@ -529,35 +511,29 @@ pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
     ] {
         if let Some(v) = xml_element(&xml, xml_tag) {
             for val in split_csv(v) {
-                let val = xml_unescape(&val);
-                if !val.is_empty() {
-                    tags.push((format!("{ft_prefix}/{val}"), String::new()));
-                }
+                tags.push((ft_tag.to_owned(), xml_unescape(&val)));
             }
         }
     }
 
-    // Genre: comma-list, each genre becomes a hierarchical sub-tag.
+    // Genre: comma-list with value
     if let Some(v) = xml_element(&xml, "Genre") {
         for val in split_csv(v) {
-            let val = xml_unescape(&val);
-            if !val.is_empty() {
-                tags.push((format!("comic/genre/{val}"), String::new()));
-            }
+            tags.push(("comic/genre".to_owned(), xml_unescape(&val)));
         }
     }
 
-    // Tags: comma-list, each tag becomes a hierarchical sub-tag.
+    // Tags: comma-list → flat tags under comic/tags/ (no value)
     if let Some(v) = xml_element(&xml, "Tags") {
         for val in split_csv(v) {
             let val = xml_unescape(&val);
             if !val.is_empty() {
-                tags.push((format!("comic/tags/{val}"), String::new()));
+                tags.push((format!("comic/tags/{}", val), String::new()));
             }
         }
     }
 
-    // Boolean flags: plain tags under comic/.
+    // Boolean flags
     if let Some(v) = xml_element(&xml, "Manga")
         && (v == "Yes" || v == "YesAndRightToLeft")
     {
