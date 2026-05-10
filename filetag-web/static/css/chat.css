@@ -208,7 +208,8 @@
     transition: opacity .15s, color .15s;
     align-self: center;
     margin-bottom: 1px;
-}\n.chat-msg:hover .chat-edit-btn { opacity: 1; }
+}
+.chat-msg:hover .chat-edit-btn { opacity: 1; }
 .chat-edit-btn:hover { color: var(--primary); background: var(--primary-light); }
 
 .chat-bubble {
