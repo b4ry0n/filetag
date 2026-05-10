@@ -729,8 +729,11 @@
         <div class="chat-input-wrap">
             <textarea id="chat-input" class="chat-input" rows="2"
                 placeholder="Ask anything…"
-                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage()}"></textarea>
-            <button id="chat-send-btn" class="chat-send-btn" onclick="sendChatMessage()" data-i18n="chat.send">Send</button>
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage()}else if(event.key==='Escape'){cancelChatEdit()}"></textarea>
+            <div class="chat-input-actions">
+                <button id="chat-cancel-btn" class="chat-cancel-btn" onclick="cancelChatEdit()" hidden data-i18n="chat.cancel">Cancel</button>
+                <button id="chat-send-btn" class="chat-send-btn" onclick="sendChatMessage()" data-i18n="chat.send">Send</button>
+            </div>
         </div>
     </div>
 </body>

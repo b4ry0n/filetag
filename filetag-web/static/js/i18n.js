@@ -160,6 +160,7 @@ const TRANSLATIONS = {
 
         'chat.title': 'Chat',
         'chat.send':  'Send',
+        'chat.cancel': 'Cancel',
         'chat.hint':  'Ask anything about the selected file(s).',
         'chat.picker-empty': 'No files in current directory.',
 
@@ -469,6 +470,7 @@ const TRANSLATIONS = {
         'comic.error':                  'ComicInfo-import mislukt',
 
         'chat.send':  'Verstuur',
+        'chat.cancel': 'Annuleren',
         'chat.hint':  'Stel een vraag over het geselecteerde bestand of de geselecteerde bestanden.',
         'chat.picker-empty': 'Geen bestanden in de huidige map.',
 

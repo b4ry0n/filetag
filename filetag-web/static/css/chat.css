@@ -243,6 +243,31 @@
     align-items: flex-end;
 }
 
+.chat-input-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: stretch;
+    flex-shrink: 0;
+}
+
+.chat-cancel-btn {
+    padding: 5px 10px;
+    background: none;
+    color: var(--text-secondary, #888);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.chat-cancel-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text);
+}
+
 .chat-input {
     flex: 1;
     resize: none;

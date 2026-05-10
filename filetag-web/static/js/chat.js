@@ -6,6 +6,7 @@ let _chatMessages = [];   // [{role, content}]
 let _chatFiles    = [];   // absolute paths of files in context
 let _chatSending  = false;
 let _chatViewerPages = null; // non-null when opened from viewer: array of virtual page paths
+let _chatEditSnapshot = null; // saved messages array while editing a message
 
 function _initChatResize() {
     const panel = document.getElementById('chat-panel');
@@ -268,6 +269,8 @@ function _renderChatMessages() {
 
 function editChatMessage(index) {
     if (_chatSending) return;
+    // Save the full history so the edit can be cancelled.
+    _chatEditSnapshot = _chatMessages.slice();
     // Remove this message and everything after it from the history.
     const text = _chatMessages[index].content;
     _chatMessages = _chatMessages.slice(0, index);
@@ -276,9 +279,27 @@ function editChatMessage(index) {
     input.value = text;
     _renderChatMessages();
     _updateChatVideoBar();
+    _updateChatCancelBtn();
     input.focus();
     // Place cursor at end.
     input.selectionStart = input.selectionEnd = input.value.length;
+}
+
+function cancelChatEdit() {
+    if (!_chatEditSnapshot) return;
+    _chatMessages = _chatEditSnapshot;
+    _chatEditSnapshot = null;
+    const input = document.getElementById('chat-input');
+    input.value = '';
+    _renderChatMessages();
+    _updateChatVideoBar();
+    _updateChatCancelBtn();
+    input.focus();
+}
+
+function _updateChatCancelBtn() {
+    const btn = document.getElementById('chat-cancel-btn');
+    if (btn) btn.hidden = !_chatEditSnapshot;
 }
 
 async function sendChatMessage() {
@@ -287,8 +308,10 @@ async function sendChatMessage() {
     if (!text || _chatSending) return;
 
     _chatMessages = [..._chatMessages, { role: 'user', content: text }];
+    _chatEditSnapshot = null;  // edit committed
     input.value   = '';
     _chatSending  = true;
+    _updateChatCancelBtn();
     document.getElementById('chat-send-btn').disabled = true;
 
     // Optimistically show user message + loading placeholder
