@@ -5,6 +5,7 @@
 let _chatMessages = [];   // [{role, content}]
 let _chatFiles    = [];   // absolute paths of files in context
 let _chatSending  = false;
+let _chatViewerPages = null; // non-null when opened from viewer: array of virtual page paths
 
 function _initChatResize() {
     const panel = document.getElementById('chat-panel');
@@ -169,6 +170,26 @@ function _updateChatVideoBar() {
     });
 }
 
+// Open chat from the media viewer with a specific page pre-loaded.
+// viewerPages: ordered array of all virtual paths in the archive/dir.
+function openChatFromViewer(currentPath, viewerPages) {
+    _chatFiles       = [currentPath];
+    _chatMessages    = [];
+    _chatSending     = false;
+    _chatViewerPages = viewerPages;
+    _chatPickerOpen  = false;
+
+    const menu = document.getElementById('more-menu');
+    if (menu) menu.hidden = true;
+
+    const panel = document.getElementById('chat-panel');
+    panel.hidden = false;
+    _renderChatFiles();
+    _updateChatVideoBar();
+    _renderChatMessages();
+    document.getElementById('chat-input').focus();
+}
+
 function openChat() {
     const files = state.selectedPaths.size > 0
         ? [...state.selectedPaths]
@@ -196,8 +217,14 @@ function openChat() {
 function closeChat() {
     const panel = document.getElementById('chat-panel');
     panel.hidden = true;
-    _chatMessages = [];
-    _chatFiles    = [];
+    _chatMessages    = [];
+    _chatFiles       = [];
+    _chatViewerPages = null;
+    _chatPickerOpen  = false;
+    const picker = document.getElementById('chat-file-picker');
+    if (picker) picker.hidden = true;
+    const btn = document.getElementById('chat-add-files-btn');
+    if (btn) btn.classList.remove('chat-icon-btn--active');
 }
 
 function chatClearHistory() {
@@ -310,8 +337,27 @@ function chatToggleFilePicker() {
 function _renderChatFilePicker() {
     const picker = document.getElementById('chat-file-picker');
     if (!picker) return;
+    const chatSet = new Set(_chatFiles);
+
+    // In viewer context: show archive/dir pages instead of state.entries.
+    if (_chatViewerPages) {
+        if (_chatViewerPages.length === 0) {
+            picker.innerHTML = `<span class="chat-picker-empty">${t('chat.picker-empty')}</span>`;
+            return;
+        }
+        picker.innerHTML = _chatViewerPages.map(path => {
+            const checked = chatSet.has(path);
+            const name = path.includes('::') ? path.split('::').pop() : (path.split('/').pop() || path);
+            return `<label class="chat-picker-item${checked ? ' chat-picker-item--active' : ''}">
+                <input type="checkbox" ${checked ? 'checked' : ''} onchange="chatPickerToggleFile('${jesc(path)}', this.checked)">
+                <span class="chat-picker-name" title="${esc(path)}">${esc(name)}</span>
+            </label>`;
+        }).join('');
+        return;
+    }
+
+    // Default: show directory entries.
     const entries = (state.entries || []).filter(e => !e.is_dir);
-    const chatSet  = new Set(_chatFiles);
     if (entries.length === 0) {
         picker.innerHTML = `<span class="chat-picker-empty">${t('chat.picker-empty')}</span>`;
         return;

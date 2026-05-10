@@ -815,6 +815,7 @@ function _cvKeyHandler(e) {
     else if (e.key === 'r' || e.key === 'R') cvToggleRtl();
     else if (e.key === 'v' || e.key === 'V') cvToggleScroll();
     else if (e.key === 'h' || e.key === 'H') cvToggleHScroll();
+    else if (e.key === 'c' || e.key === 'C') cvOpenChat();
     else if (e.key === '+' || e.key === '=') cvZoomIn();
     else if (e.key === '-') cvZoomOut();
     else if (e.key === '0') cvResetZoom();
@@ -925,4 +926,24 @@ function _cvScrollNav(dir) {
         _cvSetNav(prevIdx);
         doScroll(sz <= vSize + 2 ? off - (vSize - sz) / 2 : off + sz - vSize);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Chat from viewer
+// ---------------------------------------------------------------------------
+
+/** Open the AI chat with the current viewer page as context. */
+function cvOpenChat() {
+    if (typeof openChatFromViewer !== 'function') return;
+    let currentPath, viewerPages;
+    if (_cv.mode === 'dir') {
+        currentPath = _cv.filePaths[_cv.current];
+        viewerPages = _cv.filePaths.slice();
+    } else {
+        // zip / archive mode: build virtual paths  archivePath::pageName
+        const base = _cv.path;
+        currentPath = base + '::' + _cv.pages[_cv.current];
+        viewerPages = _cv.pages.map(name => base + '::' + name);
+    }
+    openChatFromViewer(currentPath, viewerPages);
 }
