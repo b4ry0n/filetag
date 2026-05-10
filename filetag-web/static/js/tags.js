@@ -609,8 +609,8 @@ function renderTagTreeNodes(nodeMap, depth) {
         nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
     } else if (depth === 0 && mode === 'groups-first' && !f) {
         nodes.sort((a, b) => {
-            const ag = a.children.size > 0 ? 0 : 1;
-            const bg = b.children.size > 0 ? 0 : 1;
+            const ag = (a.children.size > 0 || (a.tag && a.tag.has_values)) ? 0 : 1;
+            const bg = (b.children.size > 0 || (b.tag && b.tag.has_values)) ? 0 : 1;
             if (ag !== bg) return ag - bg;
             return a.segment.localeCompare(b.segment);
         });
