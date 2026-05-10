@@ -240,9 +240,12 @@
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 6px 6px 6px;
+    padding: 24px 6px 6px;
     text-align: center;
     z-index: 1;
+    /* Gradient scrim: ensures text is always readable over any photo */
+    background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.55) 60%);
+    border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .card-name {
@@ -255,21 +258,15 @@
     -webkit-box-orient: vertical;
     word-break: break-word;
     line-height: 1.3;
-    color: #1a1b1e;
-    /* paint-order puts the stroke behind the fill — letters stay crisp
-     * even at thicker values, no hollow/painted look */
-    -webkit-text-stroke: 2px rgba(255,255,255,0.70);
-    paint-order: stroke fill;
-    text-shadow: 0 1px 6px rgba(255,255,255,0.25);
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.40);
 }
 
 .card-meta {
     font-size: clamp(9px, calc(var(--card-size, 140px) * 0.072), 13px);
-    color: rgba(0,0,0,0.85);
+    color: rgba(255,255,255,0.85);
     margin-top: 2px;
-    -webkit-text-stroke: 1.5px rgba(255,255,255,0.65);
-    paint-order: stroke fill;
-    text-shadow: 0 1px 4px rgba(255,255,255,0.20);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
 }
 
 /* Icon-only cards: icon fills the full card; label overlays at bottom.
@@ -280,8 +277,12 @@
 
 /* Icon-only cards (no thumbnail) — use theme text colours so the label is
  * readable against the card background in both light and dark mode.
- * Thumbnail cards keep the hardcoded white-with-stroke overlay style above,
- * which works over photo backgrounds regardless of the colour scheme. */
+ * The gradient scrim from .card-body is hidden for icon cards because the
+ * background is already a flat surface colour (var(--bg-surface)). */
+.card:has(.card-icon) .card-body {
+    background: none;
+    padding-top: 6px;
+}
 .card:has(.card-icon) .card-name {
     color: var(--text);
     -webkit-text-stroke: 0;
@@ -436,20 +437,4 @@
     padding: 1px 5px;
     z-index: 1;
     pointer-events: none;
-}
-
-/* Dark mode: revert thumbnail card text to white fill with dark stroke —
- * the inverse of the default light-mode style above.
- * Icon-only cards keep their theme-colour override (higher specificity). */
-@media (prefers-color-scheme: dark) {
-    .card-name {
-        color: #fff;
-        -webkit-text-stroke: 2px rgba(0,0,0,0.60);
-        text-shadow: 0 1px 6px rgba(0,0,0,0.40);
-    }
-    .card-meta {
-        color: rgba(255,255,255,0.85);
-        -webkit-text-stroke: 1.5px rgba(0,0,0,0.55);
-        text-shadow: 0 1px 4px rgba(0,0,0,0.35);
-    }
 }
