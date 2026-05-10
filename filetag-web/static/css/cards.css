@@ -244,7 +244,7 @@
     text-align: center;
     z-index: 1;
     /* Gradient scrim: ensures text is always readable over any photo */
-    background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.55) 60%);
+    background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.40) 60%);
     border-radius: 0 0 var(--radius) var(--radius);
 }
 

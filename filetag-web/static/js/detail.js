@@ -389,15 +389,18 @@ function _trickplayAttach(img, path) {
     /** Recompute spriteEl position from the card's current viewport rect. */
     function reposition() {
         if (!spriteEl) return;
-        const cardRect = wrap.getBoundingClientRect();
-        const popupW = parseFloat(spriteEl.style.width);
-        const popupH = parseFloat(spriteEl.style.height);
-        let left = cardRect.left + (cardRect.width  - popupW) / 2;
-        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-        spriteEl.style.left = left.toFixed(1) + 'px';
-        spriteEl.style.top  = top.toFixed(1)  + 'px';
+        requestAnimationFrame(() => {
+            if (!spriteEl) return;
+            const cardRect = wrap.getBoundingClientRect();
+            const popupW = parseFloat(spriteEl.style.width);
+            const popupH = parseFloat(spriteEl.style.height);
+            let left = cardRect.left + (cardRect.width  - popupW) / 2;
+            let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+            left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+            top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+            spriteEl.style.left = left.toFixed(1) + 'px';
+            spriteEl.style.top  = top.toFixed(1)  + 'px';
+        });
     }
 
     /** Jump to a discrete frame in the floating overlay. */
@@ -587,15 +590,18 @@ function _thumbHoverAttach(img, blobUrl) {
 
     function repositionPopup() {
         if (!popupEl) return;
-        const cardRect = wrap.getBoundingClientRect();
-        const popupW = parseFloat(popupEl.style.width);
-        const popupH = parseFloat(popupEl.style.height);
-        let left = cardRect.left + (cardRect.width  - popupW) / 2;
-        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-        popupEl.style.left = left.toFixed(1) + 'px';
-        popupEl.style.top  = top.toFixed(1)  + 'px';
+        requestAnimationFrame(() => {
+            if (!popupEl) return;
+            const cardRect = wrap.getBoundingClientRect();
+            const popupW = parseFloat(popupEl.style.width);
+            const popupH = parseFloat(popupEl.style.height);
+            let left = cardRect.left + (cardRect.width  - popupW) / 2;
+            let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+            left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+            top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+            popupEl.style.left = left.toFixed(1) + 'px';
+            popupEl.style.top  = top.toFixed(1)  + 'px';
+        });
     }
 
     function teardownPopup() {
