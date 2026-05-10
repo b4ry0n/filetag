@@ -477,32 +477,50 @@ pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
 
     let mut tags: Vec<(String, String)> = Vec::new();
 
-    // Single-value fields
-    for (xml_tag, ft_tag) in [
+    // Single-value fields: value becomes part of the hierarchical tag path.
+    for (xml_tag, ft_prefix) in [
         ("Series", "comic/series"),
         ("Number", "comic/issue"),
         ("Volume", "comic/volume"),
-        ("Year", "year"),
         ("Publisher", "comic/publisher"),
-        ("LanguageISO", "language"),
         ("Format", "comic/format"),
         ("AgeRating", "comic/age-rating"),
     ] {
         if let Some(v) = xml_element(&xml, xml_tag) {
-            tags.push((ft_tag.to_owned(), xml_unescape(v)));
+            let v = xml_unescape(v);
+            if !v.is_empty() {
+                tags.push((format!("{ft_prefix}/{v}"), String::new()));
+            }
         }
     }
 
-    // Title: skip when identical to Series (avoids duplicate information)
-    let series_val = xml_element(&xml, "Series").unwrap_or("").to_owned();
-    if let Some(v) = xml_element(&xml, "Title")
-        && v != series_val
-    {
-        tags.push(("comic/title".to_owned(), xml_unescape(v)));
+    // Title: hierarchical tag, skip when identical to Series.
+    let series_val = xml_element(&xml, "Series")
+        .map(xml_unescape)
+        .unwrap_or_default();
+    if let Some(v) = xml_element(&xml, "Title") {
+        let v = xml_unescape(v);
+        if !v.is_empty() && v != series_val {
+            tags.push((format!("comic/title/{v}"), String::new()));
+        }
     }
 
-    // Comma-list creator fields
-    for (xml_tag, ft_tag) in [
+    // Key=value exceptions: tag name is fixed, raw value stored as tag value.
+    if let Some(v) = xml_element(&xml, "Year") {
+        let v = xml_unescape(v);
+        if !v.is_empty() {
+            tags.push(("comic/year".to_owned(), v));
+        }
+    }
+    if let Some(v) = xml_element(&xml, "LanguageISO") {
+        let v = xml_unescape(v);
+        if !v.is_empty() {
+            tags.push(("comic/language".to_owned(), v));
+        }
+    }
+
+    // Comma-list creator fields: each name becomes a hierarchical sub-tag.
+    for (xml_tag, ft_prefix) in [
         ("Writer", "comic/writer"),
         ("Penciller", "comic/penciller"),
         ("Inker", "comic/inker"),
@@ -511,38 +529,44 @@ pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
     ] {
         if let Some(v) = xml_element(&xml, xml_tag) {
             for val in split_csv(v) {
-                tags.push((ft_tag.to_owned(), xml_unescape(&val)));
+                let val = xml_unescape(&val);
+                if !val.is_empty() {
+                    tags.push((format!("{ft_prefix}/{val}"), String::new()));
+                }
             }
         }
     }
 
-    // Genre: comma-list with value
+    // Genre: comma-list, each genre becomes a hierarchical sub-tag.
     if let Some(v) = xml_element(&xml, "Genre") {
         for val in split_csv(v) {
-            tags.push(("genre".to_owned(), xml_unescape(&val)));
+            let val = xml_unescape(&val);
+            if !val.is_empty() {
+                tags.push((format!("comic/genre/{val}"), String::new()));
+            }
         }
     }
 
-    // Tags: comma-list under comic/tags with value
+    // Tags: comma-list, each tag becomes a hierarchical sub-tag.
     if let Some(v) = xml_element(&xml, "Tags") {
         for val in split_csv(v) {
             let val = xml_unescape(&val);
             if !val.is_empty() {
-                tags.push(("comic/tags".to_owned(), val));
+                tags.push((format!("comic/tags/{val}"), String::new()));
             }
         }
     }
 
-    // Boolean flags
+    // Boolean flags: plain tags under comic/.
     if let Some(v) = xml_element(&xml, "Manga")
         && (v == "Yes" || v == "YesAndRightToLeft")
     {
-        tags.push(("manga".to_owned(), String::new()));
+        tags.push(("comic/manga".to_owned(), String::new()));
     }
     if let Some(v) = xml_element(&xml, "BlackAndWhite")
         && v == "Yes"
     {
-        tags.push(("black-and-white".to_owned(), String::new()));
+        tags.push(("comic/black-and-white".to_owned(), String::new()));
     }
 
     tags
