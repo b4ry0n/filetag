@@ -3,13 +3,12 @@
    --------------------------------------------------------------------------- */
 
 /* Wrapper around the preview image that allows absolute-positioned overlays.
- * height:100% gives the wrapper a definite height (= .detail-preview height)
- * so that max-height:100% on the img resolves correctly. Without an explicit
- * height on the parent, percentage max-height on the child is ignored. */
+ * display:inline-block with no explicit size: the wrapper shrinks to the
+ * rendered image dimensions. Percentage-positioned .face-box children then
+ * auto-scale with the image — no JS recalculation needed on resize. */
 .face-preview-wrap {
     position: relative;
     display: inline-block;
-    height: 100%;
     line-height: 0;
 }
 

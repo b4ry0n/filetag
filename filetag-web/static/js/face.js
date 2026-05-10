@@ -470,6 +470,14 @@ function _faceRenderOverlays(path) {
         return;
     }
 
+    // Constrain the image height to the preview panel so portrait images do
+    // not overflow. The wrapper has no explicit size and shrinks to the image.
+    const preview = document.querySelector('#detail .detail-preview');
+    if (preview) {
+        const h = preview.getBoundingClientRect().height;
+        if (h > 0) img.style.maxHeight = h + 'px';
+    }
+
     // If layout hasn't happened yet (offsetWidth = 0), retry on the next frame.
     if (!img.offsetWidth || !img.offsetHeight) {
         requestAnimationFrame(() => _faceRenderOverlays(path));
@@ -480,8 +488,6 @@ function _faceRenderOverlays(path) {
     // img.naturalWidth/Height (correct for regular images, wrong for zip-thumb previews).
     const origW = state.faceImageWidth  || img.naturalWidth;
     const origH = state.faceImageHeight || img.naturalHeight;
-    const scaleX = img.offsetWidth  / origW;
-    const scaleY = img.offsetHeight / origH;
 
     for (const det of state.faceDetections) {
         // Skip detections whose box falls entirely outside the image area —
@@ -497,10 +503,12 @@ function _faceRenderOverlays(path) {
 
         const box = document.createElement('div');
         box.className = 'face-box' + (det.subject_name ? ' assigned' : '');
-        box.style.left   = (bx * scaleX) + 'px';
-        box.style.top    = (by * scaleY) + 'px';
-        box.style.width  = (bw * scaleX) + 'px';
-        box.style.height = (bh * scaleY) + 'px';
+        // Percentage positions relative to the wrapper (= the rendered image).
+        // These scale automatically when the image size changes — no JS needed.
+        box.style.left   = (bx / origW * 100) + '%';
+        box.style.top    = (by / origH * 100) + '%';
+        box.style.width  = (bw / origW * 100) + '%';
+        box.style.height = (bh / origH * 100) + '%';
         box.title = det.subject_name || t('face.unknown');
         box.dataset.detId = det.id;
         box.onclick = (e) => { e.stopPropagation(); _faceShowAssignDialog(det, box); };
@@ -546,20 +554,27 @@ function _faceRefreshDetailControls(path) {
 // changes vh, or the user resizes the browser). Debounced to 150 ms.
 // ---------------------------------------------------------------------------
 
-/** Public: re-render face bounding boxes on the detail preview. Called by
- * main.js after separator drag and by the resize handler below. */
+/** Public: update img.style.maxHeight after separator drag so the image
+ * (and its wrapper) resize to fit the new panel height. Box percentages
+ * auto-scale with the wrapper — no DOM rebuild needed. */
 function faceRerenderPreviewBoxes() {
-    if (state.faceDetections && state.faceDetections.length && state.faceDetectionsPath) {
-        _faceRenderOverlays(state.faceDetectionsPath);
-    }
+    const wrap = document.querySelector('#detail .face-preview-wrap');
+    if (!wrap) return;
+    const img = wrap.querySelector('img');
+    if (!img) return;
+    const preview = document.querySelector('#detail .detail-preview');
+    if (!preview) return;
+    const h = preview.getBoundingClientRect().height;
+    if (h > 0) img.style.maxHeight = h + 'px';
 }
 
+// Window resize: the panel height is fixed in px by JS so the image does not
+// change — no action needed. Keep the listener only for the horizontal case
+// where panel width changes (landscape images may reflow).
 let _faceDetailResizeTimer = null;
 window.addEventListener('resize', () => {
     clearTimeout(_faceDetailResizeTimer);
-    _faceDetailResizeTimer = setTimeout(() => {
-        faceRerenderPreviewBoxes();
-    }, 150);
+    _faceDetailResizeTimer = setTimeout(faceRerenderPreviewBoxes, 150);
 });
 
 // ---------------------------------------------------------------------------
