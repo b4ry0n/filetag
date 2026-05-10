@@ -375,6 +375,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/zip/thumb", get(archive::api_zip_thumb))
         .route("/api/zip/entries", get(archive::api_zip_entries))
         .route("/api/dir/images", get(archive::api_dir_images))
+        .route(
+            "/api/comic/import-metadata",
+            post(api::api_comic_import_metadata),
+        )
         .route("/preview/{*path}", get(preview::preview_handler))
         .route("/transcode/{*path}", get(video::transcode_handler))
         .route("/thumb/{*path}", get(preview::thumb_handler))

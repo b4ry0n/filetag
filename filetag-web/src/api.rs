@@ -1479,6 +1479,63 @@ pub async fn api_rename_tag(
     Ok(Json(serde_json::json!({ "ok": ok, "merged": merged })))
 }
 
+// ---------------------------------------------------------------------------
+// Comic metadata import
+// ---------------------------------------------------------------------------
+
+/// `POST /api/comic/import-metadata` — read `ComicInfo.xml` from a comic
+/// archive and apply the metadata fields as tags.
+///
+/// Only archives that contain a `ComicInfo.xml` entry are supported.  Fields
+/// are mapped to a `comic/` tag hierarchy; see [`archive::parse_comic_info_tags`]
+/// for the full mapping.  Existing tags are not removed; duplicate entries are
+/// silently ignored (`INSERT OR IGNORE`).
+///
+/// Returns `{ imported: usize, tags: [{name, value}] }`.
+pub async fn api_comic_import_metadata(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ComicImportRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, req.dir.as_deref())?;
+    let (conn, effective_root, effective_rel) =
+        open_for_file_op(db_root, &req.path).map_err(AppError)?;
+
+    let abs_path = effective_root.join(&effective_rel);
+
+    // Read ComicInfo.xml from the archive (blocking I/O).
+    let xml_bytes =
+        tokio::task::spawn_blocking(move || crate::archive::archive_read_comic_info(&abs_path))
+            .await
+            .map_err(|e| AppError(anyhow::anyhow!("task panicked: {e}")))?
+            .map_err(AppError)?;
+
+    let xml_bytes = xml_bytes
+        .ok_or_else(|| AppError(anyhow::anyhow!("No ComicInfo.xml found in this archive")))?;
+
+    let tag_pairs = crate::archive::parse_comic_info_tags(&xml_bytes);
+
+    // Index the file if not yet present, then apply tags.
+    let file_id = db::get_or_index_file(&conn, &effective_rel, &effective_root)
+        .map_err(AppError)?
+        .id;
+
+    let mut result_tags: Vec<serde_json::Value> = Vec::new();
+    for (tag_name, value) in &tag_pairs {
+        let tag_id = db::get_or_create_tag(&conn, tag_name).map_err(AppError)?;
+        let val = if value.is_empty() {
+            None
+        } else {
+            Some(value.as_str())
+        };
+        db::apply_tag(&conn, file_id, tag_id, val, None).map_err(AppError)?;
+        result_tags.push(serde_json::json!({ "name": tag_name, "value": value }));
+    }
+
+    Ok(Json(
+        serde_json::json!({ "imported": result_tags.len(), "tags": result_tags }),
+    ))
+}
+
 /// `POST /api/tag-color` — set or clear the display colour for a tag.
 pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,

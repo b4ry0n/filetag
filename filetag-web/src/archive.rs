@@ -372,6 +372,183 @@ pub fn archive_list_entries_raw(path: &Path) -> anyhow::Result<Vec<(String, u64,
 }
 
 // ---------------------------------------------------------------------------
+// ComicInfo.xml support
+// ---------------------------------------------------------------------------
+
+/// Read the raw bytes of `ComicInfo.xml` from a comic archive, if present.
+///
+/// The filename is matched case-insensitively and may be in a subdirectory.
+/// Returns `Ok(None)` when the archive contains no ComicInfo entry.
+pub fn archive_read_comic_info(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+    let entries = archive_list_entries_raw(path)?;
+    let entry_name = entries
+        .iter()
+        .find(|(name, _, _)| {
+            let lc = name.to_lowercase();
+            lc == "comicinfo.xml" || lc.ends_with("/comicinfo.xml")
+        })
+        .map(|(name, _, _)| name.clone());
+
+    match entry_name {
+        None => Ok(None),
+        Some(name) => {
+            let (bytes, _mime) = archive_read_entry(path, &name)?;
+            Ok(Some(bytes))
+        }
+    }
+}
+
+/// Extract a text element from a flat XML string.
+///
+/// Matches `<Tag>content</Tag>` and `<Tag attrs...>content</Tag>`.  Returns
+/// `None` for self-closing elements, missing elements, or empty content.
+fn xml_element<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+    let close_tag = format!("</{tag}>");
+
+    // Match `<Tag>content</Tag>` (exact, no attributes)
+    let exact_open = format!("<{tag}>");
+    if let Some(start) = xml.find(&exact_open) {
+        let content_start = start + exact_open.len();
+        let end_off = xml[content_start..].find(&close_tag)?;
+        let text = xml[content_start..content_start + end_off].trim();
+        return if text.is_empty() { None } else { Some(text) };
+    }
+
+    // Match `<Tag ...>content</Tag>` (with attributes)
+    let attr_open = format!("<{tag} ");
+    if let Some(start) = xml.find(&attr_open) {
+        let after = start + attr_open.len();
+        let gt_off = xml[after..].find('>')?;
+        let before_gt = &xml[after..after + gt_off];
+        if before_gt.ends_with('/') {
+            return None; // Self-closing
+        }
+        let content_start = after + gt_off + 1;
+        let end_off = xml[content_start..].find(&close_tag)?;
+        let text = xml[content_start..content_start + end_off].trim();
+        return if text.is_empty() { None } else { Some(text) };
+    }
+
+    None
+}
+
+/// Unescape the five predefined XML entities.
+fn xml_unescape(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
+/// Parse a ComicInfo.xml byte string and return `(tag_name, value)` pairs
+/// ready to be applied with `db::apply_tag`.
+///
+/// Tag mapping:
+/// * `Series`       → `comic/series`  with value
+/// * `Number`       → `comic/issue`   with value
+/// * `Volume`       → `comic/volume`  with value
+/// * `Title`        → `comic/title`   with value (skipped when identical to Series)
+/// * `Year`         → `year`          with value
+/// * `Publisher`    → `comic/publisher` with value
+/// * `LanguageISO`  → `language`      with value
+/// * `Format`       → `comic/format`  with value
+/// * `AgeRating`    → `comic/age-rating` with value
+/// * `Writer`       → `comic/writer`  with value  (comma-list → multiple)
+/// * `Penciller`    → `comic/penciller` with value (comma-list → multiple)
+/// * `Inker`        → `comic/inker`   with value  (comma-list → multiple)
+/// * `Colorist`     → `comic/colorist` with value (comma-list → multiple)
+/// * `CoverArtist`  → `comic/cover-artist` with value (comma-list → multiple)
+/// * `Genre`        → `genre`         with value  (comma-list → multiple)
+/// * `Tags`         → plain tags      no value    (comma-list → multiple)
+/// * `Manga`        → `manga`         no value    (only when "Yes" / "YesAndRightToLeft")
+/// * `BlackAndWhite`→ `black-and-white` no value  (only when "Yes")
+pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
+    let xml = std::str::from_utf8(xml_bytes)
+        .unwrap_or("")
+        .replace('\r', "");
+
+    let split_csv = |s: &str| -> Vec<String> {
+        s.split(',')
+            .map(|p| p.trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .collect()
+    };
+
+    let mut tags: Vec<(String, String)> = Vec::new();
+
+    // Single-value fields
+    for (xml_tag, ft_tag) in [
+        ("Series", "comic/series"),
+        ("Number", "comic/issue"),
+        ("Volume", "comic/volume"),
+        ("Year", "year"),
+        ("Publisher", "comic/publisher"),
+        ("LanguageISO", "language"),
+        ("Format", "comic/format"),
+        ("AgeRating", "comic/age-rating"),
+    ] {
+        if let Some(v) = xml_element(&xml, xml_tag) {
+            tags.push((ft_tag.to_owned(), xml_unescape(v)));
+        }
+    }
+
+    // Title: skip when identical to Series (avoids duplicate information)
+    let series_val = xml_element(&xml, "Series").unwrap_or("").to_owned();
+    if let Some(v) = xml_element(&xml, "Title")
+        && v != series_val
+    {
+        tags.push(("comic/title".to_owned(), xml_unescape(v)));
+    }
+
+    // Comma-list creator fields
+    for (xml_tag, ft_tag) in [
+        ("Writer", "comic/writer"),
+        ("Penciller", "comic/penciller"),
+        ("Inker", "comic/inker"),
+        ("Colorist", "comic/colorist"),
+        ("CoverArtist", "comic/cover-artist"),
+    ] {
+        if let Some(v) = xml_element(&xml, xml_tag) {
+            for val in split_csv(v) {
+                tags.push((ft_tag.to_owned(), xml_unescape(&val)));
+            }
+        }
+    }
+
+    // Genre: comma-list with value
+    if let Some(v) = xml_element(&xml, "Genre") {
+        for val in split_csv(v) {
+            tags.push(("genre".to_owned(), xml_unescape(&val)));
+        }
+    }
+
+    // Tags: comma-list, plain tags with no value
+    if let Some(v) = xml_element(&xml, "Tags") {
+        for val in split_csv(v) {
+            let normalized = xml_unescape(&val).to_lowercase().replace(' ', "-");
+            if !normalized.is_empty() {
+                tags.push((normalized, String::new()));
+            }
+        }
+    }
+
+    // Boolean flags
+    if let Some(v) = xml_element(&xml, "Manga")
+        && (v == "Yes" || v == "YesAndRightToLeft")
+    {
+        tags.push(("manga".to_owned(), String::new()));
+    }
+    if let Some(v) = xml_element(&xml, "BlackAndWhite")
+        && v == "Yes"
+    {
+        tags.push(("black-and-white".to_owned(), String::new()));
+    }
+
+    tags
+}
+
+// ---------------------------------------------------------------------------
 // Directory image listing
 // ---------------------------------------------------------------------------
 

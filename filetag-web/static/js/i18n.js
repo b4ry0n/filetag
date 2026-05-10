@@ -148,6 +148,14 @@ const TRANSLATIONS = {
         'face.detect-timeout': 'Detection request timed out. Try again in a moment.',
         'face.detect-selection-btn': 'Detect faces in selection',
         'face.no-images-in-selection': 'No images in selection.',
+
+        // ComicInfo metadata import
+        'comic.import-btn':     'Import ComicInfo.xml',
+        'comic.importing':      'Importing…',
+        'comic.imported':       '{n} tag(s) imported from ComicInfo.xml',
+        'comic.not-found':      'No ComicInfo.xml found in this archive.',
+        'comic.error':          'ComicInfo import failed',
+
         'chat.title': 'Chat',
         'chat.send':  'Send',
         'chat.hint':  'Ask anything about the selected file(s).',
@@ -447,6 +455,14 @@ const TRANSLATIONS = {
         'face.detect-timeout': 'Detectie time-out. Probeer opnieuw.',
         'face.detect-selection-btn': 'Gezichten herkennen in selectie',
         'face.no-images-in-selection': 'Geen afbeeldingen in de selectie.',
+
+        // ComicInfo metadata import
+        'comic.import-btn':     'ComicInfo.xml importeren',
+        'comic.importing':      'Importeren…',
+        'comic.imported':       '{n} tag(s) geïmporteerd uit ComicInfo.xml',
+        'comic.not-found':      'Geen ComicInfo.xml gevonden in dit archief.',
+        'comic.error':          'ComicInfo-import mislukt',
+
         'chat.send':  'Verstuur',
         'chat.hint':  'Stel een vraag over het geselecteerde bestand of de geselecteerde bestanden.',
 

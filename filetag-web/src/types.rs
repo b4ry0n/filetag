@@ -199,6 +199,15 @@ pub struct FileDetailParams {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/comic/import-metadata`.
+#[derive(Deserialize)]
+pub struct ComicImportRequest {
+    /// Relative path of the comic archive within the database root.
+    pub path: String,
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/tag` and `POST /api/untag`.
 #[derive(Deserialize)]
 pub struct TagRequest {

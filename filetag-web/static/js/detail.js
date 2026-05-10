@@ -1403,6 +1403,16 @@ function renderDetail() {
 
     const aiBtn = _renderAiBtn(f, type_, covered);
 
+    // ComicInfo import button — shown for CBZ/CBR/CB7 archives only.
+    const COMIC_EXTS = new Set(['cbz', 'cbr', 'cb7']);
+    const isComicArchive = covered && type_ === 'zip'
+        && COMIC_EXTS.has((name.split('.').pop() || '').toLowerCase());
+    const comicBtn = isComicArchive
+        ? `<div class="comic-import-row" id="comic-import-row">
+               <button class="ai-analyse-btn" id="comic-import-btn" onclick="comicImportMetadata('${jesc(f.path)}')">${esc(t('comic.import-btn'))}</button>
+           </div>`
+        : '';
+
     const viewerBtnRow = '';
 
     panel.innerHTML = `
@@ -1443,6 +1453,7 @@ function renderDetail() {
             <div class="detail-tags">${tagChips}</div>
             ${tagAddSection}
             ${aiBtn}
+            ${comicBtn}
             <div class="detail-similar-section" id="detail-similar">
                 <div class="detail-similar-header">
                     <button class="detail-similar-toggle" onclick="toggleSimilarSection('${jesc(f.path)}')">Similar</button>
@@ -1509,6 +1520,31 @@ function renderDetailTagsOnly() {
     const f = state.selectedFile;
     const covered = f.covered !== false;
     tagsEl.innerHTML = renderFileTagChips(f, covered);
+}
+
+// ---------------------------------------------------------------------------
+// ComicInfo.xml import
+// ---------------------------------------------------------------------------
+
+/** Import ComicInfo.xml metadata from a comic archive and apply as tags. */
+async function comicImportMetadata(path) {
+    const btn = document.getElementById('comic-import-btn');
+    if (btn) { btn.disabled = true; btn.textContent = t('comic.importing'); }
+    try {
+        const result = await apiPost('/api/comic/import-metadata', { path, dir: currentAbsDir() });
+        if (state.selectedFile && state.selectedFile.path === path) {
+            await loadFileDetail(path);
+        }
+        showToast(t('comic.imported', { n: result.imported }), 4000);
+    } catch (e) {
+        const msg = e.message || String(e);
+        if (msg.toLowerCase().includes('no comicinfo')) {
+            showToast(t('comic.not-found'), 4000);
+        } else {
+            showToast(t('comic.error') + ': ' + msg, 5000);
+        }
+        if (btn) { btn.disabled = false; btn.textContent = t('comic.import-btn'); }
+    }
 }
 
 // Render tag chips for a file, grouped by subject.
