@@ -1186,6 +1186,14 @@ function renderDetail() {
                 </div>
                 <small class="ai-analyse-note">${esc(t('ai.bulk-note'))}</small>
             </div>` : '';
+        const hasFaceImages = state.faceConfig && state.faceConfig.enabled && state.faceConfig.models_ready
+            && paths.some(p => { const n = p.split('/').pop() || p; const ft = fileType(n); return ft === 'image' || ft === 'raw'; });
+        const faceBulkSection = hasFaceImages ? `
+            <div class="bulk-ai-section">
+                <div class="bulk-ai-row">
+                    <button class="ai-analyse-btn bulk-ai-btn" onclick="faceDetectSelection()">${esc(t('face.detect-selection-btn'))}</button>
+                </div>
+            </div>` : '';
         panel.innerHTML = `
             <div class="detail-header">
                 <h3>${t('bulk.n-selected', {n: count})}</h3>
@@ -1221,6 +1229,7 @@ function renderDetail() {
                 ${aiAcceptBulkBtn}
                 ${aiClearBulkBtn}
                 ${aiBulkSection}
+                ${faceBulkSection}
                 <div id="bulk-status" class="bulk-status"></div>
             </div>`;
         attachTagAutocomplete(document.getElementById('bulk-tag-input'), () => doBulkAddTag());

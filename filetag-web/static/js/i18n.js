@@ -146,8 +146,8 @@ const TRANSLATIONS = {
         'face.toggle-boxes': 'Show/hide face boxes',
         'face.detect-error': 'Face detection failed',
         'face.detect-timeout': 'Detection request timed out. Try again in a moment.',
-
-        // Chat panel
+        'face.detect-selection-btn': 'Detect faces in selection',
+        'face.no-images-in-selection': 'No images in selection.',
         'chat.title': 'Chat',
         'chat.send':  'Send',
         'chat.hint':  'Ask anything about the selected file(s).',
@@ -445,9 +445,8 @@ const TRANSLATIONS = {
         'face.toggle-boxes': 'Gezichtskaders tonen/verbergen',
         'face.detect-error': 'Gezichtsdetectie mislukt',
         'face.detect-timeout': 'Detectie time-out. Probeer opnieuw.',
-
-        // Chat panel
-        'chat.title': 'Chat',
+        'face.detect-selection-btn': 'Gezichten herkennen in selectie',
+        'face.no-images-in-selection': 'Geen afbeeldingen in de selectie.',
         'chat.send':  'Verstuur',
         'chat.hint':  'Stel een vraag over het geselecteerde bestand of de geselecteerde bestanden.',
 

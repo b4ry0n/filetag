@@ -216,6 +216,30 @@ async function faceDetectBatch() {
     }
 }
 
+/** Detect faces in the current multi-file selection.
+ *  Only image and raw files are submitted; others are silently skipped. */
+async function faceDetectSelection() {
+    if (state.faceProgressTimer) return; // batch already running
+    const FACE_TYPES = new Set(['image', 'raw']);
+    const paths = [...state.selectedPaths].filter(p => {
+        const name = p.split('/').pop() || p;
+        return FACE_TYPES.has(fileType(name));
+    });
+    if (paths.length === 0) {
+        showToast(t('face.no-images-in-selection'), 3000);
+        return;
+    }
+    try {
+        await apiPost('/api/face/analyse-batch', {
+            dir: currentAbsDir() || '',
+            paths,
+        });
+        _faceStartPolling();
+    } catch (e) {
+        showToast('Face detect: ' + e.message, 4000);
+    }
+}
+
 function _faceStartPolling() {
     state._faceBatchProgress = null;
     state.faceProgressTimer = setInterval(async () => {

@@ -496,6 +496,9 @@ pub struct FaceAnalyseBatchRequest {
     /// When `true`, process files in subdirectories recursively.
     #[serde(default)]
     pub recursive: bool,
+    /// Optional explicit list of absolute file paths to process instead of
+    /// scanning the directory.  When present, `recursive` is ignored.
+    pub paths: Option<Vec<String>>,
 }
 
 /// Body for `POST /api/face/assign`.

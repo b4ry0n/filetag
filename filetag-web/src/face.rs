@@ -1726,10 +1726,15 @@ pub async fn api_face_analyse_batch(
         .map_err(|e| AppError(anyhow::anyhow!("invalid dir: {e}")))?;
     let root_path = root_entry.root.clone();
     let recursive = req.recursive;
+    let explicit_paths = req.paths.map(|ps| {
+        ps.into_iter()
+            .filter_map(|p| std::fs::canonicalize(&p).ok())
+            .collect::<Vec<_>>()
+    });
     let state_clone = state.clone();
 
     tokio::task::spawn(async move {
-        let _ = run_batch(state_clone, root_path, dir_abs, recursive).await;
+        let _ = run_batch(state_clone, root_path, dir_abs, recursive, explicit_paths).await;
     });
 
     Ok(Json(serde_json::json!({"started": true})))
@@ -1740,6 +1745,7 @@ async fn run_batch(
     root: PathBuf,
     dir: PathBuf,
     recursive: bool,
+    explicit_paths: Option<Vec<PathBuf>>,
 ) -> anyhow::Result<()> {
     let models = tokio::time::timeout(
         std::time::Duration::from_secs(120),
@@ -1749,7 +1755,10 @@ async fn run_batch(
     .map_err(|_| anyhow::anyhow!("model loading timed out; try again in a moment"))?
     .map_err(|e| anyhow::anyhow!("model load task panicked: {e}"))??;
 
-    let files = collect_images(&dir, recursive);
+    let files = match explicit_paths {
+        Some(paths) => paths,
+        None => collect_images(&dir, recursive),
+    };
     let total = files.len();
     {
         let mut p = state.face_progress.lock().unwrap();
