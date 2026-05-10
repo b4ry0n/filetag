@@ -801,6 +801,10 @@ function cvToggleSpread() {
 
 function _cvKeyHandler(e) {
     if (document.getElementById('media-viewer').hidden) return;
+    // Do not intercept keys when the user is typing in an input, textarea or
+    // contenteditable element (e.g. the chat panel).
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
     // ArrowRight = forward in reading direction (RTL: lower index; LTR: higher index)
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
         e.preventDefault();
