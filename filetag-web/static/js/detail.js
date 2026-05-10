@@ -191,6 +191,29 @@ function renderZipList(entries) {
 // Preview error helpers (named functions, avoid SVG-in-HTML-attribute bugs)
 // ---------------------------------------------------------------------------
 
+/** MIME type for a video extension — mirrors the Rust mime_for_ext mapping.
+ *  Only includes formats that browsers typically cannot play natively. */
+function _videoMimeForExt(ext) {
+    const map = {
+        wmv: 'video/x-ms-wmv', avi: 'video/x-msvideo', flv: 'video/x-flv',
+        asf: 'video/x-ms-asf', mpg: 'video/mpeg', mpeg: 'video/mpeg',
+        m2ts: 'video/mp2t', mts: 'video/mp2t', mkv: 'video/x-matroska',
+    };
+    return map[ext] || null;
+}
+
+/** Return true if the browser reports it can likely play this video extension. */
+function _browserCanPlayVideoExt(ext) {
+    const mime = _videoMimeForExt(ext);
+    if (!mime) return true; // unknown → let browser try
+    return document.createElement('video').canPlayType(mime) !== '';
+}
+
+/** Render the transcode UI immediately (no play attempt needed). */
+function _transcodeImmediately(btn, transcodeUrl, name) {
+    _startTranscode(btn.closest('.no-preview'), transcodeUrl, name);
+}
+
 function _previewImgError(img) {
     const p = img.closest('.detail-preview');
     if (!p) return;
@@ -1309,8 +1332,20 @@ function renderDetail() {
     } else if (type_ === 'audio') {
         preview = `<audio controls preload="metadata" src="${previewUrl}" ondblclick="openLightbox('${jesc(f.path)}','audio')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></audio>`;
     } else if (type_ === 'video') {
-        preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}" data-preview-url="${previewUrl}"` +
-                  ` onerror="_previewVideoError(this)" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></video>`;
+        const ext = name.split('.').pop().toLowerCase();
+        const transcodeUrl = previewUrl.replace(/^\/preview\//, '/transcode/');
+        if (!_browserCanPlayVideoExt(ext) && transcodeUrl !== previewUrl) {
+            // Browser cannot play this format natively — skip the doomed play
+            // attempt (which would produce console errors) and go straight to
+            // the transcode option.
+            preview = `<div class="no-preview">${fileIcon(name)}`
+                    + `<div class="preview-unavail-msg">Browser kan dit formaat niet direct afspelen.</div>`
+                    + `<button class="transcode-btn" onclick="_transcodeImmediately(this,'${jesc(transcodeUrl)}','${jesc(name)}')">Transcoderen voor afspelen</button>`
+                    + `</div>`;
+        } else {
+            preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}" data-preview-url="${previewUrl}"`
+                    + ` onerror="_previewVideoError(this)" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></video>`;
+        }
     } else if (type_ === 'pdf') {
         preview = `<iframe class="preview-pdf" src="${previewUrl}" title="${esc(name)}" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"></iframe>` +
                   `<div style="text-align:center;padding:4px 0"><button class="tag-action-btn" onclick="openLightbox('${jesc(f.path)}','pdf')">Full-size PDF</button></div>`;
