@@ -208,13 +208,16 @@ function chatClearHistory() {
 }
 
 function _renderChatFiles() {
-    const el  = document.getElementById('chat-file-thumbs');
+    const el    = document.getElementById('chat-file-thumbs');
     const shown = _chatFiles.slice(0, 8);
     const extra = _chatFiles.length - shown.length;
     el.innerHTML = shown.map(p => {
         const name = p.split('/').pop();
-        return `<img class="chat-thumb" src="/thumb/${encodePath(p)}${dirParam('?')}" `
-             + `alt="${esc(name)}" title="${esc(name)}" onerror="this.style.display='none'">`;
+        return `<span class="chat-thumb-wrap" title="${esc(name)}">
+            <img class="chat-thumb" src="/thumb/${encodePath(p)}${dirParam('?')}"
+                alt="${esc(name)}" onerror="this.style.display='none'">
+            <button class="chat-thumb-remove" onclick="chatPickerToggleFile('${jesc(p)}', false)" title="Remove">&#x2715;</button>
+        </span>`;
     }).join('')
     + (extra > 0 ? `<span class="chat-thumb-more">+${extra}</span>` : '');
 }
@@ -282,4 +285,55 @@ async function sendChatMessage() {
         _updateChatVideoBar();
         input.focus();
     }
+}
+
+// ---------------------------------------------------------------------------
+// File picker — add extra files from the current directory to chat context
+// ---------------------------------------------------------------------------
+
+let _chatPickerOpen = false;
+
+function chatToggleFilePicker() {
+    _chatPickerOpen = !_chatPickerOpen;
+    const picker = document.getElementById('chat-file-picker');
+    if (!picker) return;
+    if (_chatPickerOpen) {
+        _renderChatFilePicker();
+        picker.hidden = false;
+    } else {
+        picker.hidden = true;
+    }
+    const btn = document.getElementById('chat-add-files-btn');
+    if (btn) btn.classList.toggle('chat-icon-btn--active', _chatPickerOpen);
+}
+
+function _renderChatFilePicker() {
+    const picker = document.getElementById('chat-file-picker');
+    if (!picker) return;
+    const entries = (state.entries || []).filter(e => !e.is_dir);
+    const chatSet  = new Set(_chatFiles);
+    if (entries.length === 0) {
+        picker.innerHTML = `<span class="chat-picker-empty">${t('chat.picker-empty')}</span>`;
+        return;
+    }
+    picker.innerHTML = entries.map(e => {
+        const path    = fullPath(e);
+        const checked = chatSet.has(path);
+        const name    = e.name.split('/').pop() || e.name;
+        return `<label class="chat-picker-item${checked ? ' chat-picker-item--active' : ''}">
+            <input type="checkbox" ${checked ? 'checked' : ''} onchange="chatPickerToggleFile('${jesc(path)}', this.checked)">
+            <span class="chat-picker-name" title="${esc(path)}">${esc(name)}</span>
+        </label>`;
+    }).join('');
+}
+
+function chatPickerToggleFile(path, checked) {
+    if (checked) {
+        if (!_chatFiles.includes(path)) _chatFiles = [..._chatFiles, path];
+    } else {
+        _chatFiles = _chatFiles.filter(p => p !== path);
+    }
+    _renderChatFiles();
+    _renderChatFilePicker();
+    _updateChatVideoBar();
 }

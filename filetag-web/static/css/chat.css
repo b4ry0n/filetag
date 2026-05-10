@@ -284,3 +284,80 @@
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* Active state for the add-files toggle button */
+.chat-icon-btn--active {
+    background: var(--primary-light, rgba(99,102,241,.12));
+    color: var(--primary);
+}
+
+/* Thumbnail remove badge */
+.chat-thumb-wrap {
+    position: relative;
+    flex-shrink: 0;
+    display: inline-flex;
+}
+
+.chat-thumb-remove {
+    display: none;
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 13px;
+    height: 13px;
+    font-size: 8px;
+    line-height: 13px;
+    text-align: center;
+    background: var(--danger, #e53e3e);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    padding: 0;
+}
+
+.chat-thumb-wrap:hover .chat-thumb-remove { display: block; }
+
+/* File picker panel */
+.chat-file-picker {
+    max-height: 160px;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    padding: 4px 6px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.chat-file-picker[hidden] { display: none; }
+
+.chat-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text);
+    user-select: none;
+}
+
+.chat-picker-item:hover { background: var(--bg-hover); }
+
+.chat-picker-item--active { background: var(--primary-light, rgba(99,102,241,.08)); }
+
+.chat-picker-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.chat-picker-empty {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    padding: 6px 4px;
+}

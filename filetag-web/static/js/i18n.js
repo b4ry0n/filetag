@@ -161,6 +161,7 @@ const TRANSLATIONS = {
         'chat.title': 'Chat',
         'chat.send':  'Send',
         'chat.hint':  'Ask anything about the selected file(s).',
+        'chat.picker-empty': 'No files in current directory.',
 
         // Tag sidebar
         'tags.no-tags':    'No tags',
@@ -469,6 +470,7 @@ const TRANSLATIONS = {
 
         'chat.send':  'Verstuur',
         'chat.hint':  'Stel een vraag over het geselecteerde bestand of de geselecteerde bestanden.',
+        'chat.picker-empty': 'Geen bestanden in de huidige map.',
 
         'tags.no-tags':    'Geen tags',
         'tags.expand':     'Uitvouwen/invouwen',

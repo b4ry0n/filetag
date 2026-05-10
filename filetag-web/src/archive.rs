@@ -460,7 +460,7 @@ fn xml_unescape(s: &str) -> String {
 /// * `Colorist`     → `comic/colorist` with value (comma-list → multiple)
 /// * `CoverArtist`  → `comic/cover-artist` with value (comma-list → multiple)
 /// * `Genre`        → `genre`         with value  (comma-list → multiple)
-/// * `Tags`         → plain tags      no value    (comma-list → multiple)
+/// * `Tags`         → `comic/tags`   with value  (comma-list → multiple)
 /// * `Manga`        → `manga`         no value    (only when "Yes" / "YesAndRightToLeft")
 /// * `BlackAndWhite`→ `black-and-white` no value  (only when "Yes")
 pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
@@ -523,12 +523,12 @@ pub fn parse_comic_info_tags(xml_bytes: &[u8]) -> Vec<(String, String)> {
         }
     }
 
-    // Tags: comma-list, plain tags with no value
+    // Tags: comma-list under comic/tags with value
     if let Some(v) = xml_element(&xml, "Tags") {
         for val in split_csv(v) {
-            let normalized = xml_unescape(&val).to_lowercase().replace(' ', "-");
-            if !normalized.is_empty() {
-                tags.push((normalized, String::new()));
+            let val = xml_unescape(&val);
+            if !val.is_empty() {
+                tags.push(("comic/tags".to_owned(), val));
             }
         }
     }
