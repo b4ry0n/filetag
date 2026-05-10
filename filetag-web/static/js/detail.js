@@ -781,6 +781,14 @@ window.addEventListener('scroll', () => {
     requestAnimationFrame(_thumbViewportSort);
 }, { passive: true });
 
+// #content is the real scroll container (overflow-y:auto; body has overflow:hidden).
+// Listen here too so viewport-priority sorting fires when scrolling the file grid.
+document.getElementById('content')?.addEventListener('scroll', () => {
+    if (_thumbViewportSortPending) return;
+    _thumbViewportSortPending = true;
+    requestAnimationFrame(_thumbViewportSort);
+}, { passive: true });
+
 function _thumbInit() {
     _thumbFlush();
     document.querySelectorAll('.card-icon[data-thumb-src]').forEach(el => {
