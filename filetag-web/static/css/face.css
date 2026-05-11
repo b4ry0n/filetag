@@ -3,24 +3,26 @@
    --------------------------------------------------------------------------- */
 
 /* Wrapper around the preview image that allows absolute-positioned overlays.
- * display:inline-block shrinks to the image size so percentage-positioned
- * .face-box children are always aligned with the image, regardless of how
- * tall the panel is. max-height:100% resolves to a definite px value (from
- * the .preview-zoomable / .detail-preview flex chain), which the img then
- * inherits so it stays properly constrained. */
+ * aspect-ratio is set by JS once per image (from the image's natural
+ * dimensions). Combined with max-width:100% and max-height:100% (both
+ * resolve to definite px values from the flex chain), the browser sizes the
+ * wrapper to the largest matching rectangle that fits in the panel — always
+ * exactly the image's rendered size. Percentage-positioned .face-box children
+ * are therefore always aligned with the image and follow any panel resize
+ * natively without JS recalculation. */
 .face-preview-wrap {
     position: relative;
     display: inline-block;
+    max-width: 100%;
     max-height: 100%;
     line-height: 0;
 }
 
-/* Let the image inherit the resolved px max-height from the wrapper so it
- * is still constrained to the panel height, overriding the generic
- * .detail-preview img rule that uses max-height:100% (which would resolve
- * against the wrapper's auto height and fail). */
+/* Fill the aspect-ratio-sized wrapper exactly.
+ * Overrides width:auto / height:auto from the generic .detail-preview img rule. */
 .face-preview-wrap img {
-    max-height: inherit;
+    width: 100%;
+    height: 100%;
 }
 
 /* Viewer variant: the image inside #cv-pages is display:block in a flex container */

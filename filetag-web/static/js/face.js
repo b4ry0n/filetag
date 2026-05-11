@@ -533,6 +533,10 @@ function _faceRenderOverlays(path) {
     const origW = state.faceImageWidth  || img.naturalWidth;
     const origH = state.faceImageHeight || img.naturalHeight;
 
+    // Update the wrapper's aspect-ratio with the authoritative server dimensions
+    // (may differ from naturalWidth/Height for zip-thumb previews).
+    if (origW && origH) wrap.style.aspectRatio = origW + ' / ' + origH;
+
     for (const det of state.faceDetections) {
         // Skip detections whose box falls entirely outside the image area —
         // these are artefacts from a previous (incorrect) analysis run.
@@ -585,6 +589,18 @@ function _faceWrapPreviewImg() {
     wrap.className = 'face-preview-wrap';
     img.parentNode.insertBefore(wrap, img);
     wrap.appendChild(img);
+
+    // Set aspect-ratio immediately from the image's natural dimensions so the
+    // wrapper already has the correct size before detections finish loading.
+    // _faceRenderOverlays will update this with the server-provided dimensions.
+    if (img.naturalWidth && img.naturalHeight) {
+        wrap.style.aspectRatio = img.naturalWidth + ' / ' + img.naturalHeight;
+    } else {
+        img.addEventListener('load', () => {
+            if (img.naturalWidth && img.naturalHeight && !wrap.style.aspectRatio)
+                wrap.style.aspectRatio = img.naturalWidth + ' / ' + img.naturalHeight;
+        }, { once: true });
+    }
 }
 
 /** Refresh only the face toolbar div without rebuilding the full detail panel. */
