@@ -2169,6 +2169,66 @@ pub async fn api_face_delete(
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
+/// `POST /api/face/rename-subject` — rename every detection's subject from `old_name` to
+/// `new_name`. When `new_name` is empty, detections become unassigned (NULL).
+/// Renaming into an existing subject name effectively merges the two.
+#[derive(Deserialize)]
+pub struct FaceRenameSubjectRequest {
+    pub old_name: String,
+    pub new_name: String,
+    pub dir: Option<String>,
+}
+
+pub async fn api_face_rename_subject(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<FaceRenameSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let conn = open_conn(root_entry)?;
+    let new_name: Option<&str> = if req.new_name.is_empty() {
+        None
+    } else {
+        Some(&req.new_name)
+    };
+    let updated: usize = conn
+        .execute(
+            "UPDATE face_detections SET subject_name = ?1 WHERE subject_name = ?2",
+            rusqlite::params![new_name, &req.old_name],
+        )
+        .map_err(anyhow::Error::from)
+        .map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": true, "updated": updated })))
+}
+
+/// `POST /api/face/delete-subject` — permanently delete all detections for a subject.
+/// Pass `name: ""` to delete unassigned (NULL) detections.
+#[derive(Deserialize)]
+pub struct FaceDeleteSubjectRequest {
+    pub name: String,
+    pub dir: Option<String>,
+}
+
+pub async fn api_face_delete_subject(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<FaceDeleteSubjectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let conn = open_conn(root_entry)?;
+    let deleted: usize = if req.name.is_empty() {
+        conn.execute("DELETE FROM face_detections WHERE subject_name IS NULL", [])
+            .map_err(anyhow::Error::from)
+            .map_err(AppError)?
+    } else {
+        conn.execute(
+            "DELETE FROM face_detections WHERE subject_name = ?1",
+            rusqlite::params![&req.name],
+        )
+        .map_err(anyhow::Error::from)
+        .map_err(AppError)?
+    };
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
+}
+
 /// `POST /api/face/cluster`
 pub async fn api_face_cluster(
     State(state): State<Arc<AppState>>,

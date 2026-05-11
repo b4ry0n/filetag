@@ -1582,10 +1582,12 @@ function tmToggleGroup(prefix) {
     renderTmList();
 }
 
-let _tmTab = 'tags'; // 'tags' | 'subjects'
+let _tmTab = 'tags'; // 'tags' | 'subjects' | 'people'
 let _tmSelectedSubject = null;
 let _tmSubjectSearch = '';
 let _tmSubjectExpandedGroups = new Set(); // subject group fullPaths that are expanded in TM
+let _tmSelectedPerson = null;
+let _tmPersonSearch = '';
 
 function showTagManager(selectTag) {
     if (document.getElementById('tag-manager-overlay')) return;
@@ -1600,6 +1602,7 @@ function showTagManager(selectTag) {
                 <div class="tm-tabs">
                     <button class="tm-tab active" id="tm-tab-tags" onclick="tmSwitchTab('tags')">Tags</button>
                     <button class="tm-tab" id="tm-tab-subjects" onclick="tmSwitchTab('subjects')">Subjects</button>
+                    <button class="tm-tab" id="tm-tab-people" onclick="tmSwitchTab('people')">Personen</button>
                 </div>
                 <button class="tm-prune-btn" id="tm-prune-btn" onclick="pruneUnusedTags()" title="Remove all tags with no file assignments">Prune unused</button>
                 <button class="tm-close" onclick="closeTagManager()" title="Close">\u2715</button>
@@ -1635,6 +1638,15 @@ function showTagManager(selectTag) {
                     <div class="tm-detail-placeholder">Selecteer een subject om het te bewerken.</div>
                 </div>
             </div>
+            <div class="tm-body" id="tm-body-people" style="display:none">
+                <div class="tm-list-col" id="tm-list-col-people">
+                    <div class="tm-list" id="tm-person-list"></div>
+                </div>
+                <div class="tm-resizer" onmousedown="tmResizerStart(event)"></div>
+                <div class="tm-detail" id="tm-person-detail">
+                    <div class="tm-detail-placeholder">Selecteer een persoon om te bewerken.</div>
+                </div>
+            </div>
         </div>
     `;
     overlay.addEventListener('click', closeTagManager);
@@ -1654,6 +1666,8 @@ function showTagManager(selectTag) {
     _tmSelectedSubject = null;
     _tmSubjectSearch = '';
     _tmSubjectExpandedGroups = new Set();
+    _tmSelectedPerson = null;
+    _tmPersonSearch = '';
     renderTmList();
     if (_tmSelectedTag) renderTmDetail(_tmSelectedTag);
 
@@ -1699,18 +1713,29 @@ function tmSwitchTab(tab) {
     _tmTab = tab;
     document.getElementById('tm-tab-tags').classList.toggle('active', tab === 'tags');
     document.getElementById('tm-tab-subjects').classList.toggle('active', tab === 'subjects');
+    document.getElementById('tm-tab-people').classList.toggle('active', tab === 'people');
     document.getElementById('tm-body-tags').style.display = tab === 'tags' ? '' : 'none';
     document.getElementById('tm-body-subjects').style.display = tab === 'subjects' ? '' : 'none';
+    document.getElementById('tm-body-people').style.display = tab === 'people' ? '' : 'none';
     document.getElementById('tm-prune-btn').style.display = tab === 'tags' ? '' : 'none';
     const searchInput = document.getElementById('tm-search');
     if (searchInput) {
-        searchInput.placeholder = tab === 'tags' ? 'Filter tags\u2026' : 'Filter subjects\u2026';
-        searchInput.value = tab === 'tags' ? _tmSearchQuery : _tmSubjectSearch;
-        searchInput.oninput = tab === 'tags'
-            ? (e => tmSearch(e.target.value))
-            : (e => tmSubjectSearch(e.target.value));
+        if (tab === 'tags') {
+            searchInput.placeholder = 'Filter tags\u2026';
+            searchInput.value = _tmSearchQuery;
+            searchInput.oninput = e => tmSearch(e.target.value);
+        } else if (tab === 'subjects') {
+            searchInput.placeholder = 'Filter subjects\u2026';
+            searchInput.value = _tmSubjectSearch;
+            searchInput.oninput = e => tmSubjectSearch(e.target.value);
+        } else {
+            searchInput.placeholder = 'Filter personen\u2026';
+            searchInput.value = _tmPersonSearch;
+            searchInput.oninput = e => tmPersonSearch(e.target.value);
+        }
     }
     if (tab === 'subjects') renderTmSubjectList();
+    if (tab === 'people') renderTmPersonList();
 }
 
 function closeTagManager() {
@@ -1718,6 +1743,7 @@ function closeTagManager() {
     if (el) el.remove();
     _tmSelectedTag = null;
     _tmSelectedSubject = null;
+    _tmSelectedPerson = null;
     _tmTab = 'tags';
 }
 
@@ -2577,4 +2603,184 @@ async function tmDeleteSubject(name) {
     const panel = document.getElementById('tm-subject-detail');
     if (panel) panel.innerHTML = `<div class="tm-detail-placeholder">Subject removed.</div>`;
     renderSubjects();
+}
+
+// ---------------------------------------------------------------------------
+// People Manager (tab inside Tag Manager)
+// ---------------------------------------------------------------------------
+
+function tmPersonSearch(q) {
+    _tmPersonSearch = q.toLowerCase();
+    renderTmPersonList();
+}
+
+function renderTmPersonList() {
+    const el = document.getElementById('tm-person-list');
+    if (!el) return;
+
+    const all = state.people || [];
+    const q = _tmPersonSearch;
+    const cfg = state.faceConfig;
+    const prefix = cfg ? cfg.tag_prefix : 'person';
+    const autoPrefix = prefix + '/unknown-';
+
+    const named   = all.filter(p => p.name && !p.name.startsWith(autoPrefix));
+    const unknown = all.filter(p => !p.name || p.name.startsWith(autoPrefix));
+
+    const filtered = q ? all.filter(p => (p.name || '').toLowerCase().includes(q)) : null;
+
+    const makeRow = (p) => {
+        const isActive = _tmSelectedPerson === p.name;
+        const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: p.det_id }) + dirParam('&');
+        const displayName = !p.name
+            ? t('face.unassigned')
+            : p.name.startsWith(autoPrefix)
+                ? (t('face.unknown') + ' ' + p.name.slice(autoPrefix.length))
+                : (p.name.startsWith(prefix + '/') ? p.name.slice(prefix.length + 1) : p.name);
+        return `<button class="person-item${isActive ? ' active' : ''}"
+            onclick="tmSelectPerson(${p.name ? `'${jesc(p.name)}'` : "''"})">
+            <img class="person-thumb" src="${thumbUrl}" alt="${esc(displayName)}"
+                onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <span class="person-thumb-placeholder" style="display:none">&#x1F464;</span>
+            <span class="person-label">${esc(displayName)}</span>
+            <span class="person-count">${p.count}</span>
+        </button>`;
+    };
+
+    let html = '';
+    if (filtered) {
+        html = filtered.length
+            ? filtered.map(makeRow).join('')
+            : '<div class="tm-empty">Geen personen gevonden.</div>';
+    } else if (!all.length) {
+        html = '<div class="tm-empty">Nog geen gezichten gedetecteerd.</div>';
+    } else {
+        if (named.length) {
+            html += `<div class="tm-section-title" style="padding:6px 10px 2px;font-size:10px">Benoemd</div>`;
+            html += named.map(makeRow).join('');
+        }
+        if (unknown.length) {
+            html += `<div class="tm-section-title" style="padding:6px 10px 2px;font-size:10px">Onbekend (${unknown.length})</div>`;
+            html += unknown.map(makeRow).join('');
+        }
+    }
+
+    el.innerHTML = html;
+}
+
+function tmSelectPerson(name) {
+    _tmSelectedPerson = name;
+    renderTmPersonList();
+    renderTmPersonDetail(name);
+}
+
+async function renderTmPersonDetail(name) {
+    const panel = document.getElementById('tm-person-detail');
+    if (!panel) return;
+
+    const person = (state.people || []).find(p => p.name === name || (!p.name && name === ''));
+    if (!person) {
+        panel.innerHTML = `<div class="tm-detail-placeholder">Persoon niet gevonden.</div>`;
+        return;
+    }
+
+    const cfg = state.faceConfig;
+    const prefix = cfg ? cfg.tag_prefix : 'person';
+    const autoPrefix = prefix + '/unknown-';
+    const isUnknown = !name || name.startsWith(autoPrefix);
+
+    const displayName = !name
+        ? t('face.unassigned')
+        : isUnknown
+            ? (t('face.unknown') + ' ' + name.slice(autoPrefix.length))
+            : (name.startsWith(prefix + '/') ? name.slice(prefix.length + 1) : name);
+
+    const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: person.det_id }) + dirParam('&');
+
+    panel.innerHTML = `
+        <div class="tm-detail-header" style="display:flex;align-items:center;gap:14px">
+            <img class="person-thumb" src="${thumbUrl}" alt="${esc(displayName)}"
+                style="width:64px;height:64px;border-radius:8px;object-fit:cover;flex-shrink:0"
+                onerror="this.style.display='none'">
+            <div>
+                <div class="tm-detail-name">${esc(displayName)}</div>
+                <div class="tm-detail-meta">${person.count} bestand${person.count !== 1 ? 'en' : ''} met dit gezicht</div>
+                ${name ? `<div class="tm-detail-meta" style="font-size:10px;margin-top:2px;opacity:.6">${esc(name)}</div>` : ''}
+            </div>
+        </div>
+
+        <section class="tm-section">
+            <div class="tm-section-title">Naam wijzigen / samenvoegen</div>
+            <div class="tm-op-row">
+                <div class="tm-op-inputs">
+                    <input id="tm-person-rename-input" class="tm-input" type="text"
+                        value="${isUnknown ? '' : esc(name)}"
+                        placeholder="${isUnknown ? `bijv. ${esc(prefix)}/Jan` : 'Nieuwe naam\u2026'}"
+                        list="tm-person-name-datalist"
+                        onkeydown="if(event.key==='Enter') tmDoRenamePerson('${jesc(name)}')">
+                    <datalist id="tm-person-name-datalist">
+                        ${(state.people || [])
+                            .filter(p => p.name && p.name !== name)
+                            .map(p => `<option value="${esc(p.name)}">`)
+                            .join('')}
+                    </datalist>
+                    <button class="tm-btn" onclick="tmDoRenamePerson('${jesc(name)}')">Hernoemen</button>
+                </div>
+                <div class="tm-op-hint">Alle gezichtsdetecties van deze persoon worden bijgewerkt.
+                    Als de doelnaam al bestaat worden ze samengevoegd.</div>
+            </div>
+        </section>
+
+        <div class="tm-danger-zone">
+            <button class="tm-btn tm-btn-danger" onclick="tmDoDeletePerson('${jesc(name)}')">
+                Alle detecties verwijderen (${person.count} bestand${person.count !== 1 ? 'en' : ''})
+            </button>
+            <div class="tm-op-hint" style="margin-top:4px">
+                Verwijdert de gezichtsdetecties permanent. De afbeeldingen zelf blijven intact.
+            </div>
+        </div>
+    `;
+}
+
+async function tmDoRenamePerson(oldName) {
+    const input = document.getElementById('tm-person-rename-input');
+    const newName = input ? input.value.trim() : '';
+    if (!newName || newName === oldName) return;
+
+    const existingTarget = (state.people || []).find(p => p.name === newName);
+    const mergeMsg = existingTarget ? '\n\nEr bestaat al een persoon met deze naam \u2014 ze worden samengevoegd.' : '';
+    if (!confirm(`Persoon "${oldName || t('face.unassigned')}" hernoemen naar "${newName}"?${mergeMsg}`)) return;
+
+    try {
+        await apiPost('/api/face/rename-subject', { old_name: oldName, new_name: newName, dir: currentAbsDir() });
+        showToast(`Persoon hernoemd naar "${newName}".`);
+    } catch (e) {
+        showToast('Fout: ' + e.message);
+        return;
+    }
+    await loadPeople();
+    _tmSelectedPerson = newName;
+    renderTmPersonList();
+    renderTmPersonDetail(newName);
+    renderTags();
+}
+
+async function tmDoDeletePerson(name) {
+    const person = (state.people || []).find(p => p.name === name || (!p.name && name === ''));
+    const count = person?.count || 0;
+    const displayName = name || t('face.unassigned');
+    if (!confirm(`Alle gezichtsdetecties voor \u201c${displayName}\u201d verwijderen?\n${count} bestand${count !== 1 ? 'en' : ''} worden geraakt. Dit kan niet ongedaan worden gemaakt.`)) return;
+    try {
+        await apiPost('/api/face/delete-subject', { name, dir: currentAbsDir() });
+        showToast(`Detecties voor \u201c${displayName}\u201d verwijderd.`);
+    } catch (e) {
+        showToast('Fout: ' + e.message);
+        return;
+    }
+    await loadPeople();
+    _tmSelectedPerson = null;
+    renderTmPersonList();
+    const panel = document.getElementById('tm-person-detail');
+    if (panel) panel.innerHTML = `<div class="tm-detail-placeholder">Detecties verwijderd.</div>`;
+    renderTags();
 }

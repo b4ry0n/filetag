@@ -417,6 +417,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/face/models/status", get(face::api_face_models_status))
         .route("/api/face/subjects", get(face::api_face_subjects))
         .route("/api/face/files", get(face::api_face_files))
+        .route(
+            "/api/face/rename-subject",
+            post(face::api_face_rename_subject),
+        )
+        .route(
+            "/api/face/delete-subject",
+            post(face::api_face_delete_subject),
+        )
         // Similarity routes
         .route("/api/similar", get(similarity::api_similar))
         .route(
