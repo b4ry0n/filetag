@@ -1520,6 +1520,15 @@ function renderDetail() {
                 imgEl.onerror = function() { _cardThumbError(this); };
                 anchor.appendChild(imgEl);
                 placeholder.replaceWith(anchor);
+                // Now that the real preview image is in the DOM, apply face
+                // detection overlays (detections were already fetched by
+                // faceOnDetailRendered but found no image to wrap at that point).
+                if (typeof _faceWrapPreviewImg === 'function') {
+                    _faceWrapPreviewImg();
+                    if (typeof _faceRenderOverlays === 'function') {
+                        _faceRenderOverlays(_selectedPath);
+                    }
+                }
             })
             .catch(() => {});
     }
