@@ -1345,7 +1345,9 @@ function renderDetail() {
             preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
-            preview = `<div class="no-preview">${fileIcon(name)}</div>`;
+            // Entries not loaded yet (e.g. selected from search results);
+            // show placeholder and async-fetch entries to render the real preview.
+            preview = `<div class="no-preview" id="zip-entry-preview-placeholder">${fileIcon(name)}</div>`;
         }
     } else if (type_ === 'image') {
         preview = `<div class="preview-zoomable" onclick="openMediaViewer('${jesc(f.path)}')">` +
@@ -1493,6 +1495,33 @@ function renderDetail() {
     // Face detection overlay (images only)
     if (typeof faceOnDetailRendered === 'function' && (type_ === 'image' || type_ === 'raw')) {
         faceOnDetailRendered(f.path, type_);
+    }
+
+    // Async-fetch zip entry preview when entries are not cached (e.g. selected from search results)
+    if (zipEntry && !state.zipEntries.find(e => e.name === zipEntry.entryName)) {
+        const _selectedPath = f.path;
+        const _zipEntryName = zipEntry.entryName;
+        const _zipPath = zipEntry.zipPath;
+        const _entryName = name;
+        api('/api/zip/entries?' + new URLSearchParams({ path: _zipPath }) + dirParam('&'))
+            .then(data => {
+                if (state.selectedFile?.path !== _selectedPath) return;
+                const entry = (data.entries || []).find(e => e.name === _zipEntryName);
+                const placeholder = document.getElementById('zip-entry-preview-placeholder');
+                if (!placeholder || !entry || !entry.is_image || entry.image_index === null) return;
+                const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: _zipPath, page: entry.image_index }) + dirParam('&');
+                const anchor = document.createElement('a');
+                anchor.className = 'preview-zoomable';
+                anchor.title = 'Click to open in viewer';
+                anchor.onclick = () => openMediaViewer(_zipPath, entry.image_index);
+                const imgEl = document.createElement('img');
+                imgEl.src = thumbUrl;
+                imgEl.alt = _entryName;
+                imgEl.onerror = function() { _cardThumbError(this); };
+                anchor.appendChild(imgEl);
+                placeholder.replaceWith(anchor);
+            })
+            .catch(() => {});
     }
 
     // Async-fetch text/markdown content after DOM is set
