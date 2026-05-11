@@ -1832,17 +1832,22 @@ async function doBulkRemoveTagChip(tagStr) {
         return data && data.tags.some(t => formatTag(t) === tagStr);
     });
     await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
-    // Update cache locally
+    // Update local cache immediately so the chip list refreshes right away,
+    // before the slower loadTags() / loadFiles() network calls complete.
     for (const p of paths) {
         const d = state.selectedFilesData.get(p);
         if (d) d.tags = d.tags.filter(t => formatTag(t) !== tagStr);
     }
-    await loadTags();
-    if (state.mode === 'browse') await loadFiles(state.currentPath);
-    const status = document.getElementById('bulk-status');
-    if (status) status.textContent = t('bulk.removed', {tag: tagStr, n: paths.length, plural: paths.length !== 1 ? t('bulk.removed-plural') : ''});
-    const el = document.getElementById('bulk-tag-chips');
-    if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
+    const statusEl = document.getElementById('bulk-status');
+    if (statusEl) statusEl.textContent = t('bulk.removed', {tag: tagStr, n: paths.length, plural: paths.length !== 1 ? t('bulk.removed-plural') : ''});
+    const chipsEl = document.getElementById('bulk-tag-chips');
+    if (chipsEl) chipsEl.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
+    // Reload server-side tag counts; if this fails the local update already
+    // kept the UI correct so swallow the error.
+    try {
+        await loadTags();
+        if (state.mode === 'browse') await loadFiles(state.currentPath);
+    } catch (_) { /* local state already updated */ }
     renderTags();
     renderContent();
     _thumbInit();

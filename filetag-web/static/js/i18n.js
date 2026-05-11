@@ -148,6 +148,7 @@ const TRANSLATIONS = {
         'face.detect-timeout': 'Detection request timed out. Try again in a moment.',
         'face.detect-selection-btn': 'Detect faces in selection',
         'face.no-images-in-selection': 'No images in selection.',
+        'face.batch-already-running': 'Face detection is already running.',
 
         // ComicInfo metadata import
         'comic.import-btn':             'Import ComicInfo.xml',
@@ -459,6 +460,7 @@ const TRANSLATIONS = {
         'face.detect-timeout': 'Detectie time-out. Probeer opnieuw.',
         'face.detect-selection-btn': 'Gezichten herkennen in selectie',
         'face.no-images-in-selection': 'Geen afbeeldingen in de selectie.',
+        'face.batch-already-running': 'Gezichtsherkenning is al bezig.',
 
         // ComicInfo metadata import
         'comic.import-btn':             'ComicInfo.xml importeren',

@@ -219,7 +219,10 @@ async function faceDetectBatch() {
 /** Detect faces in the current multi-file selection.
  *  Only image and raw files are submitted; others are silently skipped. */
 async function faceDetectSelection() {
-    if (state.faceProgressTimer) return; // batch already running
+    if (state.faceProgressTimer) {
+        showToast(t('face.batch-already-running'), 3000);
+        return;
+    }
     const base = state.currentBasePath;
     if (!base) {
         showToast(t('face.no-images-in-selection'), 3000);
@@ -262,7 +265,6 @@ function _faceUpdateBulkStatus() {
 
 function _faceStartPolling() {
     state._faceBatchProgress = null;
-    _faceUpdateBulkStatus();
     state.faceProgressTimer = setInterval(async () => {
         try {
             const s = await api('/api/face/status');
@@ -283,6 +285,8 @@ function _faceStartPolling() {
             _faceUpdateBulkStatus();
         }
     }, 1000);
+    // Show the initial progress bar immediately after the timer is armed.
+    _faceUpdateBulkStatus();
     renderTags();
 }
 
