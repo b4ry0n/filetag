@@ -220,19 +220,27 @@ async function faceDetectBatch() {
  *  Only image and raw files are submitted; others are silently skipped. */
 async function faceDetectSelection() {
     if (state.faceProgressTimer) return; // batch already running
+    const base = state.currentBasePath;
+    if (!base) {
+        showToast(t('face.no-images-in-selection'), 3000);
+        return;
+    }
     const FACE_TYPES = new Set(['image', 'raw']);
-    const paths = [...state.selectedPaths].filter(p => {
-        const name = p.split('/').pop() || p;
-        return FACE_TYPES.has(fileType(name));
-    });
-    if (paths.length === 0) {
+    // Convert DB-relative paths to absolute filesystem paths for the backend.
+    const absPaths = [...state.selectedPaths]
+        .filter(p => {
+            const name = p.split('/').pop() || p;
+            return FACE_TYPES.has(fileType(name));
+        })
+        .map(p => base + '/' + p);
+    if (absPaths.length === 0) {
         showToast(t('face.no-images-in-selection'), 3000);
         return;
     }
     try {
         await apiPost('/api/face/analyse-batch', {
-            dir: currentAbsDir() || '',
-            paths,
+            dir: currentAbsDir() || base,
+            paths: absPaths,
         });
         _faceStartPolling();
     } catch (e) {
@@ -240,8 +248,21 @@ async function faceDetectSelection() {
     }
 }
 
+/** Update the #bulk-status element (multi-select detail panel) with face batch progress.
+ *  No-op when the element is absent (single-file or directory selected). */
+function _faceUpdateBulkStatus() {
+    const el = document.getElementById('bulk-status');
+    if (!el) return;
+    if (state.faceProgressTimer !== null) {
+        el.innerHTML = _faceBatchProgressHtml();
+    } else {
+        el.innerHTML = '';
+    }
+}
+
 function _faceStartPolling() {
     state._faceBatchProgress = null;
+    _faceUpdateBulkStatus();
     state.faceProgressTimer = setInterval(async () => {
         try {
             const s = await api('/api/face/status');
@@ -251,12 +272,15 @@ function _faceStartPolling() {
                 state.faceProgressTimer = null;
                 await loadPeople();
                 renderTags(); // refresh sidebar
+                _faceUpdateBulkStatus();
             } else {
-                renderTags(); // update progress bar
+                renderTags(); // update progress bar in sidebar
+                _faceUpdateBulkStatus();
             }
         } catch (_) {
             clearInterval(state.faceProgressTimer);
             state.faceProgressTimer = null;
+            _faceUpdateBulkStatus();
         }
     }, 1000);
     renderTags();
