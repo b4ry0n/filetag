@@ -41,9 +41,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::state::{
-    AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
-};
+use crate::state::{AppError, AppState, open_conn, open_for_file_op, root_for_dir};
 use crate::types::{
     ApiFaceDetection, ApiFaceResult, FaceAnalyseBatchRequest, FaceAnalyseRequest,
     FaceAssignRequest, FaceClusterRequest, FaceConfigRequest, FaceConfigResponse,
@@ -1705,7 +1703,8 @@ pub async fn api_face_analyse_batch(
         )));
     }
 
-    let root_entry = root_from_dir(&state, Some(req.dir.as_str()))?;
+    // Validate that the dir belongs to a known root before spawning the task.
+    root_from_dir(&state, Some(req.dir.as_str()))?;
 
     {
         let mut progress = state.face_progress.lock().unwrap();
@@ -1724,7 +1723,6 @@ pub async fn api_face_analyse_batch(
 
     let dir_abs = std::fs::canonicalize(&req.dir)
         .map_err(|e| AppError(anyhow::anyhow!("invalid dir: {e}")))?;
-    let root_path = root_entry.root.clone();
     let recursive = req.recursive;
     let explicit_paths = req.paths.map(|ps| {
         ps.into_iter()
@@ -1734,7 +1732,7 @@ pub async fn api_face_analyse_batch(
     let state_clone = state.clone();
 
     tokio::task::spawn(async move {
-        let _ = run_batch(state_clone, root_path, dir_abs, recursive, explicit_paths).await;
+        let _ = run_batch(state_clone, dir_abs, recursive, explicit_paths).await;
     });
 
     Ok(Json(serde_json::json!({"started": true})))
@@ -1742,7 +1740,6 @@ pub async fn api_face_analyse_batch(
 
 async fn run_batch(
     state: Arc<AppState>,
-    root: PathBuf,
     dir: PathBuf,
     recursive: bool,
     explicit_paths: Option<Vec<PathBuf>>,
@@ -1774,16 +1771,18 @@ async fn run_batch(
         }
 
         let abs_c = abs.clone();
-        let root_c = root.clone();
         let models_c = models.clone();
 
         let touched = tokio::task::spawn_blocking(move || -> anyhow::Result<PathBuf> {
-            let rel_from_entry_root = abs_c
-                .strip_prefix(&root_c)
-                .map(|r| r.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| abs_c.to_string_lossy().into_owned());
-            let (conn, effective_root, rel) =
-                open_for_file_op_under(&root_c, &rel_from_entry_root)?;
+            // `abs_c` is already canonical (via std::fs::canonicalize in the
+            // API handler).  Walk up from its parent to find the owning DB
+            // root directly — no need to strip a (potentially non-canonical)
+            // root_c prefix first, which was the previous approach and failed
+            // when the TagRoot was discovered via scan_recursive (non-canonical
+            // path).
+            let start = abs_c.parent().unwrap_or(&abs_c);
+            let (conn, effective_root) = db::find_and_open_fast(start)?;
+            let rel = db::relative_to_root(&abs_c, &effective_root)?;
             let cfg = load_face_config(&conn);
             analyse_file_sync(&conn, &effective_root, &rel, models_c.as_ref(), &cfg)?;
             Ok(effective_root)

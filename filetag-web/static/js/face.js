@@ -273,6 +273,12 @@ function _faceStartPolling() {
                 clearInterval(state.faceProgressTimer);
                 state.faceProgressTimer = null;
                 await loadPeople();
+                // Reload detections for the currently displayed file so face
+                // boxes appear immediately without needing to re-select it.
+                if (state.faceDetectionsPath) {
+                    await faceLoadDetections(state.faceDetectionsPath);
+                    _faceRenderOverlays(state.faceDetectionsPath);
+                }
                 renderTags(); // refresh sidebar
                 _faceUpdateBulkStatus();
             } else {
