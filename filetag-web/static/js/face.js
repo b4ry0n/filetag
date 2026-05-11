@@ -533,6 +533,14 @@ function _faceRenderOverlays(path) {
     const origW = state.faceImageWidth  || img.naturalWidth;
     const origH = state.faceImageHeight || img.naturalHeight;
 
+    // Scale to the image's actual rendered size. The wrapper (.face-preview-wrap)
+    // may be taller than the image (it has height:100% of the panel), so percentage
+    // positions relative to the wrapper would be wrong. Pixel positions based on
+    // img.offsetWidth/Height always stay aligned with the image regardless of
+    // panel height. faceRerenderPreviewBoxes() re-draws after resize/drag.
+    const scaleX = img.offsetWidth  / origW;
+    const scaleY = img.offsetHeight / origH;
+
     for (const det of state.faceDetections) {
         // Skip detections whose box falls entirely outside the image area —
         // these are artefacts from a previous (incorrect) analysis run.
@@ -547,12 +555,12 @@ function _faceRenderOverlays(path) {
 
         const box = document.createElement('div');
         box.className = 'face-box' + (det.subject_name ? ' assigned' : '');
-        // Percentage positions relative to the wrapper (= the rendered image).
-        // These scale automatically when the image size changes — no JS needed.
-        box.style.left   = (bx / origW * 100) + '%';
-        box.style.top    = (by / origH * 100) + '%';
-        box.style.width  = (bw / origW * 100) + '%';
-        box.style.height = (bh / origH * 100) + '%';
+        // Pixel positions relative to the wrapper top-left, which coincides
+        // with the image top-left (img is display:block at top of the wrapper).
+        box.style.left   = (bx * scaleX) + 'px';
+        box.style.top    = (by * scaleY) + 'px';
+        box.style.width  = (bw * scaleX) + 'px';
+        box.style.height = (bh * scaleY) + 'px';
         box.title = det.subject_name || t('face.unknown');
         box.dataset.detId = det.id;
         box.onclick = (e) => { e.stopPropagation(); _faceShowAssignDialog(det, box); };
@@ -598,9 +606,12 @@ function _faceRefreshDetailControls(path) {
 // changes vh, or the user resizes the browser). Debounced to 150 ms.
 // ---------------------------------------------------------------------------
 
-/** Public: no-op — face boxes use percentage positions and scale automatically.
- * Called by main.js after separator drag; kept for API compatibility. */
-function faceRerenderPreviewBoxes() {}
+/** Re-draw detail-panel face boxes after a resize or panel-divider drag.
+ * Pixel positions (set by _faceRenderOverlays) go stale when the image
+ * is resized; this re-renders them from the current layout dimensions. */
+function faceRerenderPreviewBoxes() {
+    if (state.faceDetectionsPath) _faceRenderOverlays(state.faceDetectionsPath);
+}
 
 
 // ---------------------------------------------------------------------------

@@ -469,6 +469,7 @@ function _colResize(el, getWidth, setWidth, minW, maxW, leftEdge) {
             document.body.style.userSelect = '';
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
+            if (typeof faceRerenderPreviewBoxes === 'function') faceRerenderPreviewBoxes();
         }
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
