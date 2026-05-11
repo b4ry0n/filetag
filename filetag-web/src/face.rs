@@ -1726,7 +1726,17 @@ pub async fn api_face_analyse_batch(
     let recursive = req.recursive;
     let explicit_paths = req.paths.map(|ps| {
         ps.into_iter()
-            .filter_map(|p| std::fs::canonicalize(&p).ok())
+            .filter_map(|p| {
+                // Virtual archive entry paths (e.g. "/root/archive.cbz::entry.jpg")
+                // are not real filesystem paths; canonicalize only the archive
+                // file part, then reconstruct the virtual path.
+                if let Some((archive, entry)) = p.split_once("::") {
+                    let canon = std::fs::canonicalize(archive).ok()?;
+                    Some(PathBuf::from(format!("{}::{}", canon.display(), entry)))
+                } else {
+                    std::fs::canonicalize(&p).ok()
+                }
+            })
             .collect::<Vec<_>>()
     });
     let state_clone = state.clone();
@@ -1775,17 +1785,28 @@ async fn run_batch(
 
         let touched = tokio::task::spawn_blocking(move || -> anyhow::Result<PathBuf> {
             // `abs_c` is already canonical (via std::fs::canonicalize in the
-            // API handler).  Walk up from its parent to find the owning DB
-            // root directly — no need to strip a (potentially non-canonical)
-            // root_c prefix first, which was the previous approach and failed
-            // when the TagRoot was discovered via scan_recursive (non-canonical
-            // path).
-            let start = abs_c.parent().unwrap_or(&abs_c);
-            let (conn, effective_root) = db::find_and_open_fast(start)?;
-            let rel = db::relative_to_root(&abs_c, &effective_root)?;
-            let cfg = load_face_config(&conn);
-            analyse_file_sync(&conn, &effective_root, &rel, models_c.as_ref(), &cfg)?;
-            Ok(effective_root)
+            // API handler, or has a canonicalized archive-file part for virtual
+            // paths of the form "/canon/archive.cbz::entry.jpg").
+            let abs_str = abs_c.to_str().unwrap_or_default();
+            if let Some((archive_str, entry)) = abs_str.split_once("::") {
+                // Virtual archive entry: find the DB via the archive file.
+                let archive_path = PathBuf::from(archive_str);
+                let start = archive_path.parent().unwrap_or(&archive_path);
+                let (conn, effective_root) = db::find_and_open_fast(start)?;
+                let archive_rel = db::relative_to_root(&archive_path, &effective_root)?;
+                let rel = format!("{archive_rel}::{entry}");
+                let cfg = load_face_config(&conn);
+                analyse_file_sync(&conn, &effective_root, &rel, models_c.as_ref(), &cfg)?;
+                Ok(effective_root)
+            } else {
+                // Regular file: walk up from parent to find the owning DB.
+                let start = abs_c.parent().unwrap_or(&abs_c);
+                let (conn, effective_root) = db::find_and_open_fast(start)?;
+                let rel = db::relative_to_root(&abs_c, &effective_root)?;
+                let cfg = load_face_config(&conn);
+                analyse_file_sync(&conn, &effective_root, &rel, models_c.as_ref(), &cfg)?;
+                Ok(effective_root)
+            }
         })
         .await;
         if let Ok(Ok(effective_root)) = touched {
