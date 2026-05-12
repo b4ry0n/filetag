@@ -1166,6 +1166,7 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
 
     // Step 3: Walk search_dir, match against missing files
     let mut repaired = 0;
+    let mut repaired_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let pb = if !cli.quiet && io::stderr().is_terminal() {
         let pb = ProgressBar::new_spinner();
         pb.set_style(
@@ -1259,6 +1260,7 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
                 );
             }
             repaired += 1;
+            repaired_ids.insert(id);
         }
     }
 
@@ -1269,6 +1271,57 @@ fn cmd_repair(cli: &Cli, search_path: Option<PathBuf>, dry_run: bool) -> Result<
         if dry_run { "Would repair" } else { "Repaired" },
         repaired
     );
+
+    // Step 4: Prune orphaned face detections for files that are still missing
+    // (could not be relocated in the search scope). Since the source image is
+    // gone, the thumbnails would appear broken in the web UI.
+    let still_missing: Vec<(i64, String)> = missing_files
+        .iter()
+        .filter(|(id, _, _, _)| !repaired_ids.contains(id))
+        .map(|(id, path, _, _)| (*id, path.clone()))
+        .collect();
+
+    if !still_missing.is_empty() {
+        let mut pruned_faces = 0i64;
+        let mut pruned_files = 0usize;
+        for (file_id, path) in &still_missing {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM face_detections WHERE file_id = ?1",
+                rusqlite::params![file_id],
+                |r| r.get(0),
+            )?;
+            if count == 0 {
+                continue;
+            }
+            if dry_run {
+                println!(
+                    "would prune {} face detection(s) for missing file: {}",
+                    count, path
+                );
+            } else {
+                conn.execute(
+                    "DELETE FROM face_detections WHERE file_id = ?1",
+                    rusqlite::params![file_id],
+                )?;
+                println!(
+                    "pruned {} face detection(s) for missing file: {}",
+                    count, path
+                );
+            }
+            pruned_faces += count;
+            pruned_files += 1;
+        }
+        if pruned_faces > 0 {
+            info!(
+                cli,
+                "{} {} orphaned face detection(s) from {} missing file(s)",
+                if dry_run { "Would prune" } else { "Pruned" },
+                pruned_faces,
+                pruned_files,
+            );
+        }
+    }
+
     Ok(())
 }
 
