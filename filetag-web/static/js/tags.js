@@ -1171,7 +1171,9 @@ async function toggleKvExpand(tagName) {
         return;
     }
     state.expandedGroups.add(kvKey);
-    if (!state.kvValueCache[tagName]) {
+    // Fetch if not yet cached (undefined) or if we have a stale empty result
+    // (empty array is truthy in JS, so ![] === false — check explicitly).
+    if (state.kvValueCache[tagName] == null || state.kvValueCache[tagName].length === 0) {
         renderTags(); // show loading state
         try {
             const values = await api(

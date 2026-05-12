@@ -149,6 +149,15 @@ const TRANSLATIONS = {
         'face.detect-selection-btn': 'Detect faces in selection',
         'face.no-images-in-selection': 'No images in selection.',
         'face.batch-already-running': 'Face detection is already running.',
+        'face.how-it-works':    'How it works',
+        'face.step-detect':     "Click 'Detect all' to find faces in all images in this folder.",
+        'face.step-group':      "Click 'Group people' to automatically cluster similar faces together.",
+        'face.step-name':       'Click a face box on an image to assign a name to the whole group.',
+        'face.unknown-section': 'Unidentified',
+        'face.unknown-person':  'Unknown person',
+        'face.assign-cluster-info': '{n} photo(s) in this group. Naming propagates to all similar faces.',
+        'face.assign-named':    'Currently assigned to: {name}',
+        'face.assign-no-subject': 'Not yet assigned to a person.',
 
         // ComicInfo metadata import
         'comic.import-btn':             'Import ComicInfo.xml',
@@ -461,6 +470,15 @@ const TRANSLATIONS = {
         'face.detect-selection-btn': 'Gezichten herkennen in selectie',
         'face.no-images-in-selection': 'Geen afbeeldingen in de selectie.',
         'face.batch-already-running': 'Gezichtsherkenning is al bezig.',
+        'face.how-it-works':    'Zo werkt het',
+        'face.step-detect':     "Klik op 'Alles detecteren' om gezichten te vinden in alle afbeeldingen in deze map.",
+        'face.step-group':      "Klik op 'Personen groeperen' om vergelijkbare gezichten automatisch samen te voegen.",
+        'face.step-name':       "Klik op een gezichtskader in een afbeelding om een naam toe te wijzen aan de hele groep.",
+        'face.unknown-section': 'Onbekend',
+        'face.unknown-person':  'Onbekende persoon',
+        'face.assign-cluster-info': '{n} foto(\'s) in deze groep. Een naam toewijzen geldt voor alle vergelijkbare gezichten.',
+        'face.assign-named':    'Nu toegewezen aan: {name}',
+        'face.assign-no-subject': 'Nog niet toegewezen aan een persoon.',
 
         // ComicInfo metadata import
         'comic.import-btn':             'ComicInfo.xml importeren',

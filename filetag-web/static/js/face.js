@@ -58,84 +58,84 @@ function renderPeopleSection() {
     if (!state.faceConfig.enabled) {
         return `<div class="people-section-header">
             <span class="people-section-label">${esc(t('face.people-section'))}</span>
-            <button class="people-detect-all-btn" onclick="openSettings('face')">${esc(t('face.enable-in-settings'))}</button>
+            <button class="people-action-btn" onclick="openSettings('face')">${esc(t('face.enable-in-settings'))}</button>
         </div>`;
     }
 
     const batchRunning = state.faceProgressTimer !== null;
     const progressHtml = batchRunning ? _faceBatchProgressHtml() : '';
 
-    const clusterBtn = `<button class="people-detect-all-btn" onclick="faceClusters()"
+    const clusterBtn = `<button class="people-action-btn" onclick="faceClusters()"
         title="${esc(t('face.cluster-btn-title'))}">${esc(t('face.cluster-btn'))}</button>`;
-    const detectAllBtn = `<button class="people-detect-all-btn" onclick="faceDetectBatch()"
+    const detectAllBtn = `<button class="people-action-btn" onclick="faceDetectBatch()"
         ${batchRunning ? 'disabled' : ''}>${esc(t('face.detect-all'))}</button>`;
+    const toolbar = `<div class="people-section-toolbar">${detectAllBtn}${clusterBtn}</div>`;
 
     const all = state.people || [];
-    const named   = all.filter(p => !_faceIsUnknown(p.name));
-    const unknown = all.filter(p =>  _faceIsUnknown(p.name));
+    const named   = all.filter(p => p.name && !_faceIsUnknown(p.name));
+    const unknown = all.filter(p => _faceIsUnknown(p.name));
 
-    const makeItems = (list) => {
-        const mode = state.tagSortMode;
-        const sorted = [...list];
-        if (mode === 'count') {
-            sorted.sort((a, b) => b.count - a.count || (a.name || '').localeCompare(b.name || ''));
+    const sorted = (list) => {
+        const s = [...list];
+        if (state.tagSortMode === 'count') {
+            s.sort((a, b) => b.count - a.count || (a.name || '').localeCompare(b.name || ''));
         } else {
-            sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            s.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         }
-        return sorted.map(p => {
+        return s;
+    };
+
+    const makeItem = (p, isUnknown) => {
         const isActive = state.faceActivePerson === p.name;
         const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: p.det_id }) + dirParam('&');
-        const label = !p.name
-            ? t('face.unassigned')
-            : (p.name.startsWith('person/') ? p.name.slice(7) : p.name);
+        let label;
+        if (!p.name) {
+            label = t('face.unassigned');
+        } else if (isUnknown) {
+            label = t('face.unknown-person');
+        } else {
+            const prefix = (state.faceConfig && state.faceConfig.tag_prefix) || 'person';
+            label = p.name.startsWith(prefix + '/') ? p.name.slice(prefix.length + 1) : p.name;
+        }
         const activeClass = isActive ? ' active' : '';
+        const unknownClass = isUnknown ? ' unknown' : '';
         const onclickArg = p.name ? `'${jesc(p.name)}'` : `''`;
-        return `<button class="person-item${activeClass}" onclick="faceSelectPerson(${onclickArg})"
-            title="${esc(p.name || t('face.unassigned'))}">
-            <img class="person-thumb" src="${thumbUrl}" alt="${esc(label)}"
+        const thumbHtml = isUnknown
+            ? `<span class="person-thumb person-thumb-unknown">&#x1F464;</span>`
+            : `<img class="person-thumb" src="${thumbUrl}" alt="${esc(label)}"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <span class="person-thumb-placeholder" style="display:none">&#x1F464;</span>
+               <span class="person-thumb-placeholder" style="display:none">&#x1F464;</span>`;
+        return `<button class="person-item${activeClass}${unknownClass}" onclick="faceSelectPerson(${onclickArg})"
+            title="${esc(p.name || t('face.unassigned'))}">
+            ${thumbHtml}
             <span class="person-label">${esc(label)}</span>
             <span class="person-count">${p.count}</span>
         </button>`;
-        }).join('');
     };
 
-    // Unknown persons view
-    if (state.faceShowUnknown) {
-        const backBtn = `<button class="people-back-btn" onclick="faceToggleUnknown()">← ${esc(t('face.people-section'))}</button>`;
-        const noUnknown = `<div class="face-progress-bar-wrap"><span style="font-size:11px;color:var(--text-secondary)">${esc(t('face.no-unknown'))}</span></div>`;
-        return `<div class="people-section-header">
-            ${backBtn}
-            ${clusterBtn}
-        </div>
-        ${progressHtml}
-        ${unknown.length === 0 ? noUnknown : makeItems(unknown)}`;
-    }
-
-    // Normal view: named persons only
+    // Empty state: show workflow guide
     if (all.length === 0) {
-        return `<div class="people-section-header">
-            <span class="people-section-label">${esc(t('face.people-section'))}</span>
-            <div style="display:flex;gap:4px">${clusterBtn}${detectAllBtn}</div>
-        </div>
-        ${progressHtml}
-        <div class="face-progress-bar-wrap" style="color:var(--text-secondary)">
-            <span style="font-size:11px">${esc(t('face.no-faces'))}</span>
+        return toolbar + progressHtml + `<div class="people-workflow-steps">
+            <div class="people-wf-title">${esc(t('face.how-it-works'))}</div>
+            <div class="people-wf-step"><span class="people-wf-n">1</span><span>${esc(t('face.step-detect'))}</span></div>
+            <div class="people-wf-step"><span class="people-wf-n">2</span><span>${esc(t('face.step-group'))}</span></div>
+            <div class="people-wf-step"><span class="people-wf-n">3</span><span>${esc(t('face.step-name'))}</span></div>
         </div>`;
     }
 
-    const unknownToggle = unknown.length > 0
-        ? `<button class="people-unknown-toggle" onclick="faceToggleUnknown()">${unknown.length} ${esc(t('face.unknown-persons'))} ›</button>`
-        : '';
-
-    return `<div class="people-section-header">
-        <span class="people-section-label">${esc(t('face.people-section'))}</span>
-        <div style="display:flex;gap:4px">${clusterBtn}${detectAllBtn}</div>
-    </div>
-    ${progressHtml}
-    ${makeItems(named)}
-    ${unknownToggle}`;
+    // Unified view: named persons first, unknown clusters below a divider
+    let html = toolbar + progressHtml;
+    if (named.length > 0) {
+        html += sorted(named).map(p => makeItem(p, false)).join('');
+    }
+    if (unknown.length > 0) {
+        html += `<div class="people-unknown-divider">
+            <span>${esc(t('face.unknown-section'))}</span>
+            <span class="people-unknown-count">${unknown.length}</span>
+        </div>`;
+        html += sorted(unknown).map(p => makeItem(p, true)).join('');
+    }
+    return html;
 }
 
 /** Returns true when `name` is an auto-generated unknown cluster name or unassigned (empty). */
@@ -145,16 +145,8 @@ function _faceIsUnknown(name) {
     return name.startsWith(prefix + '/unknown-');
 }
 
-/** Toggle between named-persons view and unknown-persons view in the sidebar. */
-function faceToggleUnknown() {
-    state.faceShowUnknown = !state.faceShowUnknown;
-    // Deselect an unknown person when leaving the unknown view.
-    if (!state.faceShowUnknown && state.faceActivePerson && _faceIsUnknown(state.faceActivePerson)) {
-        state.faceActivePerson = null;
-        doClearSearch();
-    }
-    renderTags();
-}
+/** No-op toggle kept for back-compat; unknown clusters are now shown inline. */
+function faceToggleUnknown() {}
 
 function _faceBatchProgressHtml() {
     const p = state._faceBatchProgress || {};
@@ -636,13 +628,37 @@ let _faceAssignDialog = null;
 function _faceShowAssignDialog(det, boxEl) {
     _faceCloseAssignDialog();
 
+    const prefix = (state.faceConfig && state.faceConfig.tag_prefix) ? state.faceConfig.tag_prefix : 'person';
     const existing = det.subject_name
-        ? (det.subject_name.startsWith('person/') ? det.subject_name.slice(7) : det.subject_name)
+        ? (det.subject_name.startsWith(prefix + '/') ? det.subject_name.slice(prefix.length + 1) : det.subject_name)
         : '';
+
+    // Build contextual info line
+    const isUnknown = det.subject_name && _faceIsUnknown(det.subject_name);
+    const isNamed   = det.subject_name && !isUnknown;
+    const clusterEntry = det.subject_name ? (state.people || []).find(p => p.name === det.subject_name) : null;
+    let contextLine;
+    if (isUnknown && clusterEntry) {
+        contextLine = t('face.assign-cluster-info', { n: clusterEntry.count });
+    } else if (isNamed) {
+        contextLine = t('face.assign-named', { name: existing });
+    } else {
+        contextLine = t('face.assign-no-subject');
+    }
+
+    const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: det.id }) + dirParam('&');
 
     const dialog = document.createElement('div');
     dialog.className = 'face-assign-dialog';
-    dialog.innerHTML = `<h4>${esc(t('face.assign-title'))}</h4>
+    dialog.innerHTML = `
+        <div class="face-assign-header">
+            <img class="face-assign-thumb-img" src="${thumbUrl}" alt=""
+                 onerror="this.style.display='none'">
+            <div class="face-assign-info">
+                <div class="face-assign-current-name">${esc(existing || t('face.unknown'))}</div>
+                <div class="face-assign-cluster-info">${esc(contextLine)}</div>
+            </div>
+        </div>
         <input type="text" id="face-assign-input" value="${esc(existing)}"
                placeholder="${esc(t('face.assign-label'))}" autocomplete="off">
         <div id="face-assign-suggestions" class="face-assign-suggestions" hidden></div>
@@ -654,7 +670,7 @@ function _faceShowAssignDialog(det, boxEl) {
 
     // Position near the box
     const rect = boxEl.getBoundingClientRect();
-    dialog.style.left = Math.min(rect.left, window.innerWidth - 240) + 'px';
+    dialog.style.left = Math.min(rect.left, window.innerWidth - 260) + 'px';
     dialog.style.top  = (rect.bottom + 6) + 'px';
 
     // Append inside the media-viewer when it is open (z-index 9500),

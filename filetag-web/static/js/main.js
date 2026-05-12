@@ -392,6 +392,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderDetailTagsSectionOnly();
     });
     ftOn('ft:file-tags', () => {
+        // Invalidate k=v value cache so the next sidebar expand re-fetches fresh data.
+        state.kvValueCache = {};
         // Remember which input had focus so we can restore it after the render.
         const focusedId = document.activeElement?.id || null;
         renderTags();

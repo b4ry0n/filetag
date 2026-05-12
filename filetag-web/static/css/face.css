@@ -191,20 +191,55 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 12px 14px;
-    min-width: 220px;
+    min-width: 240px;
+    max-width: 300px;
     box-shadow: var(--shadow-md);
     font-size: 13px;
 }
 
-.face-assign-dialog h4 {
-    margin: 0 0 8px;
+/* Header row: thumbnail + name/context */
+.face-assign-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.face-assign-thumb-img {
+    width: 48px;
+    height: 48px;
+    border-radius: 6px;
+    object-fit: cover;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg-hover);
+}
+
+.face-assign-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.face-assign-current-name {
     font-size: 13px;
+    font-weight: 600;
     color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.face-assign-cluster-info {
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+    margin-top: 2px;
+    line-height: 1.4;
 }
 
 .face-assign-dialog input[type="text"] {
     width: 100%;
     margin-bottom: 8px;
+    box-sizing: border-box;
 }
 
 .face-assign-dialog .face-assign-btns {
@@ -231,6 +266,8 @@
     border-radius: 4px;
     border: 1px solid var(--border);
     background: var(--bg-hover);
+    cursor: pointer;
+    color: var(--text);
 }
 
 .face-assign-dialog button.primary {
@@ -293,6 +330,105 @@
     margin-top: 6px;
 }
 
+/* Toolbar row at the top of the People section */
+.people-section-toolbar {
+    display: flex;
+    gap: 4px;
+    padding: 0 10px 6px;
+    justify-content: flex-end;
+}
+
+.people-section-body .people-section-toolbar {
+    padding-top: 4px;
+}
+
+/* Action buttons inside the People toolbar */
+.people-action-btn {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--border, #555);
+    background: transparent;
+    color: var(--text-secondary, #888);
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.people-action-btn:hover {
+    color: var(--text, #ddd);
+    border-color: var(--text-secondary, #888);
+}
+
+.people-action-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* Divider before the unknown-cluster section */
+.people-unknown-divider {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim, #666);
+    border-top: 1px solid var(--border, #333);
+    margin-top: 4px;
+}
+
+.people-unknown-count {
+    background: var(--border, #444);
+    color: var(--text-secondary, #888);
+    font-size: 10px;
+    padding: 0 5px;
+    border-radius: 8px;
+    line-height: 1.6;
+}
+
+/* Workflow guide shown when no faces have been detected yet */
+.people-workflow-steps {
+    padding: 8px 12px 12px;
+    border-top: 1px solid var(--border, #333);
+    margin-top: 4px;
+}
+
+.people-wf-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim, #666);
+    margin-bottom: 7px;
+}
+
+.people-wf-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--text-secondary, #888);
+    margin-bottom: 6px;
+    line-height: 1.45;
+}
+
+.people-wf-n {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--border, #444);
+    color: var(--text-secondary, #888);
+    font-size: 9px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1px;
+}
+
 .people-section-header {
     display: flex;
     align-items: center;
@@ -313,50 +449,23 @@
 .people-section-body .people-section-label { display: none; }
 .people-section-body .people-section-header { justify-content: flex-end; padding-top: 4px; }
 
-.people-detect-all-btn {
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    border: 1px solid var(--border, #555);
-    background: transparent;
+.person-item.unknown .person-label {
     color: var(--text-secondary, #888);
-    cursor: pointer;
-    line-height: 1.4;
+    font-style: italic;
 }
 
-.people-detect-all-btn:hover {
-    color: var(--text, #ddd);
-    border-color: var(--text-secondary, #888);
-}
-
-/* "← Personen" back button in the unknown-persons view */
-.people-back-btn {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 4px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary, #888);
-    cursor: pointer;
-    line-height: 1.4;
-}
-
-.people-back-btn:hover {
-    color: var(--text, #ddd);
-}
-
-/* "N onbekend ›" toggle at the bottom of the named-persons list */
-.people-unknown-toggle {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 3px 10px 5px;
-    font-size: 11px;
-    color: var(--text-secondary, #888);
-    background: none;
-    border: none;
-    cursor: pointer;
+.person-thumb-unknown {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px dashed var(--border, #555);
+    flex-shrink: 0;
+    background: var(--bg-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--text-dim, #666);
 }
 
 /* Person entry in sidebar */
