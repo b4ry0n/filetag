@@ -1625,6 +1625,25 @@ pub async fn api_face_analyse(
     }))
 }
 
+/// Compute intersection-over-union for two axis-aligned bounding boxes.
+/// Arguments are (x, y, width, height) for each box.
+#[allow(clippy::too_many_arguments)]
+fn face_iou(ax: i32, ay: i32, aw: i32, ah: i32, bx: i32, by: i32, bw: i32, bh: i32) -> f32 {
+    let ix = ax.max(bx);
+    let iy = ay.max(by);
+    let ix2 = (ax + aw).min(bx + bw);
+    let iy2 = (ay + ah).min(by + bh);
+    let inter_w = (ix2 - ix).max(0) as f32;
+    let inter_h = (iy2 - iy).max(0) as f32;
+    let inter = inter_w * inter_h;
+    if inter == 0.0 {
+        return 0.0;
+    }
+    let area_a = (aw * ah) as f32;
+    let area_b = (bw * bh) as f32;
+    inter / (area_a + area_b - inter)
+}
+
 /// Synchronous wrapper for use inside `spawn_blocking`.
 ///
 /// `rel` is the already-computed root-relative path (may be a virtual archive
@@ -1653,6 +1672,11 @@ fn analyse_file_sync(
     };
     let file_id = file_rec.id;
 
+    // Preserve existing subject assignments before wiping detections.
+    // After re-detection we use IoU matching to re-attach the name to the
+    // new bounding box that best overlaps with the old one.
+    let existing = db::face_detections_for_file(conn, file_id)?;
+
     db::delete_face_detections_for_file(conn, file_id)?;
 
     // Load image bytes — from archive or from disk.
@@ -1677,7 +1701,7 @@ fn analyse_file_sync(
 
     let raw = detect_and_embed(&img, models, cfg)?;
     for det in &raw {
-        db::insert_face_detection(
+        let new_id = db::insert_face_detection(
             conn,
             file_id,
             det.x,
@@ -1687,6 +1711,24 @@ fn analyse_file_sync(
             det.confidence,
             det.embedding.as_deref(),
         )?;
+
+        // Re-attach the subject name from the best-matching existing detection.
+        if !existing.is_empty() {
+            let best = existing
+                .iter()
+                .filter(|e| e.subject_name.is_some())
+                .max_by(|a, b| {
+                    face_iou(det.x, det.y, det.w, det.h, a.x, a.y, a.w, a.h)
+                        .partial_cmp(&face_iou(det.x, det.y, det.w, det.h, b.x, b.y, b.w, b.h))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            if let Some(prev) = best {
+                let iou = face_iou(det.x, det.y, det.w, det.h, prev.x, prev.y, prev.w, prev.h);
+                if iou >= 0.35 {
+                    db::set_face_subject(conn, new_id, prev.subject_name.as_deref())?;
+                }
+            }
+        }
     }
 
     Ok((db::face_detections_for_file(conn, file_id)?, img_w, img_h))
