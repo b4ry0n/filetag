@@ -363,6 +363,18 @@
     transform: rotate(-90deg); /* collapsed */
 }
 
+/* The chevron is a separate click target for expand/collapse */
+.ft-row .ft-chevron {
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 3px;
+    margin-right: 1px;
+}
+.ft-row .ft-chevron:hover {
+    background: var(--bg-hover);
+    opacity: 1;
+}
+
 .ft-row .count {
     margin-left: auto;
     flex-shrink: 0;

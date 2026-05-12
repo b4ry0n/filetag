@@ -114,9 +114,10 @@ function _ftRenderRoot(root) {
 
     return `<div class="ft-root">
         <div class="ft-row ft-root-row" style="padding-left:4px"
-            onclick="ftreeToggleDir('${jesc(root.path)}')"
+            onclick="ftreeNavDir('${jesc(root.path)}')"
             title="${esc(root.path)}">
-            <svg class="chevron-icon${chevCls}" viewBox="0 0 12 12" width="11" height="11">
+            <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
+                onclick="event.stopPropagation();ftreeToggleDir('${jesc(root.path)}')">
                 <polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4"
                     stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -163,12 +164,12 @@ function _ftRenderEntry(e, parentAbs, depth) {
                 : '');
         return `<div class="ft-dir">
             <div class="ft-row" style="padding-left:${indent}px"
-                onclick="ftreeToggleDir('${jesc(absPath)}')"
-                ondblclick="ftreeNavDir('${jesc(absPath)}')"
+                onclick="ftreeNavDir('${jesc(absPath)}')"
                 draggable="true"
                 ondragstart="ftreeDragDir(event,'${jesc(absPath)}')"
                 title="${esc(absPath)}">
-                <svg class="chevron-icon${chevCls}" viewBox="0 0 12 12" width="11" height="11">
+                <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
+                    onclick="event.stopPropagation();ftreeToggleDir('${jesc(absPath)}')">
                     <polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4"
                         stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
