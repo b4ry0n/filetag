@@ -513,10 +513,17 @@ async function faceDownloadModels() {
 /**
  * Wrap the preview image in a .face-preview-wrap and paint bounding boxes.
  * Called after detections are loaded.
+ *
+ * IMPORTANT: never targets the viewer wrap (.face-viewer-wrap) — the viewer
+ * has its own doRender pipeline in _faceApplyViewerOverlay.  Also bails out
+ * entirely while the viewer overlay is active so that loading detections for
+ * viewer pages cannot pollute the detail panel.
  */
 function _faceRenderOverlays(path) {
     if (state.faceDetectionsPath !== path) return;
-    const wrap = document.querySelector('.face-preview-wrap');
+    // The viewer manages its own face-box rendering; don't touch the detail panel.
+    if (_faceViewerActive) return;
+    const wrap = document.querySelector('.face-preview-wrap:not(.face-viewer-wrap)');
     if (!wrap) return;
 
     // Remove existing boxes
@@ -878,16 +885,14 @@ function faceOnViewerClosed() {
     _faceViewerActive = false;
     _faceViewerPath = null;
     // Invalidate any in-flight faceLoadDetections calls from the viewer so they
-    // cannot overwrite state after the detail panel has taken over.
+    // cannot overwrite state after the viewer closes.
     ++_faceLoadSeq;
     state.faceDetections = [];
     state.faceDetectionsPath = null;
     const btn = document.getElementById('cv-face-btn');
     if (btn) btn.classList.remove('active');
-    // Force the detail panel to reload the correct detections for the selected file.
-    if (state.selectedFile) {
-        faceOnDetailRendered(state.selectedFile.path, state.selectedFile.type);
-    }
+    // The detail panel's .face-preview-wrap was never touched by _faceRenderOverlays
+    // while the viewer was active, so its boxes are still correct — no reload needed.
 }
 
 /** Wrap the current viewer image and render face boxes on it. */
