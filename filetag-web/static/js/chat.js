@@ -195,14 +195,11 @@ function openChat() {
     const files = state.selectedPaths.size > 0
         ? [...state.selectedPaths]
         : state.selectedFile ? [state.selectedFile.path] : [];
-    if (!files.length) {
-        showToast('Select one or more files first');
-        return;
-    }
 
     _chatFiles    = files;
     _chatMessages = [];
     _chatSending  = false;
+    _chatPickerOpen = false;
 
     const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
@@ -212,7 +209,14 @@ function openChat() {
     _renderChatFiles();
     _updateChatVideoBar();
     _renderChatMessages();
-    document.getElementById('chat-input').focus();
+
+    // If no files were pre-selected, open the file picker automatically so the
+    // user can pick files from the current directory without having to close chat.
+    if (!files.length) {
+        chatToggleFilePicker();
+    } else {
+        document.getElementById('chat-input').focus();
+    }
 }
 
 function closeChat() {
