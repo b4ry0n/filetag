@@ -44,6 +44,13 @@ const state = {
     sectionVisibility: _loadSectionVisibility(), // { tags, subjects, people, ai, distribution }
     sectionOrder: _loadSectionOrder(),            // ['tags','subjects','people','ai','distribution']
     sectionHeights: _loadSectionHeights(),        // { tags: px, subjects: px, ... } or null = auto
+    // Sidebar tab / split state
+    sidebarTab: (() => { try { return localStorage.getItem('ft-sidebar-tab') || 'tags'; } catch (_) { return 'tags'; } })(),
+    sidebarSplit: (() => { try { return localStorage.getItem('ft-sidebar-split') === '1'; } catch (_) { return false; } })(),
+    // File tree
+    ftreeExpanded: {},  // absPath → boolean (true = open)
+    ftreeCache: {},     // absPath → ApiDirEntry[]
+    ftreeFilter: '',    // text filter for tree node names
 };
 
 /** Load section visibility from localStorage, with defaults all-on. */

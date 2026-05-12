@@ -314,6 +314,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/js/select.js", get(api::js_select))
         .route("/js/chat.js", get(api::js_chat))
         .route("/js/face.js", get(api::js_face))
+        .route("/js/filetree.js", get(api::js_filetree))
         .route("/js/prompt-wizard.js", get(api::js_prompt_wizard))
         .route("/css/face.css", get(api::css_face))
         .route("/css/mobile.css", get(api::css_mobile))

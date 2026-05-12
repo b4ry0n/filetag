@@ -353,6 +353,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     _navPush(); // seed the history with the initial location so back-button works after first navigation
     render();
 
+    // Initialise sidebar tabs (restores persisted tab/split state).
+    if (typeof initSidebarTabs === 'function') initSidebarTabs();
+
     // Build language selector and apply i18n translations to all data-i18n elements.
     const langSel = document.getElementById('lang-select');
     if (langSel) {

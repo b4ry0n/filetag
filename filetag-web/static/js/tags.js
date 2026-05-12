@@ -1372,8 +1372,10 @@ async function tagDrop(event, tagName) {
     const raw = event.dataTransfer.getData('text/filetag-paths');
     if (!raw) return;
     const paths = JSON.parse(raw);
+    // Use the dir from the drag source (e.g. file tree) so the right DB root is used.
+    const dragDir = event.dataTransfer.getData('text/filetag-dir') || currentAbsDir();
     await Promise.all(paths.map(p =>
-        apiPost('/api/tag', { path: p, tags: [tagName], dir: currentAbsDir() })
+        apiPost('/api/tag', { path: p, tags: [tagName], dir: dragDir })
     ));
     showToast(`Applied "${tagName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
     await loadTags();

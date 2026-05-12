@@ -41,6 +41,30 @@
     </header>
     <div class="layout" id="layout">
         <aside class="sidebar" id="sidebar">
+            <!-- Sidebar tab bar -->
+            <div class="sidebar-tabs" id="sidebar-tabs">
+                <button class="sidebar-tab-btn active" data-tab="tags" onclick="setSidebarTab('tags')" title="Tags &amp; metadata">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 1h5.5l8 8-5.5 5.5-8-8V1z"/><circle cx="4" cy="4" r="1" fill="currentColor" stroke="none"/>
+                    </svg>
+                    Tags
+                </button>
+                <button class="sidebar-tab-btn" data-tab="files" onclick="setSidebarTab('files')" title="Directory tree">
+                    <svg width="12" height="12" viewBox="0 0 16 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 3A1.5 1.5 0 0 1 2.5 1.5H6l1.5 1.5H13.5A1.5 1.5 0 0 1 15 4.5v7A1.5 1.5 0 0 1 13.5 13h-11A1.5 1.5 0 0 1 1 11.5V3z"/>
+                    </svg>
+                    Files
+                </button>
+                <button class="sidebar-tab-btn" id="sidebar-split-btn" onclick="toggleSidebarSplit()" title="Show both side by side">
+                    <svg width="14" height="14" viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                        <rect x="1" y="1" width="8" height="12" rx="1.5"/>
+                        <rect x="11" y="1" width="8" height="12" rx="1.5"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Tags pane (original sidebar content) -->
+            <div id="tags-pane" class="sidebar-pane">
             <div class="sidebar-header">
                 <button class="sidebar-sort-btn active" id="sidebar-sort-btn" onclick="toggleTagSortMode()" title="Sort: groups first">
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -65,6 +89,19 @@
             <div id="sidebar-bottom-stack" class="sidebar-bottom-stack"></div>
             <div class="sidebar-subject-divider" id="sidebar-subject-divider" title="Drag to resize" hidden></div>
             <div class="sidebar-subject-section" id="subject-list"></div>
+            </div><!-- /#tags-pane -->
+
+            <!-- Files pane (directory tree) -->
+            <div id="filetree-pane" class="sidebar-pane" hidden>
+                <div class="filetree-header">
+                    <input type="text" id="ft-filter-input" placeholder="Filter files\u2026" autocomplete="off"
+                        oninput="ftreeSetFilter(this.value)"
+                        onkeydown="if(event.key==='Escape'){ftreeSetFilter('');this.value='';}">
+                    <button id="ft-filter-clear" hidden
+                        onclick="ftreeSetFilter('');document.getElementById('ft-filter-input').value='';">&#x2715;</button>
+                </div>
+                <div class="filetree-content" id="filetree-content"></div>
+            </div><!-- /#filetree-pane -->
         </aside>
         <!-- Backdrop that closes the sidebar drawer on mobile when tapped -->
         <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleMobileSidebar()"></div>
@@ -637,6 +674,7 @@
     <script src="/js/main.js"></script>
     <script src="/js/chat.js"></script>
     <script src="/js/face.js"></script>
+    <script src="/js/filetree.js"></script>
     <script src="/js/prompt-wizard.js"></script>
 
     <!-- Prompt Optimisation Wizard -->
