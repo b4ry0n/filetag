@@ -66,6 +66,23 @@ function cvThumbUrl(i) {
 
 async function openMediaViewer(path, startPage = 0) {
     // Detecteer archiefbestand (.cbz/.zip) of zip-entry (virtueel pad met '::')
+    // When a virtual entry path is passed (e.g. from search results), extract
+    // the archive path and resolve the correct page index.
+    if (typeof path === 'string' && path.includes('::')) {
+        const sepIdx = path.indexOf('::');
+        const archivePath = path.substring(0, sepIdx);
+        const entryName   = path.substring(sepIdx + 2);
+        // Fetch the pages list so we can start at the right page.
+        try {
+            const r = await fetch('/api/zip/pages?' + new URLSearchParams({ path: archivePath }) + dirParam('&'));
+            if (r.ok) {
+                const d = await r.json();
+                const idx = (d.pages || []).indexOf(entryName);
+                startPage = idx >= 0 ? idx : 0;
+            }
+        } catch (_) { startPage = 0; }
+        path = archivePath;
+    }
     const isArchive = (typeof path === 'string' && (path.includes('::') || path.match(/\.(cbz|zip)$/i)));
     if (isArchive) {
         const overlay = document.getElementById('media-viewer');

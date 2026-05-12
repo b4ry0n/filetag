@@ -68,7 +68,10 @@ function _lbDetachZoom() {
 }
 
 // Dispatch: images open in the directory viewer; everything else in the lightbox.
+// Archive entry paths (virtual paths containing '::') are routed through
+// openMediaViewer so the archive-page resolver handles them correctly.
 function cvOpenFile(path, type) {
+    if (typeof path === 'string' && path.includes('::')) { openMediaViewer(path); return; }
     if (type === 'image' || type === 'raw') { openFileInDirViewer(path); }
     else { openLightbox(path, type); }
 }
