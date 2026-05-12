@@ -189,6 +189,11 @@
     overflow: hidden;
 }
 
+/* Ensure the HTML [hidden] attribute is respected despite display:flex above */
+.sidebar-pane[hidden] {
+    display: none !important;
+}
+
 /* Split mode: sidebar becomes column (tab bar on top, panes row below) */
 .sidebar.sidebar-split {
     flex-direction: column;
