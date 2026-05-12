@@ -393,16 +393,24 @@ async function faceDetectSingle(path) {
     }
 }
 
+// Generation counter: incremented whenever a new load supersedes previous ones.
+// Each faceLoadDetections call captures the counter at start; if it has changed
+// by the time the fetch resolves, the result is discarded (stale).
+let _faceLoadSeq = 0;
+
 /** Load existing detections for a file (no re-analysis). */
 async function faceLoadDetections(path) {
     if (state.faceDetectionsPath === path) return; // already loaded
+    const seq = ++_faceLoadSeq;
     try {
         const result = await api('/api/face/detections?' + new URLSearchParams({ path }) + dirParam('&'));
+        if (seq !== _faceLoadSeq) return; // superseded by a newer load
         state.faceDetections = result.detections || [];
         state.faceDetectionsPath = path;
         state.faceImageWidth  = result.image_width  || 0;
         state.faceImageHeight = result.image_height || 0;
     } catch (_) {
+        if (seq !== _faceLoadSeq) return;
         state.faceDetections = [];
         state.faceDetectionsPath = path;
         state.faceImageWidth  = 0;
@@ -845,7 +853,9 @@ async function cvFaceToggle() {
     if (_faceViewerActive) {
         const img = document.querySelector('#cv-pages img.cv-page');
         if (img) {
-            const filePath = _cv.mode === 'dir' ? _cv.filePaths[_cv.current] : null;
+            const filePath = _cv.mode === 'dir'
+                ? _cv.filePaths[_cv.current]
+                : (_cv.path ? _cv.path + '::' + _cv.pages[_cv.current] : null);
             await _faceApplyViewerOverlay(filePath);
         }
     } else {
@@ -867,8 +877,17 @@ async function faceOnViewerPageChanged(filePath) {
 function faceOnViewerClosed() {
     _faceViewerActive = false;
     _faceViewerPath = null;
+    // Invalidate any in-flight faceLoadDetections calls from the viewer so they
+    // cannot overwrite state after the detail panel has taken over.
+    ++_faceLoadSeq;
+    state.faceDetections = [];
+    state.faceDetectionsPath = null;
     const btn = document.getElementById('cv-face-btn');
     if (btn) btn.classList.remove('active');
+    // Force the detail panel to reload the correct detections for the selected file.
+    if (state.selectedFile) {
+        faceOnDetailRendered(state.selectedFile.path, state.selectedFile.type);
+    }
 }
 
 /** Wrap the current viewer image and render face boxes on it. */

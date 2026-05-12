@@ -88,6 +88,7 @@ async function openMediaViewer(path, startPage = 0) {
         const overlay = document.getElementById('media-viewer');
         overlay.hidden = false;
 
+        _cv.mode = 'zip';
         _cv.path = path;
         _cv.current = startPage;
         _cv.pages = [];
@@ -778,9 +779,12 @@ function cvShowPage(idx) {
             container.appendChild(img1);
             if (img2) container.appendChild(img2);
         }
-        // Notify face overlay (only in dir mode; face.js checks if overlays are active)
-        if (_cv.mode === 'dir' && typeof faceOnViewerPageChanged === 'function') {
-            faceOnViewerPageChanged(_cv.filePaths[idx]);
+        // Notify face overlay; face.js checks if overlays are active
+        if (typeof faceOnViewerPageChanged === 'function') {
+            const facePath = _cv.mode === 'dir'
+                ? _cv.filePaths[idx]
+                : _cv.path + '::' + _cv.pages[idx];
+            faceOnViewerPageChanged(facePath);
         }
     });
 

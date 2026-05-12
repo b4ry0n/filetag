@@ -26,6 +26,12 @@ window.clearTagFilters = async function() {
     renderTags();
 };
 
+/** Update the sidebar tag text filter and re-render the tag list. */
+window.handleTagSearch = function(value) {
+    state.tagFilter = value;
+    renderTags();
+};
+
 /** Toggle the main Tags section open/closed. */
 window.toggleTagsSection = function() {
     const key = '\x01section:tags:hide';
