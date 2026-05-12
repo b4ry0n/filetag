@@ -305,6 +305,28 @@
 
 .ft-file-label { color: var(--text); }
 
+.ft-file-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    opacity: 0.75;
+}
+
+/* Per-type icon colours */
+.ft-type-image  { color: #22c55e; }   /* green */
+.ft-type-video  { color: #6366f1; }   /* indigo */
+.ft-type-audio  { color: #f59e0b; }   /* amber */
+.ft-type-pdf    { color: #ef4444; }   /* red */
+.ft-type-archive{ color: #f97316; }   /* orange */
+.ft-type-ebook  { color: #8b5cf6; }   /* violet */
+.ft-type-doc    { color: #3b82f6; }   /* blue */
+.ft-type-sheet  { color: #10b981; }   /* emerald */
+.ft-type-code   { color: #06b6d4; }   /* cyan */
+.ft-type-font   { color: #a855f7; }   /* purple */
+.ft-type-generic{ color: var(--text-secondary); }
+
 .ft-icon {
     flex-shrink: 0;
     opacity: 0.45;

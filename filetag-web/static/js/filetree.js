@@ -179,19 +179,72 @@ function _ftRenderEntry(e, parentAbs, depth) {
     } else {
         const tagBadge = e.tag_count
             ? ` <span class="ft-tag-badge">${e.tag_count}</span>` : '';
+        const icon = _ftFileIcon(e.name);
         return `<div class="ft-row ft-file-row" style="padding-left:${indent + 15}px"
             draggable="true"
             ondragstart="ftreeDragStart(event,'${jesc(absPath)}','${jesc(parentAbs)}')"
             onclick="ftreeSelectFile('${jesc(absPath)}','${jesc(parentAbs)}')"
             title="${esc(absPath)}">
+            <span class="ft-file-icon" aria-hidden="true">${icon}</span>
             <span class="ft-label ft-file-label">${esc(e.name)}${tagBadge}</span>
         </div>`;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Async directory loading
+// File-type icon helper
 // ---------------------------------------------------------------------------
+
+/** Return an inline SVG string for the given filename, based on its extension. */
+function _ftFileIcon(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+
+    // Image
+    if (['jpg','jpeg','png','gif','webp','bmp','tiff','tif','heic','heif','avif','svg','ico','raw','cr2','nef','arw','dng','orf','rw2'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-image"><rect x="1.5" y="2" width="13" height="12" rx="1.5"/><circle cx="5.5" cy="5.5" r="1.2"/><path d="M1.5 10.5l3.5-3.5 3 3 2-2 3.5 3.5"/></svg>`;
+    }
+    // Video
+    if (['mp4','mkv','avi','mov','wmv','flv','webm','m4v','mpg','mpeg','ts','mts','m2ts','vob','3gp'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-video"><rect x="1" y="2.5" width="10" height="11" rx="1.5"/><path d="M11 6l4-2v8l-4-2V6z"/></svg>`;
+    }
+    // Audio
+    if (['mp3','flac','ogg','wav','aac','m4a','opus','wma','aiff','alac','ape','mka'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-audio"><circle cx="4.5" cy="12" r="2"/><circle cx="12" cy="10.5" r="2"/><path d="M6.5 12V4.5l7.5-2v7.5"/><line x1="6.5" y1="4.5" x2="14" y2="2.5"/></svg>`;
+    }
+    // PDF
+    if (ext === 'pdf') {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-pdf"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3" stroke-linejoin="round"/><path d="M5.5 8.5c0-.8.6-1.5 1.5-1.5h.5c.8 0 1.5.7 1.5 1.5S8.3 10 7.5 10H7v2" stroke-linecap="round"/><line x1="5.5" y1="12" x2="8.5" y2="12"/></svg>`;
+    }
+    // Archive / zip / rar
+    if (['zip','rar','7z','tar','gz','bz2','xz','zst','cbz','cbr','cb7'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-archive"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/><line x1="7" y1="4" x2="9" y2="4"/><line x1="7" y1="6" x2="9" y2="6"/><line x1="7" y1="8" x2="9" y2="8"/><rect x="6" y="9.5" width="4" height="3" rx=".5"/></svg>`;
+    }
+    // Ebook / document formats
+    if (['epub','mobi','azw','azw3','djvu'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-ebook"><path d="M3 1.5A1.5 1.5 0 0 1 4.5 0H12l3 3v12a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 15V1.5z"/><path d="M12 0v3h3"/><line x1="6" y1="6" x2="12" y2="6"/><line x1="6" y1="8.5" x2="12" y2="8.5"/><line x1="6" y1="11" x2="10" y2="11"/></svg>`;
+    }
+    // Word / text documents
+    if (['doc','docx','odt','rtf','txt','md','markdown'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-doc"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/><line x1="5" y1="7" x2="11" y2="7"/><line x1="5" y1="9.5" x2="11" y2="9.5"/><line x1="5" y1="12" x2="9" y2="12"/></svg>`;
+    }
+    // Spreadsheet
+    if (['xls','xlsx','ods','csv'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-sheet"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/><line x1="5" y1="7" x2="11" y2="7"/><line x1="5" y1="9.5" x2="11" y2="9.5"/><line x1="8" y1="7" x2="8" y2="12"/></svg>`;
+    }
+    // Code / config
+    if (['js','ts','jsx','tsx','py','rs','go','java','c','cpp','h','hpp','cs','php','rb','sh','bash','zsh','fish','toml','json','yaml','yml','xml','html','htm','css','scss','less','sql','lua','swift','kt','dart'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-code"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/><polyline points="6,7 4.5,9 6,11"/><polyline points="10,7 11.5,9 10,11"/></svg>`;
+    }
+    // Font
+    if (['ttf','otf','woff','woff2','eot'].includes(ext)) {
+        return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-font"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/><path d="M6 12V6h4M6 9h3.5" stroke-linecap="round"/></svg>`;
+    }
+
+    // Generic file
+    return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" class="ft-type-icon ft-type-generic"><path d="M3 1h7l3 3v11H3V1z"/><path d="M10 1v3h3"/></svg>`;
+}
+
+
 
 async function _ftLoadDir(absPath) {
     try {
