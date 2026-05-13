@@ -1945,6 +1945,22 @@ mark.tag-filter-match {
 
 .sidebar-sections-btn:hover { color: var(--text); background: var(--bg-hover); }
 
+/* Multi-select toggle button (same geometry as sections-btn) */
+.sidebar-multiselect-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 4px;
+    color: var(--text-tertiary);
+    transition: color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+.sidebar-multiselect-btn:hover { color: var(--text); background: var(--bg-hover); }
+.sidebar-multiselect-btn.active { color: var(--primary); background: var(--bg-hover); }
+
 /* Dot badge when any section is hidden */
 .sidebar-sections-btn.has-hidden { color: var(--primary); }
 .sidebar-sections-btn.has-hidden::after {

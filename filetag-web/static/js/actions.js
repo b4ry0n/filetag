@@ -213,12 +213,28 @@ function doClearSearch() {
     state.activeTags.clear();
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
+    // When the Tags tab is active: don't navigate to the browse view — just
+    // show the empty-state so the user must select a tag to see files.
+    if (!state.sidebarSplit && state.sidebarTab === 'tags') {
+        state.mode = 'browse';
+        state.searchResults = [];
+        state.searchResultRoots = new Map();
+        renderContent();
+        return;
+    }
     navigateTo(state.currentPath || '');
 }
 
 function navigateToParent(filePath) {
     const parts = filePath.split('/');
     const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+    // In multi-root search the file may belong to a different root than the
+    // currently active one — update currentBasePath so loadFiles targets the
+    // correct database root.
+    const fileRoot = searchDirForPath(filePath);
+    if (fileRoot && fileRoot !== state.currentBasePath) {
+        state.currentBasePath = fileRoot;
+    }
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
     navigateTo(dir);

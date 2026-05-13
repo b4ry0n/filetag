@@ -1,9 +1,25 @@
-// Toggle a tag filter in the sidebar — activates or deactivates a tag in the active-filter set.
-window.toggleTagFilter = async function(tagName) {
-    if (state.activeTags.has(tagName)) {
-        state.activeTags.delete(tagName);
+// Toggle a tag filter in the sidebar.
+// Default (single-click): select ONLY this tag, replacing any existing filter.
+// Cmd/Ctrl/Shift-click or tagMultiSelectMode: add/remove this tag to/from the
+// active filter set (legacy multi-select behaviour).
+window.toggleTagFilter = async function(tagName, event) {
+    const multiKey = event && (event.metaKey || event.ctrlKey || event.shiftKey);
+    if (state.tagMultiSelectMode || multiKey) {
+        // Multi-select: toggle this tag in the active set.
+        if (state.activeTags.has(tagName)) {
+            state.activeTags.delete(tagName);
+        } else {
+            state.activeTags.add(tagName);
+        }
     } else {
-        state.activeTags.add(tagName);
+        // Single-select: if this is already the sole active tag, deselect it;
+        // otherwise replace the entire selection with just this tag.
+        if (state.activeTags.has(tagName) && state.activeTags.size === 1) {
+            state.activeTags.clear();
+        } else {
+            state.activeTags.clear();
+            state.activeTags.add(tagName);
+        }
     }
     closeMobileSidebar(); // auto-close drawer on mobile after tapping a tag
     // Build a query expression from all active tags.
@@ -18,6 +34,30 @@ window.toggleTagFilter = async function(tagName) {
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
     render();
+};
+
+/** Remove a single tag from the active filter (used by the × chips). */
+window.removeTagFilter = async function(tagName) {
+    state.activeTags.delete(tagName);
+    const tags = [...state.activeTags];
+    if (tags.length === 0) {
+        doClearSearch();
+        renderTags();
+        return;
+    }
+    const q = tags.map(quoteQueryToken).join(' and ');
+    document.getElementById('search-input').value = q;
+    document.getElementById('search-clear').hidden = false;
+    await searchFiles(q);
+    render();
+};
+
+/** Toggle the persistent multi-select mode for the tag filter. */
+window.toggleTagMultiSelectMode = function() {
+    state.tagMultiSelectMode = !state.tagMultiSelectMode;
+    try { localStorage.setItem('ft-tag-multiselect', state.tagMultiSelectMode ? '1' : ''); } catch (_) {}
+    const btn = document.getElementById('tag-multiselect-btn');
+    if (btn) btn.classList.toggle('active', state.tagMultiSelectMode);
 };
 /** Clear all active tag filters and reset search. */
 window.clearTagFilters = async function() {
@@ -654,7 +694,7 @@ function renderTagTreeNode(node, depth) {
         }
 
         const check = '<span class="tag-check-placeholder">' + _tagLeafIcon() + '</span>';
-        return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}',event)" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node (has children; may also have a tag at this exact path) ---
@@ -696,7 +736,7 @@ function renderTagTreeNode(node, depth) {
                 const valFilter = `${fullPath}=${v.value}`;
                 const valActive = state.activeTags.has(valFilter) ? ' active' : '';
                 kvValuesHtml += `<button class="tag-item tag-kv-value${valActive}"
-                    onclick="toggleTagFilter('${jesc(valFilter)}')"
+                    onclick="toggleTagFilter('${jesc(valFilter)}',event)"
                     oncontextmenu="showKvValueMenu(event,'${jesc(fullPath)}','${jesc(v.value)}')"
                     title="${esc(fullPath)}=${esc(v.value)}">
                     <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
@@ -736,7 +776,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
             <button class="tag-group-chevron" onclick="toggleKvExpand('${jesc(tag.name)}')" title="Show values">
                 <svg class="chevron-icon" viewBox="0 0 12 12"><polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tag-group-name" draggable="true" ondragstart="tagDragStart(event,'${jesc(tag.name)}')" onclick="toggleTagFilter('${jesc(tag.name)}')" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(tag.name)}')">
+            <button class="tag-group-name" draggable="true" ondragstart="tagDragStart(event,'${jesc(tag.name)}')" onclick="toggleTagFilter('${jesc(tag.name)}',event)" oncontextmenu="showTagMenu(event,'${jesc(tag.name)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(tag.name)}')">
                 ${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="tag-kv-badge">k=v</span> <span class="count">${tag.count}</span>
             </button>
         </div>`;
@@ -747,7 +787,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                 const valFilter = `${tag.name}=${v.value}`;
                 const valActive = state.activeTags.has(valFilter) ? ' active' : '';
                 html += `<button class="tag-item tag-kv-value${valActive}"
-                    onclick="toggleTagFilter('${jesc(valFilter)}')"
+                    onclick="toggleTagFilter('${jesc(valFilter)}',event)"
                     oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
                     title="${esc(tag.name)}=${esc(v.value)}">
                     <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
@@ -826,7 +866,7 @@ function renderTags() {
         let activeChipsHtml = '';
         if (state.activeTags.size > 0) {
             const chips = [...state.activeTags].map(tag =>
-                `<button class="active-filter-chip" onclick="toggleTagFilter('${jesc(tag)}')" title="Remove filter: ${esc(tag)}">${esc(tag)}<span class="active-filter-chip-x">\u00d7</span></button>`
+                `<button class="active-filter-chip" onclick="removeTagFilter('${jesc(tag)}')" title="Remove filter: ${esc(tag)}">${esc(tag)}<span class="active-filter-chip-x">\u00d7</span></button>`
             ).join('');
             activeChipsHtml = `<div class="active-filters-chips">
                 <div class="active-filters-chips-list">${chips}</div>

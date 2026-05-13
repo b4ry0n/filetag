@@ -506,6 +506,16 @@ function renderContent() {
 
     const el = document.getElementById('content');
 
+    // Tags tab: when no tag is selected show an empty state instead of the
+    // regular browse listing so the user must choose a tag to see files.
+    if (!state.sidebarSplit && state.sidebarTab === 'tags'
+            && state.activeTags.size === 0 && state.mode !== 'search') {
+        el.className = '';
+        el.innerHTML = `<div class="empty-state"><span class="empty-state-icon">&#127991;</span><span class="empty-state-text">Selecteer een tag om bestanden te tonen</span></div>`;
+        document.getElementById('entry-count').textContent = '';
+        return;
+    }
+
     // --- Zip directory mode ---
     if (state.mode === 'zip') {
         const entries = state.zipEntries;
@@ -539,11 +549,14 @@ function renderContent() {
         return;
     }
 
-    // For search results, transform to match grid/list entry format
+    // For search results, transform to match grid/list entry format.
+    // root_path is preserved so renderGrid can compute the correct dir for
+    // thumb/preview URLs in multi-root setups.
     let displayItems = state.mode === 'search'
         ? items.map(r => ({
             name: r.path.split('/').pop(),
             path: r.path,
+            root_path: r.root_path,
             is_dir: false,
             size: null,
             mtime: null,

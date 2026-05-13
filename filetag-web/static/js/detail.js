@@ -1334,7 +1334,10 @@ function renderDetail() {
     const zipEntry = parseZipEntryPath(f.path);
     const name = zipEntry ? (zipEntry.entryName.split('/').pop() || zipEntry.entryName) : f.path.split('/').pop();
     const type_ = zipEntry ? fileType(zipEntry.entryName) : fileType(name);
-    const previewUrl = '/preview/' + encodePath(f.path) + dirParam('?');
+    // Use root_path from the file-detail response when available (search mode
+    // may return files from roots other than the currently browsed directory).
+    const _previewDir = f.root_path || currentAbsDir();
+    const previewUrl = '/preview/' + encodePath(f.path) + (_previewDir ? '?dir=' + encodeURIComponent(_previewDir) : '');
 
     let preview;
     if (zipEntry) {

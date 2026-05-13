@@ -356,6 +356,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialise sidebar tabs (restores persisted tab/split state).
     if (typeof initSidebarTabs === 'function') initSidebarTabs();
 
+    // Sync multi-select toggle button to persisted state.
+    const _msBtn = document.getElementById('tag-multiselect-btn');
+    if (_msBtn) _msBtn.classList.toggle('active', !!state.tagMultiSelectMode);
+
     // Build language selector and apply i18n translations to all data-i18n elements.
     const langSel = document.getElementById('lang-select');
     if (langSel) {
