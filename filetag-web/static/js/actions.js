@@ -243,7 +243,10 @@ function navigateToParent(filePath) {
     const absDir = fileRoot
         ? (dir ? fileRoot + '/' + dir : fileRoot)
         : (state.currentBasePath ? (dir ? state.currentBasePath + '/' + dir : state.currentBasePath) : null);
-    const doNav = () => navigateTo(dir);
+    const doNav = () => {
+        if (typeof ftreeRequestScrollToActive === 'function') ftreeRequestScrollToActive();
+        return navigateTo(dir);
+    };
     if (absDir && typeof ftreeExpandToPath === 'function') {
         ftreeExpandToPath(absDir).then(doNav);
     } else {

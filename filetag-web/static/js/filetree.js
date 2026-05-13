@@ -88,6 +88,12 @@ window.ftreeSetFilter = function (value) {
 // Tree rendering
 // ---------------------------------------------------------------------------
 
+/** When true, renderFiletree will scroll the active row into view after rendering. */
+let _ftPendingScrollToActive = false;
+
+/** Request a scroll-to-active on the next renderFiletree call. */
+window.ftreeRequestScrollToActive = function () { _ftPendingScrollToActive = true; };
+
 window.renderFiletree = function () {
     const el = document.getElementById('filetree-content');
     if (!el) return;
@@ -97,6 +103,11 @@ window.renderFiletree = function () {
         return;
     }
     el.innerHTML = roots.map(r => _ftRenderRoot(r)).join('');
+    if (_ftPendingScrollToActive) {
+        _ftPendingScrollToActive = false;
+        const active = el.querySelector('.ft-row.ft-active');
+        if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
 };
 
 function _ftRenderRoot(root) {
