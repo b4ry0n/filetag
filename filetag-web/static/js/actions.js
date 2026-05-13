@@ -243,16 +243,23 @@ function navigateToParent(filePath) {
     const absDir = fileRoot
         ? (dir ? fileRoot + '/' + dir : fileRoot)
         : (state.currentBasePath ? (dir ? state.currentBasePath + '/' + dir : state.currentBasePath) : null);
+    // Retry with rAF until the tile is in the DOM (renderContent appends items
+    // in rAF chunks so the tile may not exist immediately after navigateTo).
+    const _scrollToTile = (path, remaining) => {
+        const tile = document.querySelector('#content [data-path="' + CSS.escape(path) + '"]');
+        if (tile) {
+            tile.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            selectFile(path, null);
+        } else if (remaining > 0) {
+            requestAnimationFrame(() => _scrollToTile(path, remaining - 1));
+        }
+    };
     const doNav = () => {
         if (typeof ftreeRequestScrollToActive === 'function') ftreeRequestScrollToActive();
         return navigateTo(dir).then(() => {
-            // Scroll the originating file tile into view and select it so the
-            // user can see which item they navigated from.
-            const tile = document.querySelector('#content [data-path="' + CSS.escape(filePath) + '"]');
-            if (tile) {
-                tile.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                selectFile(filePath, null);
-            }
+            // renderContent renders the first 15 items synchronously and the
+            // rest in rAF chunks, so retry until the tile appears.
+            _scrollToTile(filePath, 30);
         });
     };
     if (absDir && typeof ftreeExpandToPath === 'function') {
