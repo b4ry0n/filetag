@@ -490,10 +490,25 @@ let _renderGen = 0;
 const _RENDER_INITIAL = 15;
 const _RENDER_CHUNK   = 100;
 
+// Scroll a tile into view once it appears in the DOM.  Set
+// window._pendingScrollToTile = absolutePath before navigating; renderContent
+// clears the target on every new navigation so stale requests never fire.
+function _checkPendingTileScroll() {
+    const path = window._pendingScrollToTile;
+    if (!path) return;
+    const tile = document.querySelector('#content [data-path="' + CSS.escape(path) + '"]');
+    if (!tile) return;
+    window._pendingScrollToTile = null;
+    tile.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (typeof selectFile === 'function') selectFile(path, null);
+}
+
 function renderContent() {
     // Bump generation so any pending chunks from a previous renderContent call stop.
     _renderGen++;
     const myGen = _renderGen;
+    // A new render supersedes any in-flight tile scroll from the previous navigation.
+    window._pendingScrollToTile = null;
 
     // Remove any floating directory trickplay overlays left over from the
     // previous render (e.g. when the user double-clicks into a directory
@@ -601,6 +616,9 @@ function renderContent() {
     let _offset = _RENDER_INITIAL;
     function _appendChunk() {
         if (_renderGen !== myGen) return; // user navigated away; discard stale chunk
+        // Check whether a pending scroll target landed in a previously appended
+        // chunk (or in the initial synchronous paint) before adding more items.
+        _checkPendingTileScroll();
         const chunk = sorted.slice(_offset, _offset + _RENDER_CHUNK);
         if (!chunk.length) {
             // All items appended — kick off thumbnail loading for any remaining
@@ -616,6 +634,10 @@ function renderContent() {
         while (tmp.firstChild) frag.appendChild(tmp.firstChild);
         el.appendChild(frag);
         _offset += _RENDER_CHUNK;
+        // Check immediately after this chunk: the target tile may have just
+        // been added.  We check both here and at the top of the next call so
+        // no chunk boundary is ever missed.
+        _checkPendingTileScroll();
         // Register newly appended elements with the thumbnail observer/queue so
         // they load as the user scrolls to them.  Must be called after each
         // append because _thumbInit() only sees elements already in the DOM.
