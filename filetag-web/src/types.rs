@@ -50,8 +50,6 @@ pub struct ApiTag {
 pub struct TagValuesParams {
     /// Tag name to query values for.
     pub name: String,
-    /// Optional absolute directory path for root resolution.
-    pub dir: Option<String>,
 }
 
 /// A single value variant for a k/v tag, returned by `GET /api/tag-values`.

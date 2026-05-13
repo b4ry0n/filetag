@@ -707,19 +707,30 @@ pub async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Api
 }
 
 /// `GET /api/tag-values` — list all distinct values for a given k/v tag.
+/// Merges results across all loaded roots, just like `api_tags` does, so that
+/// values from child / sibling databases are included regardless of which
+/// directory is currently browsed.
 pub async fn api_tag_values(
     State(state): State<Arc<AppState>>,
     Query(params): Query<TagValuesParams>,
 ) -> Result<Json<Vec<ApiTagValue>>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let values = db::tag_values(&conn, &params.name).map_err(AppError)?;
-    Ok(Json(
-        values
-            .into_iter()
-            .map(|(value, count)| ApiTagValue { value, count })
-            .collect(),
-    ))
+    use std::collections::HashMap;
+    let mut merged: HashMap<String, i64> = HashMap::new();
+    for root in &state.roots {
+        let Ok(conn) = open_conn(root) else { continue };
+        let Ok(values) = db::tag_values(&conn, &params.name) else {
+            continue;
+        };
+        for (value, count) in values {
+            *merged.entry(value).or_insert(0) += count;
+        }
+    }
+    let mut result: Vec<ApiTagValue> = merged
+        .into_iter()
+        .map(|(value, count)| ApiTagValue { value, count })
+        .collect();
+    result.sort_by(|a, b| b.count.cmp(&a.count).then(a.value.cmp(&b.value)));
+    Ok(Json(result))
 }
 
 /// `GET /api/subjects` — list all distinct subjects with file counts.

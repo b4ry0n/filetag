@@ -1228,7 +1228,7 @@ async function toggleKvExpand(tagName) {
         renderTags(); // show loading skeleton
         try {
             const values = await api(
-                '/api/tag-values?' + new URLSearchParams({ name: tagName }) + dirParam('&')
+                '/api/tag-values?' + new URLSearchParams({ name: tagName })
             );
             state.kvValueCache[tagName] = values; // [] when no values
         } catch (_) {

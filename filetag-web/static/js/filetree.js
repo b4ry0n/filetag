@@ -310,7 +310,9 @@ window.ftreeToggleDir = async function (absPath) {
 window.ftreeNavDir = async function (absPath) {
     const root = _ftFindRoot(absPath);
     if (root) state.currentBasePath = root.path;
-    await navigateTo(absPath);
+    // navigateTo expects a path relative to currentBasePath ('' = root itself).
+    const relPath = root ? absPath.slice(root.path.length).replace(/^\//, '') : absPath;
+    await navigateTo(relPath);
 };
 
 /** Click: navigate to parent dir and pre-select the file. */
