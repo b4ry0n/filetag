@@ -245,7 +245,15 @@ function navigateToParent(filePath) {
         : (state.currentBasePath ? (dir ? state.currentBasePath + '/' + dir : state.currentBasePath) : null);
     const doNav = () => {
         if (typeof ftreeRequestScrollToActive === 'function') ftreeRequestScrollToActive();
-        return navigateTo(dir);
+        return navigateTo(dir).then(() => {
+            // Scroll the originating file tile into view and select it so the
+            // user can see which item they navigated from.
+            const tile = document.querySelector('#content [data-path="' + CSS.escape(filePath) + '"]');
+            if (tile) {
+                tile.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                selectFile(filePath, null);
+            }
+        });
     };
     if (absDir && typeof ftreeExpandToPath === 'function') {
         ftreeExpandToPath(absDir).then(doNav);
