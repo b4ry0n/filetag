@@ -237,7 +237,18 @@ function navigateToParent(filePath) {
     }
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
-    navigateTo(dir);
+    // Switch sidebar to the files/tree pane (unless in split mode both are visible).
+    if (!state.sidebarSplit) setSidebarTab('files');
+    // Expand the tree to the target directory so it is visible after navigation.
+    const absDir = fileRoot
+        ? (dir ? fileRoot + '/' + dir : fileRoot)
+        : (state.currentBasePath ? (dir ? state.currentBasePath + '/' + dir : state.currentBasePath) : null);
+    const doNav = () => navigateTo(dir);
+    if (absDir && typeof ftreeExpandToPath === 'function') {
+        ftreeExpandToPath(absDir).then(doNav);
+    } else {
+        doNav();
+    }
 }
 
 /// Quote a tag name for the query language if it contains special characters.

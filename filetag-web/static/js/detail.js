@@ -1893,6 +1893,7 @@ function render() {
         renderTags();
         renderDetail();
         renderInfo();
+        renderFiletree();
         _thumbInit();
         _dirThumbInit();
         _kbRestoreFocus();

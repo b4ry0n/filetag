@@ -283,6 +283,8 @@
 }
 
 .ft-row:hover { background: var(--bg-hover); }
+.ft-row.ft-active { background: var(--primary-light, #dbeafe); color: var(--primary); font-weight: 500; }
+.ft-row.ft-active:hover { background: var(--primary-light, #dbeafe); }
 
 .ft-root-row {
     font-size: 11px;

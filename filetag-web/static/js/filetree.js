@@ -111,9 +111,10 @@ function _ftRenderRoot(root) {
         : (expanded
             ? `<div class="ft-loading" style="padding-left:20px">Loading\u2026</div>`
             : '');
+    const activeCls = (currentAbsDir() === root.path) ? ' ft-active' : '';
 
     return `<div class="ft-root">
-        <div class="ft-row ft-root-row" style="padding-left:4px"
+        <div class="ft-row ft-root-row${activeCls}" style="padding-left:4px"
             onclick="ftreeNavDir('${jesc(root.path)}')"
             title="${esc(root.path)}">
             <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
@@ -162,8 +163,9 @@ function _ftRenderEntry(e, parentAbs, depth) {
             : (expanded
                 ? `<div class="ft-loading" style="padding-left:${indent + 14}px">Loading\u2026</div>`
                 : '');
+        const dirActiveCls = (currentAbsDir() === absPath) ? ' ft-active' : '';
         return `<div class="ft-dir">
-            <div class="ft-row" style="padding-left:${indent}px"
+            <div class="ft-row${dirActiveCls}" style="padding-left:${indent}px"
                 onclick="ftreeNavDir('${jesc(absPath)}')"
                 draggable="true"
                 ondragstart="ftreeDragDir(event,'${jesc(absPath)}')"
@@ -181,7 +183,16 @@ function _ftRenderEntry(e, parentAbs, depth) {
         const tagBadge = e.tag_count
             ? ` <span class="ft-tag-badge">${e.tag_count}</span>` : '';
         const icon = _ftFileIcon(e.name);
-        return `<div class="ft-row ft-file-row" style="padding-left:${indent}px"
+        // Compute root-relative path for the selected-file comparison.
+        const fileActiveCls = (() => {
+            const sf = state.selectedFile;
+            if (!sf) return '';
+            const root = _ftFindRoot(absPath);
+            if (!root) return '';
+            const rel = absPath === root.path ? '' : absPath.slice(root.path.length + 1);
+            return rel === sf.path ? ' ft-active' : '';
+        })();
+        return `<div class="ft-row ft-file-row${fileActiveCls}" style="padding-left:${indent}px"
             draggable="true"
             ondragstart="ftreeDragStart(event,'${jesc(absPath)}','${jesc(parentAbs)}')"
             onclick="ftreeSelectFile('${jesc(absPath)}','${jesc(parentAbs)}')"
@@ -257,6 +268,24 @@ async function _ftLoadDir(absPath) {
         state.ftreeCache[absPath] = data.entries || [];
     } catch (_) {
         state.ftreeCache[absPath] = [];
+    }
+}
+
+/** Expand all nodes on the path from the root down to absPath, loading
+ *  directory contents as needed.  Call before navigating so the target
+ *  directory is visible in the tree. */
+async function ftreeExpandToPath(absPath) {
+    const root = _ftFindRoot(absPath);
+    if (!root) return;
+    // Collect each ancestor + the target itself.
+    const segments = absPath.slice(root.path.length).split('/').filter(Boolean);
+    let current = root.path;
+    state.ftreeExpanded[current] = true;
+    if (!state.ftreeCache[current]) await _ftLoadDir(current);
+    for (const seg of segments) {
+        current = current + '/' + seg;
+        state.ftreeExpanded[current] = true;
+        if (!state.ftreeCache[current]) await _ftLoadDir(current);
     }
 }
 

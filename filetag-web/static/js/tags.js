@@ -729,9 +729,12 @@ function renderTagTreeNode(node, depth) {
         : '';
     let kvValuesHtml = '';
     if (kvExpanded) {
-        const values = state.kvValueCache[fullPath] || [];
+        const _kvCached = state.kvValueCache[fullPath];
+        const values = _kvCached || [];
         kvValuesHtml = `<div class="tag-group-items open tag-kv-inline-values">`;
-        if (values.length) {
+        if (_kvCached === undefined) {
+            kvValuesHtml += `<div class="tag-item-loading">Loading\u2026</div>`;
+        } else if (values.length) {
             for (const v of values) {
                 const valFilter = `${fullPath}=${v.value}`;
                 const valActive = state.activeTags.has(valFilter) ? ' active' : '';
@@ -743,7 +746,7 @@ function renderTagTreeNode(node, depth) {
                 </button>`;
             }
         } else {
-            kvValuesHtml += `<div class="tag-item-loading">Loading\u2026</div>`;
+            kvValuesHtml += `<div class="tag-item-loading" style="opacity:.5">No values</div>`;
         }
         kvValuesHtml += `</div>`;
     }
@@ -770,7 +773,8 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
     const kvKey = '\x01kv:' + tag.name;
     const expanded = state.expandedGroups.has(kvKey);
     const expandedClass = expanded ? ' expanded' : '';
-    const values = state.kvValueCache[tag.name] || [];
+    const _kvCached = state.kvValueCache[tag.name];
+    const values = _kvCached || [];
     let html = `<div class="tag-group tag-kv-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${active}">
             <button class="tag-group-chevron" onclick="toggleKvExpand('${jesc(tag.name)}')" title="Show values">
@@ -782,7 +786,9 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
         </div>`;
     if (expanded) {
         html += `<div class="tag-kv-inline-values">`;
-        if (values.length) {
+        if (_kvCached === undefined) {
+            html += `<div class="tag-item-loading">Loading\u2026</div>`;
+        } else if (values.length) {
             for (const v of values) {
                 const valFilter = `${tag.name}=${v.value}`;
                 const valActive = state.activeTags.has(valFilter) ? ' active' : '';
@@ -794,7 +800,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                 </button>`;
             }
         } else {
-            html += `<div class="tag-item-loading">Loading\u2026</div>`;
+            html += `<div class="tag-item-loading" style="opacity:.5">No values</div>`;
         }
         html += `</div>`;
     }
@@ -1217,17 +1223,16 @@ async function toggleKvExpand(tagName) {
         return;
     }
     state.expandedGroups.add(kvKey);
-    // Fetch if not yet cached (undefined) or if we have a stale empty result
-    // (empty array is truthy in JS, so ![] === false — check explicitly).
-    if (state.kvValueCache[tagName] == null || state.kvValueCache[tagName].length === 0) {
-        renderTags(); // show loading state
+    // Only fetch when not yet cached (undefined). null = failed/empty, [] = loaded empty.
+    if (state.kvValueCache[tagName] === undefined) {
+        renderTags(); // show loading skeleton
         try {
             const values = await api(
                 '/api/tag-values?' + new URLSearchParams({ name: tagName }) + dirParam('&')
             );
-            state.kvValueCache[tagName] = values;
+            state.kvValueCache[tagName] = values; // [] when no values
         } catch (_) {
-            state.kvValueCache[tagName] = [];
+            state.kvValueCache[tagName] = null; // null = fetch failed
         }
     }
     renderTags();
