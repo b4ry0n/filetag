@@ -87,7 +87,10 @@ function renderPeopleSection() {
 
     const makeItem = (p, isUnknown) => {
         const isActive = state.faceActivePerson === p.name;
-        const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: p.det_id }) + dirParam('&');
+        // Use the root_path from the subject record so the thumbnail request
+        // targets the correct database even when people come from multiple roots.
+        const thumbDir = p.root_path || currentAbsDir();
+        const thumbUrl = '/api/face/thumbnail?' + new URLSearchParams({ id: p.det_id, dir: thumbDir });
         let label;
         if (!p.name) {
             label = t('face.unassigned');

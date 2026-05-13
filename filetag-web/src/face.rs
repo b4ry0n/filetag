@@ -2403,51 +2403,73 @@ pub async fn api_face_models_status(State(state): State<Arc<AppState>>) -> Json<
 }
 
 /// `GET /api/face/subjects` — list known face subjects with a representative detection ID.
+/// Merges results across all loaded roots so the sidebar shows every person
+/// regardless of which database they are stored in.  The response includes a
+/// `root_path` field so the frontend can construct thumbnail URLs that target
+/// the correct database.
 pub async fn api_face_subjects(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<FaceDirParams>,
+    Query(_params): Query<FaceDirParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Fall back to first root when dir is missing or doesn't match any root,
-    // so page-load calls don't 400 before a directory is selected.
-    let root_entry = if params.dir.is_some() {
-        root_from_dir(&state, params.dir.as_deref()).ok()
-    } else {
-        state.roots.first()
-    };
-    let conn = match root_entry.and_then(|r| open_conn(r).ok()) {
-        Some(c) => c,
-        None => return Ok(Json(serde_json::json!([]))),
-    };
+    use std::collections::HashMap;
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT subject_name, COUNT(DISTINCT file_id), MIN(id)
-             FROM face_detections
-             WHERE subject_name IS NOT NULL
-             GROUP BY subject_name
-             UNION ALL
-             SELECT '' AS subject_name, COUNT(DISTINCT file_id), MIN(id)
-             FROM face_detections
-             WHERE subject_name IS NULL
-             HAVING COUNT(*) > 0
-             ORDER BY subject_name",
-        )
-        .map_err(anyhow::Error::from)
-        .map_err(AppError)?;
+    const QUERY: &str = "SELECT subject_name, COUNT(DISTINCT file_id), MIN(id)
+         FROM face_detections
+         WHERE subject_name IS NOT NULL
+         GROUP BY subject_name
+         UNION ALL
+         SELECT '' AS subject_name, COUNT(DISTINCT file_id), MIN(id)
+         FROM face_detections
+         WHERE subject_name IS NULL
+         HAVING COUNT(*) > 0
+         ORDER BY subject_name";
 
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
-        })
-        .map_err(anyhow::Error::from)
-        .map_err(AppError)?
-        .filter_map(|r| r.ok())
-        .map(|(name, count, det_id)| {
-            serde_json::json!({"name": name, "count": count, "det_id": det_id})
+    // key = subject_name, value = (total_count, det_id, root_path)
+    let mut merged: HashMap<String, (i64, i64, String)> = HashMap::new();
+
+    for root in &state.roots {
+        let Ok(conn) = open_conn(root) else { continue };
+        let Ok(mut stmt) = conn.prepare(QUERY) else {
+            continue;
+        };
+        let rows: Vec<(String, i64, i64)> = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.ok())
+            .collect();
+        let root_path = root.root.display().to_string();
+        for (name, count, det_id) in rows {
+            let entry = merged.entry(name).or_insert((0, det_id, root_path.clone()));
+            entry.0 += count;
+        }
+    }
+
+    let mut result: Vec<serde_json::Value> = merged
+        .into_iter()
+        .map(|(name, (count, det_id, root_path))| {
+            serde_json::json!({
+                "name": name,
+                "count": count,
+                "det_id": det_id,
+                "root_path": root_path,
+            })
         })
         .collect();
+    result.sort_by(|a, b| {
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["name"].as_str().unwrap_or(""))
+    });
 
-    Ok(Json(serde_json::Value::Array(rows)))
+    Ok(Json(serde_json::Value::Array(result)))
 }
 
 /// `GET /api/face/files?subject=<name>&dir=<dir>` — list relative file paths
