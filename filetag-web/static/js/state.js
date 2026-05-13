@@ -19,6 +19,7 @@ const state = {
     selectedRootInfo: null, // ApiInfo fetched for the selected root | null
     selectedPaths: new Set(), // multi-select: Set of paths
     selectedFilesData: new Map(), // path → file detail (for tag aggregation)
+    searchResultRoots: new Map(), // search mode: path → root_path (absolute DB root)
     info: null,
     detailOpen: true,
     expandedGroups: new Set([
@@ -264,11 +265,13 @@ async function searchFiles(query) {
         const data = await api(endpoint + '?q=' + encodeURIComponent(apiQuery) + dirParam('&'));
         state.searchQuery = query;
         state.searchResults = data.results;
+        state.searchResultRoots = new Map((data.results || []).map(r => [r.path, r.root_path]).filter(([, rp]) => rp));
         state.mode = 'search';
         state.selectedFile = null;
     } catch (e) {
         state.searchQuery = query;
         state.searchResults = [];
+        state.searchResultRoots = new Map();
         state.mode = 'search';
         state.selectedFile = null;
     }
@@ -279,8 +282,9 @@ async function searchFiles(query) {
     _kbCursor = -1;
 }
 
-async function loadFileDetail(path) {
-    state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + dirParam('&'));
+async function loadFileDetail(path, dir) {
+    const effectiveDir = dir || searchDirForPath(path);
+    state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + '&dir=' + encodeURIComponent(effectiveDir));
     state.selectedDir = null;
     // Keep selectedFilesData in sync so multi-select tag aggregation stays fresh.
     if (state.selectedFilesData.has(path)) {
@@ -380,7 +384,7 @@ function handleZipClick(path, event) {
 }
 
 async function addTagToFile(path, tagStr, subject) {
-    const body = { path, tags: [tagStr], dir: currentAbsDir() };
+    const body = { path, tags: [tagStr], dir: searchDirForPath(path) };
     if (subject) body.subject = subject;
     await apiPost('/api/tag', body);
     await loadFileDetail(path);
@@ -391,7 +395,7 @@ async function addTagToFile(path, tagStr, subject) {
 }
 
 async function removeTagFromFile(path, tagStr, subject) {
-    const body = { path, tags: [tagStr], dir: currentAbsDir() };
+    const body = { path, tags: [tagStr], dir: searchDirForPath(path) };
     if (subject) body.subject = subject;
     await apiPost('/api/untag', body);
     await loadFileDetail(path);
@@ -409,6 +413,18 @@ function fullPath(entry) {
     if (state.mode === 'search') return entry.path;
     if (state.currentPath) return state.currentPath + '/' + entry.name;
     return entry.name;
+}
+
+/**
+ * Returns the absolute DB-root directory to use as `dir` for API calls
+ * that operate on `path`.  In search mode the path may belong to any loaded
+ * root; `state.searchResultRoots` maps each result path to its root.
+ * Outside search mode (or when no mapping exists) we fall back to the
+ * currently browsed directory.
+ */
+function searchDirForPath(path) {
+    return (state.mode === 'search' && state.searchResultRoots.get(path))
+        || currentAbsDir();
 }
 
 // ---------------------------------------------------------------------------

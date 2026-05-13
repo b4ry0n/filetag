@@ -6,7 +6,7 @@
 async function _loadMissingFilesData(paths) {
     await Promise.all(paths.map(async p => {
         if (!state.selectedFilesData.has(p)) {
-            const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
+            const data = await api('/api/file?path=' + encodeURIComponent(p) + '&dir=' + encodeURIComponent(searchDirForPath(p)));
             state.selectedFilesData.set(p, data);
         }
     }));
@@ -55,8 +55,10 @@ async function selectFile(path, event) {
     // the network.  Keep the old detail panel visible until the new data
     // arrives to avoid an empty-panel flash.
     _updateCardSelection();
+    // Use the card's data-dir attribute when available (correct root in search mode).
+    const dir = event?.currentTarget?.dataset?.dir || null;
     // Load the file detail and refresh the panel when done.
-    await loadFileDetail(path);
+    await loadFileDetail(path, dir);
     // Guard: another file may have been selected while we were waiting.
     if (state.selectedPaths.size === 1 && state.selectedPaths.has(path)) {
         renderDetail();

@@ -664,27 +664,46 @@ pub async fn api_db_vacuum(
 // ---------------------------------------------------------------------------
 
 /// `GET /api/tags` — list all known tags with usage counts, colours and synonyms.
-pub async fn api_tags(
-    State(state): State<Arc<AppState>>,
-    Query(rp): Query<DirParam>,
-) -> Result<Json<Vec<ApiTag>>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let tags = db::all_tags(&conn).map_err(AppError)?;
-    let result: Result<Vec<ApiTag>, AppError> = tags
+pub async fn api_tags(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiTag>>, AppError> {
+    use std::collections::HashMap;
+    // Merge tags across all loaded roots: (count, color, has_values, synonyms).
+    let mut merged: HashMap<String, (i64, Option<String>, bool, Vec<String>)> = HashMap::new();
+    for root in &state.roots {
+        let Ok(conn) = open_conn(root) else { continue };
+        let Ok(tags) = db::all_tags(&conn) else {
+            continue;
+        };
+        for (name, count, color, has_values) in tags {
+            let entry = merged
+                .entry(name.clone())
+                .or_insert((0, None, false, vec![]));
+            entry.0 += count;
+            if entry.1.is_none() && color.is_some() {
+                entry.1 = color;
+            }
+            if has_values {
+                entry.2 = true;
+            }
+            if entry.3.is_empty()
+                && let Ok(syns) = db::synonyms_for_tag(&conn, &name)
+                && !syns.is_empty()
+            {
+                entry.3 = syns;
+            }
+        }
+    }
+    let mut result: Vec<ApiTag> = merged
         .into_iter()
-        .map(|(name, count, color, has_values)| {
-            let synonyms = db::synonyms_for_tag(&conn, &name).map_err(AppError)?;
-            Ok(ApiTag {
-                name,
-                count,
-                color,
-                synonyms,
-                has_values,
-            })
+        .map(|(name, (count, color, has_values, synonyms))| ApiTag {
+            name,
+            count,
+            color,
+            synonyms,
+            has_values,
         })
         .collect();
-    Ok(Json(result?))
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(result))
 }
 
 /// `GET /api/tag-values` — list all distinct values for a given k/v tag.
@@ -1095,17 +1114,18 @@ pub async fn api_search(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<ApiSearchResult>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
     let expr = query::parse(&params.q).map_err(AppError)?;
-    let results = query::execute_with_tags(&conn, &expr).map_err(AppError)?;
-
-    Ok(Json(ApiSearchResult {
-        query: params.q,
-        results: results
-            .into_iter()
-            .map(|(path, tags)| ApiSearchEntry {
+    let mut all_results: Vec<ApiSearchEntry> = Vec::new();
+    for root in &state.roots {
+        let Ok(conn) = open_conn(root) else { continue };
+        let Ok(results) = query::execute_with_tags(&conn, &expr) else {
+            continue;
+        };
+        let root_str = root.root.display().to_string();
+        for (path, tags) in results {
+            all_results.push(ApiSearchEntry {
                 path,
+                root_path: root_str.clone(),
                 tags: tags
                     .into_iter()
                     .map(|(name, value)| ApiFileTag {
@@ -1115,8 +1135,12 @@ pub async fn api_search(
                         implicit: false,
                     })
                     .collect(),
-            })
-            .collect(),
+            });
+        }
+    }
+    Ok(Json(ApiSearchResult {
+        query: params.q,
+        results: all_results,
     }))
 }
 
@@ -1172,8 +1196,10 @@ pub async fn api_fs_search(
         })
         .take(MAX_RESULTS)
         .filter_map(|e| {
+            let root_str = root.display().to_string();
             e.path().strip_prefix(&root).ok().map(|rel| ApiSearchEntry {
                 path: rel.to_string_lossy().into_owned(),
+                root_path: root_str,
                 tags: vec![],
             })
         })
@@ -1295,10 +1321,10 @@ pub async fn api_file_detail(
         } else {
             db::relative_to_root(&fs_path, &eff_root).ok()
         };
-        eff_rel.map(|r| (conn, r))
+        eff_rel.map(|r| (conn, r, eff_root))
     });
 
-    if let Some((conn, effective_rel)) = db_lookup
+    if let Some((conn, effective_rel, eff_root)) = db_lookup
         && let Some(record) = db::file_by_path(&conn, &effective_rel).map_err(AppError)?
     {
         let tags = db::tags_for_file_with_subject(&conn, record.id).map_err(AppError)?;
@@ -1338,6 +1364,7 @@ pub async fn api_file_detail(
             mtime: record.mtime_ns,
             indexed_at,
             covered: true,
+            root_path: eff_root.display().to_string(),
             tags: all_tags,
             duration,
         }));
@@ -1351,6 +1378,7 @@ pub async fn api_file_detail(
             mtime: 0,
             indexed_at: String::new(),
             covered: true,
+            root_path: db_root.root.display().to_string(),
             tags: vec![],
             duration: None,
         }));
@@ -1373,6 +1401,7 @@ pub async fn api_file_detail(
         mtime,
         indexed_at: String::new(),
         covered: file_is_covered(&state, &fs_path),
+        root_path: db_root.root.display().to_string(),
         tags: vec![],
         duration,
     }))

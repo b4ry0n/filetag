@@ -1611,11 +1611,10 @@ async function comicImportSelection() {
     const btn = document.getElementById('comic-import-bulk-btn');
     if (btn) { btn.disabled = true; btn.textContent = t('comic.importing'); }
     try {
-        const dir = currentAbsDir();
         let imported = 0;
         for (const path of paths) {
             try {
-                const result = await apiPost('/api/comic/import-metadata', { path, dir });
+                const result = await apiPost('/api/comic/import-metadata', { path, dir: searchDirForPath(path) });
                 imported += result.imported ?? 0;
             } catch (_) {
                 // skip archives without ComicInfo.xml silently
@@ -1803,7 +1802,7 @@ async function doBulkApplyTagToAll(tagStr) {
         return data && !(data.tags || []).some(t => formatTag(t) === tagStr);
     });
     if (!paths.length) return;
-    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
+    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], dir: searchDirForPath(p) })));
     // Update local cache
     const eqIdx = tagStr.indexOf('=');
     const tName  = eqIdx !== -1 ? tagStr.slice(0, eqIdx) : tagStr;
@@ -1840,7 +1839,7 @@ async function doBulkRemoveTagChip(tagStr) {
         const data = state.selectedFilesData.get(p);
         return data && data.tags.some(t => formatTag(t) === tagStr);
     });
-    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], dir: currentAbsDir() })));
+    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], dir: searchDirForPath(p) })));
     // Update local cache immediately so the chip list refreshes right away,
     // before the slower loadTags() / loadFiles() network calls complete.
     for (const p of paths) {

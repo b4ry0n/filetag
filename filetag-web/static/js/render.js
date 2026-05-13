@@ -175,6 +175,11 @@ function renderGrid(items) {
         const path = isDir ? null : fullPath(entry);
         const selected = state.selectedFile && state.selectedFile.path === path ? ' selected' : '';
         const type_ = isDir ? 'folder' : fileType(name);
+        // Resolve the correct DB-root dir for API calls on this entry.
+        const entryDir = !isDir && state.mode === 'search' && entry.root_path
+            ? entry.root_path
+            : currentAbsDir();
+        const entryDirParam = '?dir=' + encodeURIComponent(entryDir);
 
         let preview = '';
         if (isDir) {
@@ -189,17 +194,17 @@ function renderGrid(items) {
                 preview = `<div class="card-icon">${ICONS.folder}</div>`;
             }
         } else if (type_ === 'image' || type_ === 'raw') {
-            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}" data-thumb-hover="1">${fileIcon(name)}</div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${entryDirParam}" data-name="${esc(name)}" data-thumb-hover="1">${fileIcon(name)}</div>` +
                 `<div class="card-type-badge">${fileIcon(name)}</div>`;
         } else if (type_ === 'video') {
             const vpath = fullPath(entry);
-            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(vpath)}${dirParam('?')}" data-name="${esc(name)}" data-video-path="${esc(vpath)}">${ICONS.video}</div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(vpath)}${entryDirParam}" data-name="${esc(name)}" data-video-path="${esc(vpath)}">${ICONS.video}</div>` +
                 `<div class="card-filmstrip-badge">${ICONS.video}</div>`;
         } else if (type_ === 'zip') {
-            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}" data-thumb-hover="1">${ICONS.zip || ''}</div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${entryDirParam}" data-name="${esc(name)}" data-thumb-hover="1">${ICONS.zip || ''}</div>` +
                 `<div class="card-filmstrip-badge">${ICONS.zip || ''}</div>`;
         } else if (type_ === 'pdf') {
-            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${dirParam('?')}" data-name="${esc(name)}" data-thumb-hover="1">${ICONS.pdf}</div>` +
+            preview = `<div class="card-icon" data-thumb-src="/thumb/${encodePath(fullPath(entry))}${entryDirParam}" data-name="${esc(name)}" data-thumb-hover="1">${ICONS.pdf}</div>` +
                 `<div class="card-filmstrip-badge">${ICONS.pdf}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(name)}</div>`;
@@ -244,13 +249,13 @@ function renderGrid(items) {
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             const symlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
                 const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -322,8 +327,11 @@ function _renderListRows(items) {
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             const symlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
+            const entryDir = state.mode === 'search' && entry.root_path
+                ? entry.root_path
+                : currentAbsDir();
             if (fileType(name) === 'zip') {
-                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${uncoveredBadge}${symlinkSuffix}</span>
                     <span class="size">${size}</span>
@@ -332,7 +340,7 @@ function _renderListRows(items) {
                 </div>`;
             } else {
                 const dblFnL = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${uncoveredBadge}${symlinkSuffix}</span>
                     <span class="size">${size}</span>
@@ -356,6 +364,9 @@ function cardDragStart(event, path) {
         ? [...state.selectedPaths]
         : [path];
     event.dataTransfer.setData('text/filetag-paths', JSON.stringify(paths));
+    // Pass the DB-root dir so tag-drop handlers use the correct database.
+    const dir = event.currentTarget?.dataset?.dir || currentAbsDir();
+    event.dataTransfer.setData('text/filetag-dir', dir);
     event.dataTransfer.effectAllowed = 'copy';
     // Prevent the root-reorder drag from interfering.
     event.stopPropagation();

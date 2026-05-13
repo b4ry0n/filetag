@@ -119,6 +119,8 @@ pub struct ApiFileDetail {
     pub tags: Vec<ApiFileTag>,
     /// False when the file is on a different filesystem than the database root.
     pub covered: bool,
+    /// Absolute path of the database root that owns this file.
+    pub root_path: String,
     /// Video duration in seconds (only set for video files).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
@@ -150,6 +152,8 @@ pub struct ApiSearchResult {
 pub struct ApiSearchEntry {
     pub path: String,
     pub tags: Vec<ApiFileTag>,
+    /// Absolute path of the database root that owns this file.
+    pub root_path: String,
 }
 
 /// A database root as listed by `GET /api/roots`.
