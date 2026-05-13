@@ -670,9 +670,10 @@ function renderTagTreeNode(node, depth) {
     const { segment, fullPath, tag, children } = node;
     const hasChildren = children.size > 0;
     // Each sub-group level adds 12 px of left margin (accumulated through nesting).
-    // Groups use this on their wrapper div; leaf items get it as inline style so
-    // that both sit at the same visual indent (VSCode-style unified row system).
+    // Groups use this on their wrapper div; leaf items use padding-left instead so
+    // that width:100% + box-sizing:border-box keeps the count badge inside the row.
     const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
+    const leafStyle   = depth > 0 ? ' style="padding-left:calc(var(--tree-base-pl) + 12px)"' : '';
 
     // --- Leaf node ---
     if (!hasChildren) {
@@ -690,11 +691,11 @@ function renderTagTreeNode(node, depth) {
             const checkIcon = checked
                 ? '<svg class="tag-check" viewBox="0 0 12 12" width="12" height="12"><polyline points="1.5,6 4.5,9.5 10.5,2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
                 : '<span class="tag-check-placeholder"></span>';
-            return `<button class="${cls}${checkedCls}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+            return `<button class="${cls}${checkedCls}"${leafStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagPick('${jesc(fullPath)}')" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${checkIcon}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
         }
 
         const check = '<span class="tag-check-placeholder">' + _tagLeafIcon() + '</span>';
-        return `<button class="${cls}${active}"${marginStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}',event)" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
+        return `<button class="${cls}${active}"${leafStyle} draggable="true" ondragstart="tagDragStart(event,'${jesc(fullPath)}')" onclick="toggleTagFilter('${jesc(fullPath)}',event)" oncontextmenu="showTagMenu(event,'${jesc(fullPath)}')" ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(fullPath)}')">${check}${_highlightMatch(segment, f)}${synBadge}${colorDot(tag.color)} <span class="count">${tag.count}</span></button>`;
     }
 
     // --- Group node (has children; may also have a tag at this exact path) ---
