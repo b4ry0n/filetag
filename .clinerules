@@ -1,0 +1,26 @@
+# Cline rules for filetag
+
+## Critical: do not revert committed code
+
+Before modifying any file, run `git log --oneline -5 -- <file>` to check recent
+commit history. Do NOT remove code that was intentionally added in a prior commit
+unless the user explicitly asks you to delete it.
+
+When in doubt about whether a block of code is intentional, leave it in place and
+ask the user instead of deleting it.
+
+## Workflow
+
+- Always check `git status` and `git diff` before staging or committing anything.
+- Do not run `git add .` or `git add -A` blindly. Stage only the files that belong
+  to the task at hand.
+- After making changes, run `git diff --stat` to review what you are about to commit.
+- Never commit unrelated files together with the intended change.
+
+## Project conventions
+
+- Language: Rust (edition 2024), Cargo workspace (`filetag-lib`, `filetag-cli`, `filetag-web`).
+- All code, comments, and commit messages are in UK English.
+- Run `cargo fmt` and `cargo clippy` before committing Rust files (a pre-commit hook
+  does this automatically, but it is good practice to check manually too).
+- Do not write outside the `.filetag/` directory at runtime.

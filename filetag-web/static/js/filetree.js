@@ -181,7 +181,7 @@ function _ftRenderEntry(e, parentAbs, depth) {
         const tagBadge = e.tag_count
             ? ` <span class="ft-tag-badge">${e.tag_count}</span>` : '';
         const icon = _ftFileIcon(e.name);
-        return `<div class="ft-row ft-file-row" style="padding-left:${indent + 15}px"
+        return `<div class="ft-row ft-file-row" style="padding-left:${indent}px"
             draggable="true"
             ondragstart="ftreeDragStart(event,'${jesc(absPath)}','${jesc(parentAbs)}')"
             onclick="ftreeSelectFile('${jesc(absPath)}','${jesc(parentAbs)}')"
