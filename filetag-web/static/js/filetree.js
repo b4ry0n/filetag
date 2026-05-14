@@ -330,7 +330,8 @@ window.ftreeNavDir = async function (absPath) {
 window.ftreeSelectFile = async function (absPath, parentAbs) {
     const root = _ftFindRoot(absPath);
     if (root) state.currentBasePath = root.path;
-    await navigateTo(parentAbs);
+    const relParent = root ? parentAbs.slice(root.path.length).replace(/^\//, '') : parentAbs;
+    await navigateTo(relParent);
     // Try to select the file after navigation has settled.
     const relPath = _ftAbsToRootRel(absPath);
     if (relPath) {
