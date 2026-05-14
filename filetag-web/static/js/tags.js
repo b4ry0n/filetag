@@ -742,6 +742,7 @@ function renderTagTreeNode(node, depth) {
                 kvValuesHtml += `<button class="tag-item tag-kv-value${valActive}"
                     onclick="toggleTagFilter('${jesc(valFilter)}',event)"
                     oncontextmenu="showKvValueMenu(event,'${jesc(fullPath)}','${jesc(v.value)}')"
+                    ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(valFilter)}')"
                     title="${esc(fullPath)}=${esc(v.value)}">
                     <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
                 </button>`;
@@ -796,6 +797,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                 html += `<button class="tag-item tag-kv-value${valActive}"
                     onclick="toggleTagFilter('${jesc(valFilter)}',event)"
                     oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
+                    ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(valFilter)}')"
                     title="${esc(tag.name)}=${esc(v.value)}">
                     <span class="tag-kv-eq">=</span>${esc(v.value)} <span class="count">${v.count}</span>
                 </button>`;

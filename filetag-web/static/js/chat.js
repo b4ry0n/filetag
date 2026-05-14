@@ -323,6 +323,7 @@ async function sendChatMessage() {
     _renderChatMessages();
 
     try {
+        await loadTags();  // ensure tags are current before sending
         const res = await apiPost('/api/ai/chat', {
             dir:      currentAbsDir(),
             files:    _chatFiles,
