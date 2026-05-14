@@ -111,6 +111,7 @@ function saveSectionHeights() {
 let _lastClickedPath = null; // for shift-range selection
 let _armedBulkTag = null;    // two-step delete: which tag is armed
 let _kbCursor = -1;          // keyboard navigation cursor (-1 = none)
+let _selectAllToken = null;  // cancel token: set to a new object each time _selectAllFiles starts
 
 // ---------------------------------------------------------------------------
 // API

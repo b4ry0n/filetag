@@ -832,6 +832,8 @@ function attachSearchAutocomplete(inputEl, submitFn) {
 }
 
 function clearSelection() {
+    _selectAllToken = null;       // cancel any in-progress select-all
+    state.selectionLoading = false;
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.selectedFile = null;

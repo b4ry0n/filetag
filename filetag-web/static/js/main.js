@@ -170,14 +170,24 @@ async function _selectAllFiles() {
         .filter(en => !en.is_dir)
         .map(en => (state.mode === 'search' || state.mode === 'zip') ? en.path : fullPath(en));
     filePaths.forEach(p => state.selectedPaths.add(p));
-    await Promise.all(filePaths.map(async p => {
-        if (!state.selectedFilesData.has(p)) {
-            const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
-            state.selectedFilesData.set(p, data);
-        }
-    }));
     _armedBulkTag = null;
     state.selectedDir = null;
+
+    // Show selection highlighting + spinner immediately (no server round-trip yet).
+    state.selectionLoading = filePaths.some(p => !state.selectedFilesData.has(p));
+    _updateCardSelection();
+    if (state.selectionLoading) renderDetail();
+
+    // Cancel token — if the user makes a new selection while we are loading,
+    // we discard the result so we don't overwrite their selection.
+    const token = {};
+    _selectAllToken = token;
+
+    await _loadMissingFilesData(filePaths);
+
+    if (_selectAllToken !== token) return; // selection changed while loading
+    _selectAllToken = null;
+    state.selectionLoading = false;
     state.selectedFile = filePaths.length === 1 ? state.selectedFilesData.get(filePaths[0]) : null;
     render();
 }

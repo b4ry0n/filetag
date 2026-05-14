@@ -427,18 +427,9 @@ function _updateCardSelection() {
     content.querySelectorAll('.card[data-path]').forEach(card => {
         const p = card.dataset.path;
         const want = state.selectedPaths.has(p);
-        const wantCheck = multiSelect && want;
-        const has = card.classList.contains('selected');
-        if (want !== has) card.classList.toggle('selected', want);
-        const existing = card.querySelector('.card-check');
-        if (wantCheck && !existing) {
-            const chk = document.createElement('span');
-            chk.className = 'card-check';
-            chk.innerHTML = '&#10003;';
-            card.prepend(chk);
-        } else if (!wantCheck && existing) {
-            existing.remove();
-        }
+        card.classList.toggle('selected', want);
+        // Checkmark: handled via CSS ::after on .card-checked — no span creation.
+        card.classList.toggle('card-checked', multiSelect && want);
     });
     // Also handle folders:
     content.querySelectorAll('.card.folder[data-path]').forEach(card => {

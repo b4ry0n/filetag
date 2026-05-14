@@ -92,6 +92,25 @@
     pointer-events: none;
 }
 
+/* CSS-based checkmark for bulk selection — avoids per-card span creation. */
+.card.card-checked::after {
+    content: '\2713';
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    background: var(--primary);
+    color: #fff;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    z-index: 1;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+
 .card-preview {
     position: absolute;
     inset: 0;

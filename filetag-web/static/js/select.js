@@ -39,6 +39,10 @@ async function _loadMissingFilesData(paths) {
 
 // Handles file selection (single and multi-select with shift/ctrl/cmd)
 async function selectFile(path, event) {
+    // Cancel any in-progress select-all so it doesn't overwrite this click.
+    _selectAllToken = null;
+    state.selectionLoading = false;
+
     // Multi-select with Ctrl/Cmd
     if (event && (event.ctrlKey || event.metaKey)) {
         if (state.selectedPaths.has(path)) {
