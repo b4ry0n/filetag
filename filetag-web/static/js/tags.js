@@ -1578,7 +1578,7 @@ async function renameTag(oldName, newName) {
     }
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
     if (res && !res.ok) {
-        showToast(`Could not rename "${oldName}": tag or value not found.`, 'error');
+        showToast(`Could not rename "${oldName}": tag or value not found.`);
         return;
     }
     const oldEq = oldName.indexOf('=') > 0;
@@ -1841,7 +1841,7 @@ async function pruneUnusedTags() {
             ftEmit('ft:tags-meta');
         }
     } catch (e) {
-        showToast('Error: ' + e.message, 'error');
+        showToast('Error: ' + e.message);
     }
 }
 
