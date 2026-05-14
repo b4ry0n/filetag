@@ -1120,8 +1120,9 @@ function renderSubjectTreeNode(node, depth) {
                 : '<span class="tag-check-placeholder"></span>')
             : '<span class="tag-check-placeholder">' + _subjectLeafIcon() + '</span>';
         const pickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
-        // Depth indent: same mechanism as tag leaf items — margin-left on the element itself.
-        const indentStyle = depth > 0 ? ' style="margin-left:12px"' : '';
+        // Depth indent: use padding-left (not margin-left) so width:100% doesn't overflow
+        // the container and the count badge stays right-aligned — same pattern as renderTagTreeNode.
+        const indentStyle = depth > 0 ? ' style="padding-left:calc(var(--tree-base-pl) + 12px)"' : '';
         return `<button class="tag-item tag-subject-item${activeClass}${pickedCls}"${indentStyle}
             onclick="${clickFn}"
             ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="subjectDrop(event,'${jesc(fullPath)}')"
