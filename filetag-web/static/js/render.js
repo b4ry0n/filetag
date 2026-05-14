@@ -242,7 +242,7 @@ function renderGrid(items) {
             const isArchiveEntry = path.includes('::');
             const gotoDirBtn = state.mode === 'search'
                 ? isArchiveEntry
-                    ? `<button class="card-goto" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}')" title="Go to archive">${ICONS.gotoDir}</button>`
+                    ? `<button class="card-goto" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}','${jesc(entryDir)}')" title="Go to archive">${ICONS.gotoDir}</button>`
                     : `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const uncoveredBadge = entry.covered === false ? '<span class="card-uncovered" title="No filetag database on this filesystem">&#128274;</span>' : '';
@@ -321,7 +321,7 @@ function _renderListRows(items) {
             const isArchiveEntry = path.includes('::');
             const gotoDirBtn = state.mode === 'search'
                 ? isArchiveEntry
-                    ? `<button class="goto-dir-btn" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}')" title="Go to archive">${ICONS.gotoDir}</button>`
+                    ? `<button class="goto-dir-btn" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}','${jesc(entryDir)}')" title="Go to archive">${ICONS.gotoDir}</button>`
                     : `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';

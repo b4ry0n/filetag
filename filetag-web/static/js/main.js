@@ -52,7 +52,7 @@ function _kbActivate() {
         const path = el.dataset.path;
         const name = path.split('/').pop();
         if (fileType(name) === 'zip') {
-            openZipDir(path);
+            openZipDir(path, el.dataset.dir || searchDirForPath(path));
         } else {
             el.click(); // selectFile(path, event)
         }

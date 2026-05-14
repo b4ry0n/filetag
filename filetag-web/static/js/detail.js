@@ -18,10 +18,14 @@ function parseZipEntryPath(path) {
     return { zipPath: path.slice(0, idx), entryName: path.slice(idx + 2) };
 }
 
-async function openZipDir(zipPath) {
+async function openZipDir(zipPath, dir) {
     _thumbClearCache();
     state.mode = 'zip';
     state.zipPath = zipPath;
+    // Resolve the root that owns this zip so all subsequent requests (thumb,
+    // tag, refresh) target the correct database, even when the zip lives on a
+    // non-active root (e.g. face-results or tag-filter search results).
+    state.zipDir = dir || searchDirForPath(zipPath);
     state.zipSubdir = '';
     state.zipEntries = [];
     state.selectedFile = null;
@@ -37,7 +41,7 @@ async function openZipDir(zipPath) {
     el.className = '';
     el.innerHTML = `<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Loading archive…</span></div>`;
     document.getElementById('entry-count').textContent = '…';
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath }) + dirParam('&'));
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath, dir: state.zipDir }));
     state.zipEntries = data.entries || [];
 
     // If archive root contains exactly one folder and no files, jump into it
@@ -53,7 +57,8 @@ async function openZipDir(zipPath) {
 
 async function refreshZipEntries() {
     if (!state.zipPath) return;
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath }) + dirParam('&'));
+    const effectiveDir = state.zipDir || searchDirForPath(state.zipPath);
+    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath, dir: effectiveDir }));
     state.zipEntries = data.entries || [];
     renderContent();
     _thumbInit();
@@ -125,7 +130,8 @@ function renderZipGrid(entries) {
 
         let preview;
         if (entry.is_image) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index }) + dirParam('&');
+            const zipThumbDir = state.zipDir || searchDirForPath(state.zipPath);
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index, dir: zipThumbDir });
             preview = `<div class="card-icon" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}" data-thumb-hover="1">${fileIcon(displayName)}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
@@ -1344,7 +1350,7 @@ function renderDetail() {
         // Entry inside a zip archive
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index }) + dirParam('&');
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index, dir: _previewDir });
             preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
@@ -1390,8 +1396,9 @@ function renderDetail() {
         preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${jesc(f.path)}','text')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
+        const _zipCoverDir = _previewDir ? '?dir=' + encodeURIComponent(_previewDir) : '';
         preview = `<div class="zip-cover-wrap" onclick="openMediaViewer('${jesc(f.path)}')">
-            <img src="/thumb/${encodePath(f.path)}${dirParam('?')}" alt="${esc(name)}" class="zip-cover"
+            <img src="/thumb/${encodePath(f.path)}${_zipCoverDir}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
             <div class="preview-viewer-hover-zone"><button class="preview-viewer-overlay-btn" onclick="event.stopPropagation();openMediaViewer('${jesc(f.path)}')" tabindex="-1">Open in viewer</button></div>
         </div>`;
@@ -1506,13 +1513,13 @@ function renderDetail() {
         const _zipEntryName = zipEntry.entryName;
         const _zipPath = zipEntry.zipPath;
         const _entryName = name;
-        api('/api/zip/entries?' + new URLSearchParams({ path: _zipPath }) + dirParam('&'))
+        api('/api/zip/entries?' + new URLSearchParams({ path: _zipPath, dir: _previewDir }))
             .then(data => {
                 if (state.selectedFile?.path !== _selectedPath) return;
                 const entry = (data.entries || []).find(e => e.name === _zipEntryName);
                 const placeholder = document.getElementById('zip-entry-preview-placeholder');
                 if (!placeholder || !entry || !entry.is_image || entry.image_index === null) return;
-                const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: _zipPath, page: entry.image_index }) + dirParam('&');
+                const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: _zipPath, page: entry.image_index, dir: _previewDir });
                 const anchor = document.createElement('a');
                 anchor.className = 'preview-zoomable';
                 anchor.title = 'Click to open in viewer';

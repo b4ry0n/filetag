@@ -27,6 +27,7 @@ function _navPush() {
         currentPath:     state.currentPath,
         currentBasePath: state.currentBasePath,
         zipPath:         state.zipPath,
+        zipDir:          state.zipDir,
         zipSubdir:       state.zipSubdir,
         searchQuery:     state.searchQuery,
     };
@@ -55,9 +56,11 @@ async function _navRestore(snap) {
             state.currentBasePath = snap.currentBasePath;
             state.currentPath     = snap.currentPath;
             state.zipPath         = snap.zipPath;
+            state.zipDir          = snap.zipDir || null;
             state.zipSubdir       = snap.zipSubdir || '';
             state.mode            = 'zip';
-            const data = await api('/api/zip/entries?' + new URLSearchParams({ path: snap.zipPath }));
+            const zipEffDir = state.zipDir || state.currentBasePath;
+            const data = await api('/api/zip/entries?' + new URLSearchParams({ path: snap.zipPath, dir: zipEffDir }));
             state.zipEntries = data.entries || [];
         } else if (snap.mode === 'search') {
             await searchFiles(snap.searchQuery);

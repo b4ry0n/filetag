@@ -250,6 +250,7 @@ async function loadFiles(path) {
     state.mode = 'browse';
     state.searchQuery = '';
     state.zipPath = null;
+    state.zipDir = null;
     state.zipEntries = [];
     sessionStorage.setItem('ft_path', state.currentPath);
     sessionStorage.setItem('ft_base', state.currentBasePath || '');
@@ -375,7 +376,8 @@ function handleZipClick(path, event) {
     if (_zipClickTimer) {
         clearTimeout(_zipClickTimer);
         _zipClickTimer = null;
-        openZipDir(path); // double click
+        // event.currentTarget is still valid on double-click (same synchronous handler).
+        openZipDir(path, event?.currentTarget?.dataset?.dir); // double click
     } else {
         _zipClickTimer = setTimeout(() => {
             _zipClickTimer = null;
