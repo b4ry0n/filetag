@@ -474,7 +474,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_FRAME_OPTIONS,
-            HeaderValue::from_static("DENY"),
+            HeaderValue::from_static("SAMEORIGIN"),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::CONTENT_SECURITY_POLICY,
@@ -488,7 +488,7 @@ async fn main() -> anyhow::Result<()> {
                  img-src 'self' data: blob:; \
                  media-src 'self' blob:; \
                  connect-src 'self'; \
-                 frame-ancestors 'none'",
+                 frame-ancestors 'self'",
             ),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
