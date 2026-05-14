@@ -223,48 +223,25 @@
     white-space: nowrap;
 }
 
-/* ----- Recursive-tag section in dir detail panel ---------- */
-.recursive-tag-section {
-    margin-top: 14px;
-    padding-top: 12px;
-    border-top: 1px solid var(--border);
-}
-
-.recursive-tag-section h4 {
-    margin: 0 0 8px;
-    font-size: 12px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-.recursive-tag-form {
+/* ----- Tag-add options (recursive / archives) in dir detail panel ---- */
+.tag-add-options {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    gap: 12px;
+    margin-top: 5px;
+    flex-wrap: wrap;
 }
 
-.recursive-tag-row {
-    display: flex;
-    gap: 6px;
-}
-
-.recursive-tag-row input[type="text"] {
-    flex: 1;
-    min-width: 0;
-}
-
-.recursive-option {
+.tag-add-option {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     font-size: 12px;
     color: var(--text-muted);
     cursor: pointer;
     user-select: none;
 }
 
-.recursive-option input[type="checkbox"] {
+.tag-add-option input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
 }
@@ -273,4 +250,5 @@
     font-size: 12px;
     color: var(--text-muted);
     min-height: 1.2em;
+    margin-top: 3px;
 }

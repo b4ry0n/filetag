@@ -364,19 +364,18 @@ async function doDirAddTag() {
     const input = document.getElementById('dir-tag-input');
     const tagStr = input?.value.trim();
     if (!tagStr) return;
-    input.value = '';
-    await addTagToDir(state.selectedDir.path, tagStr);
-}
 
-async function doDirRecursiveTag() {
-    if (!state.selectedDir) return;
-    const input = document.getElementById('dir-recursive-tag-input');
-    const tagStr = input?.value.trim();
-    if (!tagStr) return;
+    const recursive = document.getElementById('dir-tag-recursive')?.checked || false;
+    if (!recursive) {
+        input.value = '';
+        await addTagToDir(state.selectedDir.path, tagStr);
+        return;
+    }
 
-    const includeArchives = document.getElementById('dir-recursive-archives')?.checked || false;
+    // Recursive mode — submit background job.
+    const includeArchives = document.getElementById('dir-tag-archives')?.checked || false;
     const statusEl = document.getElementById('dir-recursive-status');
-    const btn = document.getElementById('dir-recursive-btn');
+    const btn = document.querySelector('#detail-panel button[onclick="doDirAddTag()"]');
 
     if (btn) btn.disabled = true;
     if (statusEl) statusEl.textContent = '\u29d7 Verwerken\u2026';
@@ -397,6 +396,14 @@ async function doDirRecursiveTag() {
     } finally {
         if (btn) btn.disabled = false;
     }
+}
+
+function _dirRecursiveToggle() {
+    const recursive = document.getElementById('dir-tag-recursive')?.checked || false;
+    const archivesWrap = document.getElementById('dir-tag-archives-wrap');
+    if (archivesWrap) archivesWrap.hidden = !recursive;
+    const statusEl = document.getElementById('dir-recursive-status');
+    if (statusEl && !recursive) statusEl.textContent = '';
 }
 
 async function doRemoveTag(path, tagStr, subject) {
