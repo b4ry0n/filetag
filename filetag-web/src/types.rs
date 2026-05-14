@@ -604,6 +604,23 @@ pub struct FaceConfigResponse {
     pub models_ready: bool,
 }
 
+/// Body for `POST /api/tag-dir-recursive` — tag all files in a directory tree.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TagDirRecursiveRequest {
+    /// Relative path of the directory to tag (from the database root).
+    pub path: String,
+    pub tags: Vec<String>,
+    /// Optional subject group for the tags being added.
+    pub subject: Option<String>,
+    /// When `true`, entries inside archives (ZIP/RAR/7z and comic variants)
+    /// found anywhere in the tree are also tagged.
+    #[serde(default)]
+    pub include_archives: bool,
+    /// Absolute filesystem path of the currently browsed directory (root
+    /// resolution — same semantics as `dir` in other tag requests).
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/face/config`.
 #[derive(Deserialize)]
 pub struct FaceConfigRequest {

@@ -1337,10 +1337,25 @@ function renderDetail() {
                 <h4>${t('detail.tags')}</h4>
                 <div class="detail-tags">${tagsHtml}</div>
                 ${tagInputHtml}
+            </div>
+            <div class="recursive-tag-section">
+                <h4>Recursief taggen</h4>
+                <div class="recursive-tag-form">
+                    <div class="recursive-tag-row">
+                        <input type="text" id="dir-recursive-tag-input" placeholder="Tag voor alle bestanden&hellip;">
+                        <button id="dir-recursive-btn" onclick="doDirRecursiveTag()">Tag alles</button>
+                    </div>
+                    <label class="recursive-option">
+                        <input type="checkbox" id="dir-recursive-archives"> Archieven
+                    </label>
+                </div>
+                <div id="dir-recursive-status" class="recursive-status"></div>
             </div>`;
         if (d.tags !== null) {
             const inp = document.getElementById('dir-tag-input');
             if (inp) attachTagAutocomplete(inp, () => doDirAddTag());
+            const recInp = document.getElementById('dir-recursive-tag-input');
+            if (recInp) attachTagAutocomplete(recInp, () => doDirRecursiveTag());
             initDetailVHandle(document.getElementById('detail-v-handle'));
         }
         return;

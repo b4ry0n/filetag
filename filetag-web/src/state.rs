@@ -112,6 +112,8 @@ pub static TRANSCODE_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::c
 pub struct AppState {
     /// All database roots loaded at startup, indexed by their position.
     pub roots: Vec<TagRoot>,
+    /// Background job store — all long-running tasks register here.
+    pub jobs: crate::jobs::SharedJobStore,
     /// Progress information for the current AI batch job (if any).
     pub ai_progress: std::sync::Mutex<AiProgress>,
     /// Progress information for the current pHash index job (if any).

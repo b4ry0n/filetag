@@ -4,6 +4,7 @@ mod archive;
 mod auth;
 mod extract;
 mod face;
+mod jobs;
 mod preview;
 mod saliency;
 mod similarity;
@@ -19,7 +20,7 @@ use axum::{
     Router,
     http::{HeaderValue, header},
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use clap::Parser;
 use filetag_lib::db;
@@ -281,6 +282,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(AppState {
         roots,
+        jobs: std::sync::Arc::new(std::sync::Mutex::new(crate::jobs::JobStore::default())),
         ai_progress: std::sync::Mutex::new(AiProgress::default()),
         phash_progress: std::sync::Mutex::new(crate::similarity::PhashProgress::default()),
         phash_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -318,6 +320,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/js/prompt-wizard.js", get(api::js_prompt_wizard))
         .route("/css/face.css", get(api::css_face))
         .route("/css/mobile.css", get(api::css_mobile))
+        .route("/css/jobs.css", get(api::css_jobs))
+        .route("/js/jobs.js", get(api::js_jobs))
         .route("/favicon.svg", get(api::favicon))
         .route("/api/roots", get(api::api_roots))
         .route("/api/auth/status", get(api::api_auth_status))
@@ -350,6 +354,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/untag", post(api::api_untag))
         .route("/api/tag-bulk", post(api::api_tag_bulk))
         .route("/api/untag-bulk", post(api::api_untag_bulk))
+        .route("/api/tag-dir-recursive", post(api::api_tag_dir_recursive))
+        .route(
+            "/api/jobs",
+            get(api::api_jobs).delete(api::api_jobs_dismiss_all),
+        )
+        .route("/api/jobs/:id", delete(api::api_jobs_dismiss))
         .route("/api/tag-color", post(api::api_tag_color))
         .route("/api/rename-tag", post(api::api_rename_tag))
         .route("/api/delete-tag", post(api::api_delete_tag))

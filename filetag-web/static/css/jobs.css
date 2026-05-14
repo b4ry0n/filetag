@@ -1,0 +1,276 @@
+/* =========================================================
+ * Jobs status button + panel
+ * ========================================================= */
+
+/* ----- Status-bar button in the header -------------------- */
+.jobs-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 14px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text);
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.jobs-btn:hover {
+    background: var(--bg-hover);
+}
+
+.jobs-btn.hidden {
+    display: none;
+}
+
+/* Spinning ring — shown while any job is active */
+.jobs-spinner-ring {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: none;
+}
+
+.jobs-btn.jobs-btn-running .jobs-spinner-ring {
+    display: block;
+    animation: jobs-spin 0.8s linear infinite;
+}
+
+@keyframes jobs-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ----- Dropdown panel ------------------------------------- */
+.jobs-panel {
+    position: fixed;
+    top: 48px;  /* below the standard header */
+    right: 8px;
+    width: 360px;
+    max-height: 480px;
+    overflow-y: auto;
+    background: var(--bg-panel, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+}
+
+.jobs-panel.hidden {
+    display: none;
+}
+
+.jobs-panel-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.jobs-panel-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.jobs-panel-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.jobs-panel-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+}
+
+.jobs-panel-close {
+    padding: 2px 6px;
+    font-size: 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.jobs-panel-close:hover {
+    color: var(--text);
+}
+
+.jobs-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.jobs-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* ----- Individual job row --------------------------------- */
+.job-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.job-item:last-child {
+    border-bottom: none;
+}
+
+.job-item-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.job-kind-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.job-item-label {
+    flex: 1;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.job-item-dismiss {
+    padding: 1px 5px;
+    font-size: 13px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    border-radius: 3px;
+}
+
+.job-item-dismiss:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+}
+
+.job-item-current {
+    font-size: 11px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Progress bar */
+.job-progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.job-progress-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+.job-progress-fill.indeterminate {
+    width: 40% !important;
+    animation: jobs-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes jobs-indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+
+/* Status labels */
+.job-status-done {
+    font-size: 11px;
+    color: var(--success, #4caf50);
+}
+
+.job-status-failed {
+    font-size: 11px;
+    color: var(--danger, #f44336);
+}
+
+.job-item-error {
+    font-size: 11px;
+    color: var(--danger, #f44336);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ----- Recursive-tag section in dir detail panel ---------- */
+.recursive-tag-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.recursive-tag-section h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.recursive-tag-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.recursive-tag-row {
+    display: flex;
+    gap: 6px;
+}
+
+.recursive-tag-row input[type="text"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.recursive-option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.recursive-option input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.recursive-status {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-height: 1.2em;
+}

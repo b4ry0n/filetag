@@ -113,6 +113,8 @@ js_handler!(js_prompt_wizard, "../static/js/prompt-wizard.js");
 js_handler!(js_select, "../static/js/select.js");
 css_handler!(css_face, "../static/css/face.css");
 css_handler!(css_mobile, "../static/css/mobile.css");
+css_handler!(css_jobs, "../static/css/jobs.css");
+js_handler!(js_jobs, "../static/js/jobs.js");
 
 /// Serve the embedded `favicon.ico`.
 pub async fn favicon() -> impl IntoResponse {
@@ -1834,6 +1836,333 @@ pub async fn api_untag_bulk(
     }
 
     Ok(Json(serde_json::json!({ "removed": total_removed })))
+}
+
+// ---------------------------------------------------------------------------
+// Background job store
+// ---------------------------------------------------------------------------
+
+/// `GET /api/jobs` — list all background jobs plus synthetic entries for the
+/// existing AI, face-scan, and pHash progress mechanisms.
+pub async fn api_jobs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut jobs: Vec<serde_json::Value> = Vec::new();
+
+    // 1. Native jobs registered in the job store.
+    {
+        let store = state.jobs.lock().unwrap();
+        for job in store.list() {
+            jobs.push(serde_json::to_value(job).unwrap_or_default());
+        }
+    }
+
+    // 2. AI batch progress (synthetic entry — visible only while running or
+    //    shortly after completion).
+    {
+        let prog = state.ai_progress.lock().unwrap().clone();
+        if prog.running || prog.done > 0 {
+            jobs.push(serde_json::json!({
+                "id": "__ai",
+                "kind": "ai-batch",
+                "label": "AI analyse",
+                "status": if prog.running { "running" } else { "done" },
+                "done": prog.done,
+                "total": prog.total,
+                "current": prog.current,
+                "created_ms": 0,
+                "updated_ms": 0,
+            }));
+        }
+    }
+
+    // 3. Face-scan progress.
+    {
+        let prog = state.face_progress.lock().unwrap().clone();
+        if prog.running || prog.done > 0 {
+            jobs.push(serde_json::json!({
+                "id": "__face",
+                "kind": "face-scan",
+                "label": "Gezichtsherkenning",
+                "status": if prog.running { "running" } else { "done" },
+                "done": prog.done,
+                "total": prog.total,
+                "current": prog.current,
+                "created_ms": 0,
+                "updated_ms": 0,
+            }));
+        }
+    }
+
+    // 4. pHash / similarity-index progress.
+    {
+        let prog = state.phash_progress.lock().unwrap().clone();
+        if prog.running || prog.done > 0 {
+            let status = if prog.running {
+                "running"
+            } else if prog.cancelled {
+                "failed"
+            } else {
+                "done"
+            };
+            let mut entry = serde_json::json!({
+                "id": "__phash",
+                "kind": "similarity",
+                "label": "Gelijkheidsindex",
+                "status": status,
+                "done": prog.done,
+                "total": prog.total,
+                "current": prog.current,
+                "created_ms": 0,
+                "updated_ms": 0,
+            });
+            if prog.cancelled {
+                entry["error"] = serde_json::json!("Gestopt");
+            }
+            jobs.push(entry);
+        }
+    }
+
+    // 5. Model download (face) — shown only while active.
+    {
+        let prog = state.model_download.lock().unwrap().clone();
+        if prog.active {
+            let total = prog.bytes_total.unwrap_or(0);
+            jobs.push(serde_json::json!({
+                "id": "__model-dl",
+                "kind": "download",
+                "label": format!("Model downloaden ({})", prog.phase),
+                "status": "running",
+                "done": prog.bytes_done,
+                "total": total,
+                "created_ms": 0,
+                "updated_ms": 0,
+            }));
+        }
+    }
+
+    Json(serde_json::json!({ "jobs": jobs }))
+}
+
+/// `DELETE /api/jobs/:id` — dismiss a specific completed or failed job.
+pub async fn api_jobs_dismiss(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    // Synthetic jobs (__ai, __face, etc.) cannot be dismissed from the store;
+    // they disappear automatically when their underlying progress resets.
+    if !id.starts_with("__") {
+        state.jobs.lock().unwrap().dismiss(&id);
+    }
+    Json(serde_json::json!({ "ok": true }))
+}
+
+/// `DELETE /api/jobs` — dismiss all completed and failed jobs.
+pub async fn api_jobs_dismiss_all(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    state.jobs.lock().unwrap().dismiss_finished();
+    Json(serde_json::json!({ "ok": true }))
+}
+
+// ---------------------------------------------------------------------------
+// Recursive directory tagging
+// ---------------------------------------------------------------------------
+
+/// `POST /api/tag-dir-recursive` — tag all files in a directory tree.
+///
+/// The operation is dispatched as a background job and returns a `job_id`
+/// immediately.  Callers should poll `GET /api/jobs` to track progress.
+pub async fn api_tag_dir_recursive(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TagDirRecursiveRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    // Validate the requested directory exists and is inside the root.
+    let _ = safe_path(&db_root.root, &body.path).map_err(AppError)?;
+
+    let dir_name = body
+        .path
+        .trim_end_matches('/')
+        .split('/')
+        .next_back()
+        .unwrap_or(&body.path)
+        .to_string();
+    let tags_label = body.tags.join(", ");
+    let archives_suffix = if body.include_archives {
+        " + archieven"
+    } else {
+        ""
+    };
+    let label = format!("Tag '{dir_name}': {tags_label}{archives_suffix}");
+
+    let job_id = state.jobs.lock().unwrap().submit("tag-dir", label);
+
+    let state2 = Arc::clone(&state);
+    let body2 = body.clone();
+    let job_id2 = job_id.clone();
+    tokio::spawn(async move {
+        let result = do_tag_dir_recursive(state2.clone(), body2, job_id2.clone()).await;
+        match result {
+            Ok(_) => state2.jobs.lock().unwrap().finish(&job_id2),
+            Err(e) => state2.jobs.lock().unwrap().fail(&job_id2, e.to_string()),
+        }
+    });
+
+    Ok(Json(serde_json::json!({ "job_id": job_id })))
+}
+
+/// Background worker for [`api_tag_dir_recursive`].
+async fn do_tag_dir_recursive(
+    state: Arc<AppState>,
+    body: TagDirRecursiveRequest,
+    job_id: String,
+) -> anyhow::Result<()> {
+    // Extract root info before any await points (avoids holding a non-Send ref).
+    let (root_path, dir_abs) = {
+        let db_root =
+            root_from_dir(&state, body.dir.as_deref()).map_err(|e| anyhow::anyhow!("{:?}", e.0))?;
+        let dir_abs = safe_path(&db_root.root, &body.path).map_err(|e| anyhow::anyhow!("{e}"))?;
+        (db_root.root.clone(), dir_abs)
+    };
+
+    state
+        .jobs
+        .lock()
+        .unwrap()
+        .progress(&job_id, 0, Some("Bestanden verzamelen\u{2026}"));
+
+    // Run all blocking work (walkdir + DB) in the spawn_blocking thread pool.
+    // rusqlite::Connection is !Send, so it must not cross await points.
+    let jobs_store = Arc::clone(&state.jobs);
+    let job_id2 = job_id.clone();
+
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        let include_archives = body.include_archives;
+        let filetag_dir = root_path.join(".filetag");
+
+        // Phase 1 — collect all relative paths (+ archive entries).
+        let mut paths: Vec<String> = Vec::new();
+        for entry in walkdir::WalkDir::new(&dir_abs)
+            .follow_links(true)
+            .into_iter()
+            .filter_entry(|e| {
+                let p = e.path();
+                if p.starts_with(&filetag_dir) {
+                    return false;
+                }
+                if let Some(name) = p.file_name().and_then(|n| n.to_str())
+                    && name.starts_with('.')
+                {
+                    return false;
+                }
+                true
+            })
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            let abs = entry.path();
+            let rel = db::relative_to_root(abs, &root_path)?;
+            paths.push(rel.clone());
+
+            if include_archives {
+                let ext = abs
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if matches!(ext.as_str(), "zip" | "cbz" | "rar" | "cbr" | "7z" | "cb7")
+                    && let Ok(entries) = crate::archive::archive_list_entries_raw(abs)
+                {
+                    for (name, _, _) in entries {
+                        paths.push(format!("{rel}::{name}"));
+                    }
+                }
+            }
+        }
+
+        let total = paths.len() as u64;
+        {
+            let mut store = jobs_store.lock().unwrap();
+            store.start(&job_id2, total);
+            store.progress(&job_id2, 0, None);
+        }
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 2 — group by effective DB root (child DB routing).
+        let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
+        for path in &paths {
+            let fs_path = if let Some(zip_part) = path.split_once("::").map(|(z, _)| z) {
+                preview_safe_path(&root_path, zip_part)
+                    .ok_or_else(|| anyhow::anyhow!("path '{}' escapes root", path))?
+            } else {
+                safe_path(&root_path, path)?
+            };
+            let start = fs_path.parent().unwrap_or(&fs_path);
+            let effective_root = db::find_root(start)?;
+            let effective_rel = if let Some(entry) = path.split_once("::").map(|(_, e)| e) {
+                let zip_rel = db::relative_to_root(&fs_path, &effective_root)?;
+                format!("{zip_rel}::{entry}")
+            } else {
+                db::relative_to_root(&fs_path, &effective_root)?
+            };
+            by_root
+                .entry(effective_root)
+                .or_default()
+                .push((path.clone(), effective_rel));
+        }
+
+        // Phase 3 — tag in chunked transactions, updating progress after each chunk.
+        let mut done: u64 = 0;
+        const CHUNK: usize = 50;
+
+        for (effective_root, path_pairs) in by_root {
+            let (conn, _) = db::find_and_open_fast(&effective_root)?;
+
+            if let Some(ref s) = body.subject
+                && !s.is_empty()
+            {
+                db::create_subject(&conn, s)?;
+            }
+
+            let mut tag_specs: Vec<(i64, Option<String>)> = Vec::new();
+            for tag_str in &body.tags {
+                let (name, value) = parse_tag(tag_str);
+                let tag_id = db::get_or_create_tag(&conn, &name)?;
+                tag_specs.push((tag_id, value));
+            }
+
+            for chunk in path_pairs.chunks(CHUNK) {
+                let tx = conn
+                    .unchecked_transaction()
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                for (path, effective_rel) in chunk {
+                    let file_id = if path.contains("::") {
+                        ensure_zip_entry_record(&tx, effective_rel)?
+                    } else {
+                        db::get_or_index_file(&tx, effective_rel, &effective_root)?.id
+                    };
+                    for (tag_id, value) in &tag_specs {
+                        db::apply_tag(
+                            &tx,
+                            file_id,
+                            *tag_id,
+                            value.as_deref(),
+                            body.subject.as_deref(),
+                        )?;
+                    }
+                    done += 1;
+                }
+                tx.commit().map_err(|e| anyhow::anyhow!("{e}"))?;
+                jobs_store.lock().unwrap().progress(&job_id2, done, None);
+            }
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("task join: {e}"))?
 }
 
 // ---------------------------------------------------------------------------

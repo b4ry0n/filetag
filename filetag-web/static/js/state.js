@@ -54,6 +54,7 @@ const state = {
     ftreeCache: {},     // absPath → ApiDirEntry[]
     ftreeFilter: '',    // text filter for tree node names
     selectionLoading: false, // true while _loadMissingFilesData is in progress
+    jobs: [],                // background job snapshots polled from /api/jobs
 };
 
 /** Load section visibility from localStorage, with defaults all-on. */

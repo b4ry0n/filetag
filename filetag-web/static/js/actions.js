@@ -368,6 +368,37 @@ async function doDirAddTag() {
     await addTagToDir(state.selectedDir.path, tagStr);
 }
 
+async function doDirRecursiveTag() {
+    if (!state.selectedDir) return;
+    const input = document.getElementById('dir-recursive-tag-input');
+    const tagStr = input?.value.trim();
+    if (!tagStr) return;
+
+    const includeArchives = document.getElementById('dir-recursive-archives')?.checked || false;
+    const statusEl = document.getElementById('dir-recursive-status');
+    const btn = document.getElementById('dir-recursive-btn');
+
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = '\u29d7 Verwerken\u2026';
+
+    try {
+        const res = await apiPost('/api/tag-dir-recursive', {
+            path: state.selectedDir.path,
+            tags: [tagStr],
+            include_archives: includeArchives,
+            dir: currentAbsDir(),
+        });
+        if (input) input.value = '';
+        const shortId = (res.job_id || '').slice(0, 8);
+        if (statusEl) statusEl.textContent = `\u2713 Job gestart (${shortId}\u2026)`;
+        if (typeof onJobSubmitted === 'function') onJobSubmitted(res.job_id);
+    } catch (e) {
+        if (statusEl) statusEl.textContent = `\u2717 ${e.message || 'Fout'}`;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 async function doRemoveTag(path, tagStr, subject) {
     await removeTagFromFile(path, tagStr, subject);
 }
