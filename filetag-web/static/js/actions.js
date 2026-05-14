@@ -872,13 +872,22 @@ async function doBulkAddTag() {
         }
     }
     await loadTags();
-    if (state.mode === 'browse') await loadFiles(state.currentPath);
     input.value = '';
     status.textContent = `Added "${tagStr}"${subject ? ` [${subject}]` : ''} to ${paths.length} file${paths.length === 1 ? '' : 's'}.`;
+    // Update tag-count badges surgically — avoids scroll reset and checkmark loss.
+    for (const p of paths) {
+        const d = state.selectedFilesData.get(p);
+        if (d && d.tags) {
+            const tagCount = d.tags.length;
+            const entries = state.mode === 'search' ? state.searchResults : state.entries;
+            const entry = entries.find(e => (e.path || fullPath(e)) === p);
+            if (entry) entry.tag_count = tagCount;
+            const badge = document.querySelector(`#content [data-path="${CSS.escape(p)}"] .tags-count`);
+            if (badge) badge.textContent = `${tagCount} tag${tagCount === 1 ? '' : 's'}`;
+        }
+    }
+    _updateCardSelection();
     renderTags();
-    renderContent();
-    _thumbInit();
-    _dirThumbInit();
     _kbRestoreFocus();
     const el = document.getElementById('bulk-tag-chips');
     if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
