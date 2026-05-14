@@ -176,13 +176,15 @@ async function faceSelectPerson(name) {
     try {
         const data = await api(
             '/api/face/files?' +
-            new URLSearchParams({ subject: name }) +
-            dirParam('&')
+            new URLSearchParams({ subject: name })
         );
-        const paths = data.paths || [];
+        const results = data.results || [];
         // Load these paths into search-result mode so the grid shows them.
+        // Populate searchResultRoots so thumbnails target the correct database
+        // when results span multiple roots.
         state.searchQuery = 'subject:' + name;
-        state.searchResults = paths.map(p => ({ path: p, tags: [] }));
+        state.searchResults = results.map(r => ({ path: r.path, root_path: r.root_path, tags: [] }));
+        state.searchResultRoots = new Map(results.map(r => [r.path, r.root_path]).filter(([, rp]) => rp));
         state.mode = 'search';
         state.selectedFile = null;
         state.selectedPaths.clear();

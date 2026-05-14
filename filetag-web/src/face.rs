@@ -2472,11 +2472,16 @@ pub async fn api_face_subjects(
     Ok(Json(serde_json::Value::Array(result)))
 }
 
-/// `GET /api/face/files?subject=<name>&dir=<dir>` — list relative file paths
-/// that contain at least one detection with the given subject name.
+/// `GET /api/face/files?subject=<name>` — list relative file paths that
+/// contain at least one detection with the given subject name.
+/// Merges results across all loaded roots; each entry includes a `root_path`
+/// so the frontend can construct thumbnail and preview URLs correctly.
 #[derive(Deserialize)]
 pub struct FaceFilesParams {
     pub subject: String,
+    /// Retained for backwards compatibility but no longer used; all roots are
+    /// queried regardless of the current directory.
+    #[allow(dead_code)]
     pub dir: Option<String>,
 }
 
@@ -2484,29 +2489,32 @@ pub async fn api_face_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FaceFilesParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let root_entry = root_from_dir(&state, params.dir.as_deref())?;
-    let conn = open_conn(root_entry)?;
+    const QUERY: &str = "SELECT DISTINCT f.path
+         FROM face_detections fd
+         JOIN files f ON f.id = fd.file_id
+         WHERE CASE WHEN ?1 = '' THEN fd.subject_name IS NULL
+                    ELSE fd.subject_name = ?1 END
+         ORDER BY f.path";
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT f.path
-             FROM face_detections fd
-             JOIN files f ON f.id = fd.file_id
-             WHERE CASE WHEN ?1 = '' THEN fd.subject_name IS NULL
-                        ELSE fd.subject_name = ?1 END
-             ORDER BY f.path",
-        )
-        .map_err(anyhow::Error::from)
-        .map_err(AppError)?;
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for root in &state.roots {
+        let Ok(conn) = open_conn(root) else { continue };
+        let Ok(mut stmt) = conn.prepare(QUERY) else {
+            continue;
+        };
+        let root_path = root.root.display().to_string();
+        let paths: Vec<String> = stmt
+            .query_map(rusqlite::params![params.subject], |r| r.get(0))
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.ok())
+            .collect();
+        for path in paths {
+            results.push(serde_json::json!({ "path": path, "root_path": root_path }));
+        }
+    }
 
-    let paths: Vec<String> = stmt
-        .query_map(rusqlite::params![params.subject], |r| r.get(0))
-        .map_err(anyhow::Error::from)
-        .map_err(AppError)?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(Json(serde_json::json!({ "paths": paths })))
+    Ok(Json(serde_json::json!({ "results": results })))
 }
 
 // ---------------------------------------------------------------------------
