@@ -2101,22 +2101,7 @@ async function renderTmDetail(name) {
                         onkeydown="if(event.key==='Enter') tmDoRename('${jesc(name)}')">
                     <button class="tm-btn" onclick="tmDoRename('${jesc(name)}')">Rename</button>
                 </div>
-                <div class="tm-op-hint">Use <code>key=value</code> form to convert to a key=value tag (e.g. <code>shirt/color=blue</code> &rarr; tag <em>shirt/color</em> with value <em>blue</em>). To combine two existing tags, use <em>Merge into</em> below.</div>
-            </div>
-
-            <div class="tm-op-row">
-                <label class="tm-op-label">Merge into</label>
-                <div class="tm-op-inputs">
-                    <input id="tm-merge-input" class="tm-input" type="text"
-                        placeholder="Target tag name\u2026" list="tm-merge-datalist"
-                        onkeydown="if(event.key==='Enter') tmDoMerge('${jesc(name)}')">
-                    <datalist id="tm-merge-datalist">
-                        ${state.tags.filter(t => t.name !== name).map(t => `<option value="${esc(t.name)}">`).join('')}
-                    </datalist>
-                    <button class="tm-btn tm-btn-warn" onclick="tmDoMerge('${jesc(name)}')">Merge</button>
-                </div>
-                <div class="tm-op-hint">All files tagged <em>${esc(name)}</em> will also receive the target tag.</div>
-                <label class="tm-merge-alias-label"><input type="checkbox" id="tm-merge-keep-alias" checked> Keep <em>${esc(name)}</em> as an alias of the target tag</label>
+                <div class="tm-op-hint">Use <code>key=value</code> form to convert to a key=value tag (e.g. <code>shirt/color=blue</code> &rarr; tag <em>shirt/color</em> with value <em>blue</em>).</div>
             </div>
 
         </section>
