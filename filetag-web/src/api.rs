@@ -1418,6 +1418,158 @@ pub async fn api_file_detail(
     }))
 }
 
+/// `POST /api/files-tags` — return tags for multiple files in one request.
+///
+/// Groups paths by database root and uses two SQL queries per root
+/// (`SELECT … WHERE path IN (…)` then `SELECT … WHERE file_id IN (…)`)
+/// instead of one round-trip per file.  Much faster for large multi-file
+/// selections.  Returns `{ "files": { "<path>": [ {name, value, subject}, … ] } }`.
+/// Paths that are not yet indexed return an empty tag array.
+pub async fn api_files_tags(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FilesTagsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    if body.paths.is_empty() {
+        return Ok(Json(serde_json::json!({ "files": {} })));
+    }
+
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+
+    // Group paths by their effective database root.
+    let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
+    for path in &body.paths {
+        let fs_path = if let Some(zip_part) = path.split_once("::").map(|(z, _)| z) {
+            match preview_safe_path(&db_root.root, zip_part) {
+                Some(p) => p,
+                None => continue,
+            }
+        } else {
+            match safe_path(&db_root.root, path) {
+                Ok(p) => p,
+                Err(_) => continue,
+            }
+        };
+        let start = fs_path.parent().unwrap_or(&fs_path);
+        let effective_root = match db::find_root(start) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let effective_rel = if let Some(entry) = path.split_once("::").map(|(_, e)| e) {
+            match db::relative_to_root(&fs_path, &effective_root) {
+                Ok(zip_rel) => format!("{}::{}", zip_rel, entry),
+                Err(_) => continue,
+            }
+        } else {
+            match db::relative_to_root(&fs_path, &effective_root) {
+                Ok(r) => r,
+                Err(_) => continue,
+            }
+        };
+        by_root
+            .entry(effective_root)
+            .or_default()
+            .push((path.clone(), effective_rel));
+    }
+
+    // Result: original path → Vec<tag objects>.
+    let mut result: HashMap<String, Vec<serde_json::Value>> =
+        body.paths.iter().map(|p| (p.clone(), Vec::new())).collect();
+
+    for (effective_root, path_pairs) in by_root {
+        let (conn, _) = match db::find_and_open_fast(&effective_root) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Build effective_rel → original_path lookup.
+        let rel_to_orig: HashMap<String, String> = path_pairs
+            .iter()
+            .map(|(o, r)| (r.clone(), o.clone()))
+            .collect();
+
+        let effective_rels: Vec<&str> = path_pairs.iter().map(|(_, r)| r.as_str()).collect();
+
+        // Query files in chunks to stay under SQLite variable limit (999).
+        const CHUNK: usize = 400;
+        let mut id_to_orig: HashMap<i64, String> = HashMap::new();
+
+        for chunk in effective_rels.chunks(CHUNK) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT id, path FROM files WHERE path IN ({})",
+                placeholders
+            );
+            let rows: Vec<(i64, String)> = conn
+                .prepare(&sql)
+                .map_err(|e| AppError(e.into()))?
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| AppError(e.into()))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for (file_id, eff_rel) in rows {
+                if let Some(orig) = rel_to_orig.get(&eff_rel) {
+                    id_to_orig.insert(file_id, orig.clone());
+                }
+            }
+        }
+
+        if id_to_orig.is_empty() {
+            continue;
+        }
+
+        // Fetch all tags for all file IDs in one query (also chunked).
+        let ids: Vec<i64> = id_to_orig.keys().copied().collect();
+        for chunk in ids.chunks(CHUNK) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT ft.file_id, t.name, ft.value, ft.subject
+                 FROM file_tags ft
+                 JOIN tags t ON t.id = ft.tag_id
+                 WHERE ft.file_id IN ({})
+                 ORDER BY ft.file_id, ft.subject, t.name, ft.value",
+                placeholders
+            );
+            let rows: Vec<(i64, String, String, String)> = conn
+                .prepare(&sql)
+                .map_err(|e| AppError(e.into()))?
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .map_err(|e| AppError(e.into()))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for (file_id, name, value, subject) in rows {
+                if let Some(orig) = id_to_orig.get(&file_id) {
+                    let tags = result.entry(orig.clone()).or_default();
+                    tags.push(serde_json::json!({
+                        "name": name,
+                        "value": if value.is_empty() { serde_json::Value::Null } else { value.into() },
+                        "subject": if subject.is_empty() { serde_json::Value::Null } else { subject.into() },
+                    }));
+                }
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "files": result })))
+}
+
 // ---------------------------------------------------------------------------
 // Tag / Untag (now using open_for_file_op)
 // ---------------------------------------------------------------------------

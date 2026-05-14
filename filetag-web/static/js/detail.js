@@ -1170,6 +1170,16 @@ function renderDetail() {
     // Multi-select bulk panel
     if (state.selectedPaths.size > 1) {
         const count = state.selectedPaths.size;
+
+        // Show a spinner while file details are loading for a new range selection.
+        if (state.selectionLoading) {
+            panel.innerHTML = `<div class="bulk-tag-section" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px;gap:12px;">
+                <div class="nav-loading-spinner"></div>
+                <span style="font-size:12px;color:var(--text-secondary)">${t('bulk.n-selected', {n: count})}</span>
+            </div>`;
+            return;
+        }
+
         const bulkTags = aggregateBulkTags();
         const bulkSubjects = aggregateBulkSubjects();
         const chipsHtml = renderBulkTagChips(bulkTags, count);

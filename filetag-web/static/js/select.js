@@ -3,11 +3,36 @@
 // ---------------------------------------------------------------------------
 
 // Loads file detail into selectedFilesData for paths not yet present.
+// For small selections the individual /api/file endpoint is used; for larger
+// ones a single /api/files-tags request fetches all tags at once.
 async function _loadMissingFilesData(paths) {
-    await Promise.all(paths.map(async p => {
-        if (!state.selectedFilesData.has(p)) {
+    const missing = paths.filter(p => !state.selectedFilesData.has(p));
+    if (!missing.length) return;
+
+    if (missing.length <= 5) {
+        // Small selection: full detail per file (includes size, mtime, duration…).
+        await Promise.all(missing.map(async p => {
             const data = await api('/api/file?path=' + encodeURIComponent(p) + '&dir=' + encodeURIComponent(searchDirForPath(p)));
             state.selectedFilesData.set(p, data);
+        }));
+        return;
+    }
+
+    // Large selection: one bulk request per root, only tags returned.
+    // Group paths by root dir (handles cross-root search results).
+    const byDir = new Map();
+    for (const p of missing) {
+        const d = searchDirForPath(p);
+        if (!byDir.has(d)) byDir.set(d, []);
+        byDir.get(d).push(p);
+    }
+    await Promise.all([...byDir.entries()].map(async ([dir, ps]) => {
+        const res = await apiPost('/api/files-tags', { paths: ps, dir });
+        for (const [path, tags] of Object.entries(res.files || {})) {
+            if (!state.selectedFilesData.has(path)) {
+                // Minimal record: enough for bulk tag chips and tag operations.
+                state.selectedFilesData.set(path, { path, tags: tags || [], covered: true });
+            }
         }
     }));
 }
@@ -40,7 +65,11 @@ async function selectFile(path, event) {
                 state.selectedPaths.add(p);
                 newPaths.push(p);
             }
+            _updateCardSelection();
+            state.selectionLoading = newPaths.some(p => !state.selectedFilesData.has(p));
+            if (state.selectionLoading) renderDetail(); // show spinner immediately
             await _loadMissingFilesData(newPaths);
+            state.selectionLoading = false;
             _updateCardSelection();
             renderDetail();
             _lastClickedPath = path;

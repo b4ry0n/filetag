@@ -247,6 +247,16 @@ pub struct DirParam {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/files-tags` — fetch tags for multiple paths in one
+/// request.
+#[derive(Deserialize)]
+pub struct FilesTagsRequest {
+    pub paths: Vec<String>,
+    /// Absolute filesystem path of the currently browsed directory.
+    /// Used to resolve the entry-point database root.
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/rename-db`.
 #[derive(Deserialize)]
 pub struct RenameDbRequest {

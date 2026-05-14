@@ -53,6 +53,7 @@ const state = {
     ftreeExpanded: {},  // absPath → boolean (true = open)
     ftreeCache: {},     // absPath → ApiDirEntry[]
     ftreeFilter: '',    // text filter for tree node names
+    selectionLoading: false, // true while _loadMissingFilesData is in progress
 };
 
 /** Load section visibility from localStorage, with defaults all-on. */

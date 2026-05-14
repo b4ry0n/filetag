@@ -852,15 +852,23 @@ async function doBulkAddTag() {
     const subject = subjectInput?.value.trim() || undefined;
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
-    status.textContent = 'Adding...';
+    status.textContent = `⧗ ${paths.length} best…`; // spinner + count
     const bulkBody = { paths, tags: [tagStr], dir: currentAbsDir() };
     if (subject) bulkBody.subject = subject;
     await apiPost('/api/tag-bulk', bulkBody);
-    // Refresh cached data for all selected files
-    await Promise.all(paths.map(async p => {
-        const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
-        state.selectedFilesData.set(p, data);
-    }));
+    // Optimistic local cache update — no need to re-fetch each file.
+    const eqIdx = tagStr.indexOf('=');
+    const tName  = eqIdx !== -1 ? tagStr.slice(0, eqIdx) : tagStr;
+    const tValue = eqIdx !== -1 ? tagStr.slice(eqIdx + 1) : '';
+    for (const p of paths) {
+        const d = state.selectedFilesData.get(p);
+        if (d) {
+            d.tags = d.tags || [];
+            if (!d.tags.some(t => t.name === tName && (t.value || '') === tValue)) {
+                d.tags.push({ name: tName, value: tValue || null });
+            }
+        }
+    }
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
     input.value = '';
@@ -2412,6 +2420,11 @@ async function applyTagPicker() {
         cancelTagPickerMode();
         return;
     }
+
+    // Disable the Apply button immediately to prevent double-clicks and show
+    // a file-count hint so the user knows something is happening.
+    const _applyBtn = document.querySelector('.tag-picker-apply');
+    if (_applyBtn) { _applyBtn.disabled = true; _applyBtn.textContent = `⧗ ${paths.length} best.`; }
 
     const dir = currentAbsDir();
     const ops = [];

@@ -345,6 +345,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/search", get(api::api_search))
         .route("/api/fs-search", get(api::api_fs_search))
         .route("/api/file", get(api::api_file_detail))
+        .route("/api/files-tags", post(api::api_files_tags))
         .route("/api/tag", post(api::api_tag))
         .route("/api/untag", post(api::api_untag))
         .route("/api/tag-bulk", post(api::api_tag_bulk))
