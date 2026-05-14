@@ -405,10 +405,16 @@ async function doDirAddTag() {
 
 function _dirRecursiveToggle() {
     const recursive = document.getElementById('dir-tag-recursive')?.checked || false;
+    localStorage.setItem('dirTag:recursive', recursive ? '1' : '0');
     const archivesWrap = document.getElementById('dir-tag-archives-wrap');
     if (archivesWrap) archivesWrap.hidden = !recursive;
     const statusEl = document.getElementById('dir-recursive-status');
     if (statusEl && !recursive) statusEl.textContent = '';
+}
+
+function _dirArchivesToggle() {
+    const archives = document.getElementById('dir-tag-archives')?.checked || false;
+    localStorage.setItem('dirTag:archives', archives ? '1' : '0');
 }
 
 async function doRemoveTag(path, tagStr, subject) {

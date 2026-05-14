@@ -1314,16 +1314,18 @@ function renderDetail() {
                     const chipColor = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
                     return `<span class="tag-chip"${chipColor}>${esc(tagStr)}<button class="remove" onclick="removeTagFromDir('${jesc(d.path)}','${jesc(tagStr)}')">&times;</button></span>`;
                 }).join('');
+            const _savedRec = localStorage.getItem('dirTag:recursive') === '1';
+            const _savedArc = localStorage.getItem('dirTag:archives') === '1';
             tagInputHtml = `<div class="tag-add-form">
                 <input type="text" id="dir-tag-input" placeholder="${esc(t('detail.tag-add'))}">
                 <button onclick="doDirAddTag()">${esc(t('detail.tag-add-btn'))}</button>
             </div>
             <div class="tag-add-options">
                 <label class="tag-add-option">
-                    <input type="checkbox" id="dir-tag-recursive" onchange="_dirRecursiveToggle()"> Recursief
+                    <input type="checkbox" id="dir-tag-recursive" onchange="_dirRecursiveToggle()" ${_savedRec ? 'checked' : ''}> Recursief
                 </label>
-                <label class="tag-add-option" id="dir-tag-archives-wrap" hidden>
-                    <input type="checkbox" id="dir-tag-archives"> Incl. archieven
+                <label class="tag-add-option" id="dir-tag-archives-wrap" ${_savedRec ? '' : 'hidden'}>
+                    <input type="checkbox" id="dir-tag-archives" onchange="_dirArchivesToggle()" ${_savedArc ? 'checked' : ''}> Incl. archieven
                 </label>
             </div>
             <div id="dir-recursive-status" class="recursive-status"></div>`;
