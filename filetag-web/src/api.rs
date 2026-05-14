@@ -1519,8 +1519,8 @@ pub async fn api_rename_tag(
     let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
     // Apply to all linked databases (the primary is included in the result).
-    let all_dbs = db::collect_all_databases(conn, db_root.root.to_path_buf(), true)
-        .unwrap_or_default();
+    let all_dbs =
+        db::collect_all_databases(conn, db_root.root.to_path_buf(), true).unwrap_or_default();
     let mut any_ok = false;
     let mut any_merged = false;
     for db in &all_dbs {
@@ -1533,7 +1533,9 @@ pub async fn api_rename_tag(
             }
         }
     }
-    Ok(Json(serde_json::json!({ "ok": any_ok, "merged": any_merged })))
+    Ok(Json(
+        serde_json::json!({ "ok": any_ok, "merged": any_merged }),
+    ))
 }
 
 // ---------------------------------------------------------------------------
