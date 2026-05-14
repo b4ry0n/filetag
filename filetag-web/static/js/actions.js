@@ -183,7 +183,6 @@ async function goVirtualRoot() {
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.activeTags.clear();
-    state.tags = [];
     state.info = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
@@ -195,7 +194,7 @@ async function goVirtualRoot() {
         _contentEl.innerHTML = '<div class="nav-loading"><div class="nav-loading-spinner"></div></div>';
     }
 
-    await loadFiles('');
+    await Promise.all([loadFiles(''), loadTags()]);
     render();
 }
 
