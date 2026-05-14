@@ -2171,14 +2171,12 @@ async function tmDoRename(oldName) {
     const targetTag = isKvConvert ? newName.slice(0, eqIdx) : newName;
 
     const existingTarget = state.tags.find(t => t.name === targetTag);
-    if (!isKvConvert && existingTarget) {
-        alert(`Tag "${targetTag}" already exists.\nUse 'Merge into' to merge the two tags.`);
-        return;
-    }
     let confirmMsg = `Rename "${oldName}" to "${newName}"?`;
     if (isKvConvert) {
         const kv = newName.slice(eqIdx + 1);
         confirmMsg += `\n\nThis converts the tag to key=value form:\n  tag: "${targetTag}"\n  value: "${kv}"\n\nAll files tagged with "${oldName}" will receive "${targetTag}=${kv}" instead.`;
+    } else if (existingTarget) {
+        confirmMsg += '\n\nTarget tag already exists \u2014 they will be merged.';
     }
     if (!confirm(confirmMsg)) return;
 
@@ -2191,32 +2189,6 @@ async function tmDoRename(oldName) {
     _tmSelectedTag = targetTag;
     renderTmList();
     await renderTmDetail(targetTag);
-    if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
-    render();
-}
-
-async function tmDoMerge(sourceName) {
-    const input = document.getElementById('tm-merge-input');
-    const targetName = input ? input.value.trim() : '';
-    if (!targetName || targetName === sourceName) return;
-    const keepAlias = document.getElementById('tm-merge-keep-alias')?.checked ?? true;
-    const srcTag = state.tags.find(t => t.name === sourceName);
-    const aliasNote = keepAlias ? `\n"${sourceName}" will be kept as an alias.` : '';
-    if (!confirm(`Merge "${sourceName}" into "${targetName}"?\nThis will retag all ${srcTag?.count || 0} file(s) and remove "${sourceName}".${aliasNote}`)) return;
-    const res = await apiPost('/api/rename-tag', { name: sourceName, new_name: targetName, dir: currentAbsDir() });
-    if (keepAlias) {
-        try {
-            await apiPost('/api/synonym/add', { name: sourceName, other: targetName, dir: currentAbsDir() });
-        } catch (e) {
-            showToast(`Merged, but could not create alias: ${e.message || e}`);
-        }
-    }
-    if (res && res.merged) showToast(`Merged "${sourceName}" into "${targetName}"${keepAlias ? ` — "${sourceName}" kept as alias` : ''}.`);
-    else showToast(`Renamed and merged.`);
-    await loadTags();
-    _tmSelectedTag = targetName;
-    renderTmList();
-    await renderTmDetail(targetName);
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     render();
 }
