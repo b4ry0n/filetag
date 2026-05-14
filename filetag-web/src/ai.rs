@@ -2656,15 +2656,70 @@ pub async fn api_ai_chat(
         };
     }
 
+    // Look up the tags currently applied to each file being discussed.
+    // This ensures the model always sees up-to-date per-file tag data even
+    // if the user modified tags after opening the chat panel.
+    let mut file_tag_lines: Vec<String> = Vec::new();
+    for file_path in &req.files {
+        // For archive sub-entries ("archive.cbz::entry.jpg") look up the
+        // archive file itself; virtual entry paths are not in the files table.
+        let lookup_path = if let Some((archive_rel, _)) = file_path.split_once("::") {
+            archive_rel
+        } else {
+            file_path.as_str()
+        };
+        if let Ok(Some(record)) = db::file_by_path(&conn, lookup_path)
+            && let Ok(tags) = db::tags_for_file(&conn, record.id)
+            && !tags.is_empty()
+        {
+            let file_name = std::path::Path::new(lookup_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(lookup_path);
+            let tag_strs: Vec<String> = tags
+                .iter()
+                .map(|(name, val)| match val {
+                    Some(v) => format!("{name}={v}"),
+                    None => name.clone(),
+                })
+                .collect();
+            file_tag_lines.push(format!(
+                "\"{file_name}\" has tags: {}.",
+                tag_strs.join(", ")
+            ));
+        }
+    }
+
     // Build a system message with the current tag vocabulary so the model
-    // knows which tags exist in this collection.  The list is sent with every
-    // prompt so it stays up-to-date even if the user adds tags mid-session.
-    let system_prompt: Option<String> = req.tags.as_ref().filter(|t| !t.is_empty()).map(|tags| {
-        format!(
-            "The following tags are defined in this collection: {}.",
-            tags.join(", ")
-        )
-    });
+    // knows which tags exist in this collection, and with the per-file tags
+    // so the model can answer questions about them accurately.
+    let system_prompt: Option<String> = {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(tags) = req.tags.as_ref().filter(|t| !t.is_empty()) {
+            let vocab: Vec<&String> = tags.iter().filter(|t| !t.starts_with("ai/")).collect();
+            if !vocab.is_empty() {
+                parts.push(format!(
+                    "The following tags are defined in this collection: {}.",
+                    vocab
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+        if !file_tag_lines.is_empty() {
+            parts.push(format!(
+                "Current tags on the discussed file(s):\n{}",
+                file_tag_lines.join("\n")
+            ));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    };
 
     let reply = vlm_chat_with_history(&config, &messages, &b64_images, system_prompt.as_deref())
         .await
