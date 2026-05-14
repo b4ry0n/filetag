@@ -1508,16 +1508,32 @@ pub async fn api_untag(
 // ---------------------------------------------------------------------------
 
 /// `POST /api/rename-tag` — rename a tag across all files in the database.
+///
+/// The rename is applied to the primary database (determined by `dir`) and to
+/// all linked databases (children + ancestors), so that tags spread across
+/// multiple linked databases are all updated in one call.
 pub async fn api_rename_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db_root = root_from_dir(&state, body.dir.as_deref())?;
     let conn = open_conn(db_root)?;
-    let outcome = db::rename_tag(&conn, &body.name, &body.new_name).map_err(AppError)?;
-    let ok = !matches!(outcome, db::RenameOutcome::NotFound);
-    let merged = matches!(outcome, db::RenameOutcome::Merged { .. });
-    Ok(Json(serde_json::json!({ "ok": ok, "merged": merged })))
+    // Apply to all linked databases (the primary is included in the result).
+    let all_dbs = db::collect_all_databases(conn, db_root.root.to_path_buf(), true)
+        .unwrap_or_default();
+    let mut any_ok = false;
+    let mut any_merged = false;
+    for db in &all_dbs {
+        match db::rename_tag(&db.conn, &body.name, &body.new_name) {
+            Ok(db::RenameOutcome::NotFound) | Err(_) => {}
+            Ok(db::RenameOutcome::Renamed) => any_ok = true,
+            Ok(db::RenameOutcome::Merged { .. }) => {
+                any_ok = true;
+                any_merged = true;
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({ "ok": any_ok, "merged": any_merged })))
 }
 
 // ---------------------------------------------------------------------------

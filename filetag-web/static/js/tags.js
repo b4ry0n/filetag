@@ -1577,6 +1577,10 @@ async function renameTag(oldName, newName) {
         delete state.kvValueCache[n];
     }
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
+    if (res && !res.ok) {
+        showToast(`Could not rename "${oldName}": tag or value not found.`, 'error');
+        return;
+    }
     const oldEq = oldName.indexOf('=') > 0;
     if (oldEq && eqIdx > 0) {
         // kv-value → kv-value: merge/move value
