@@ -1892,7 +1892,11 @@ function render() {
     // as quickly as possible.  The tag sidebar and detail panel can be heavy
     // (many tags, many subjects), so defer them until after the first frame.
     renderBreadcrumb();
-    renderContent(); // first _RENDER_INITIAL items painted synchronously
+    try {
+        renderContent(); // first _RENDER_INITIAL items painted synchronously
+    } catch (e) {
+        console.error('renderContent failed:', e);
+    }
     // Yield to the browser so it can paint the content before building the
     // tag sidebar and detail panel.  _thumbInit() runs inside the callback so
     // it picks up the first chunk that was just painted.

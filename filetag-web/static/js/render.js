@@ -319,6 +319,10 @@ function _renderListRows(items) {
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const isArchiveEntry = path.includes('::');
+            // entryDir must be declared before gotoDirBtn so it is in scope for the template.
+            const entryDir = state.mode === 'search' && entry.root_path
+                ? entry.root_path
+                : currentAbsDir();
             const gotoDirBtn = state.mode === 'search'
                 ? isArchiveEntry
                     ? `<button class="goto-dir-btn" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}','${jesc(entryDir)}')" title="Go to archive">${ICONS.gotoDir}</button>`
@@ -327,9 +331,6 @@ function _renderListRows(items) {
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             const symlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
-            const entryDir = state.mode === 'search' && entry.root_path
-                ? entry.root_path
-                : currentAbsDir();
             if (fileType(name) === 'zip') {
                 html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
