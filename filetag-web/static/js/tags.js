@@ -1831,7 +1831,11 @@ function tmSwitchTab(tab) {
             searchInput.oninput = e => tmPersonSearch(e.target.value);
         }
     }
-    if (tab === 'subjects') renderTmSubjectList();
+    if (tab === 'subjects') {
+        renderTmSubjectList();
+        // Reload subjects from the current root so the list is always fresh.
+        loadSubjects().then(() => renderTmSubjectList()).catch(() => {});
+    }
     if (tab === 'people') renderTmPersonList();
 }
 

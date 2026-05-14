@@ -117,8 +117,14 @@ async function navigateTo(path) {
         _contentEl.innerHTML = '<div class="nav-loading"><div class="nav-loading-spinner"></div></div>';
     }
 
+    const _prevBase = state.currentBasePath;
     await loadFiles(path);
     _navPush(); // record this directory in the navigation history
+    // When navigating into a different database root (e.g. a child DB), reload
+    // tags so the sidebar reflects the correct counts for the new root.
+    if (state.currentBasePath !== _prevBase) {
+        loadTags().then(() => renderTags()).catch(() => {});
+    }
     await loadSettings();
     if (typeof loadFaceConfig === 'function') {
         Promise.all([loadFaceConfig(), loadPeople()]).then(() => renderTags()).catch(() => {});

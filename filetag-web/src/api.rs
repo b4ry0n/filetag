@@ -736,18 +736,27 @@ pub async fn api_tag_values(
 }
 
 /// `GET /api/subjects` — list all distinct subjects with file counts.
+/// Merges results across all loaded roots, just like `api_tags` does.
 pub async fn api_subjects(
     State(state): State<Arc<AppState>>,
-    Query(rp): Query<DirParam>,
 ) -> Result<Json<Vec<ApiSubject>>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let rows = db::all_subjects(&conn).map_err(AppError)?;
-    Ok(Json(
-        rows.into_iter()
-            .map(|(name, count)| ApiSubject { name, count })
-            .collect(),
-    ))
+    use std::collections::HashMap;
+    let mut merged: HashMap<String, i64> = HashMap::new();
+    for root in &state.roots {
+        let Ok(conn) = open_conn(root) else { continue };
+        let Ok(rows) = db::all_subjects(&conn) else {
+            continue;
+        };
+        for (name, count) in rows {
+            *merged.entry(name).or_insert(0) += count;
+        }
+    }
+    let mut result: Vec<ApiSubject> = merged
+        .into_iter()
+        .map(|(name, count)| ApiSubject { name, count })
+        .collect();
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------

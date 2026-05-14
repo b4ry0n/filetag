@@ -218,21 +218,14 @@ async function loadAuthStatus() {
 }
 
 async function loadTags() {
-    // /api/subjects requires a dir param; skip it when no directory is active
-    // (e.g. virtual root) to avoid a rejected promise that would swallow the
-    // tags response and leave the UI in a broken state.
-    const subjectsPromise = currentAbsDir() != null
-        ? api('/api/subjects' + dirParam('?'))
-        : Promise.resolve([]);
     [state.tags, state.subjects] = await Promise.all([
         api('/api/tags' + dirParam('?')),
-        subjectsPromise,
+        api('/api/subjects'),
     ]);
 }
 
 async function loadSubjects() {
-    if (currentAbsDir() == null) { state.subjects = []; return; }
-    state.subjects = await api('/api/subjects' + dirParam('?'));
+    state.subjects = await api('/api/subjects');
 }
 
 async function loadFiles(path) {
