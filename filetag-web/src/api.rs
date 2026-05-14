@@ -2282,9 +2282,20 @@ pub async fn api_prune_tags(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DirBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
-    let conn = open_conn(db_root)?;
-    let removed = db::prune_unused_tags(&conn).map_err(AppError)?;
+    let mut removed: usize = 0;
+    if body.dir.is_some() {
+        // Single root: prune only the root that owns this path.
+        let db_root = root_from_dir(&state, body.dir.as_deref())?;
+        let conn = open_conn(db_root)?;
+        removed += db::prune_unused_tags(&conn).map_err(AppError)?;
+    } else {
+        // No dir: prune every loaded root.
+        for root in &state.roots {
+            if let Ok(conn) = open_conn(root) {
+                removed += db::prune_unused_tags(&conn).unwrap_or(0);
+            }
+        }
+    }
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
