@@ -222,6 +222,23 @@ pub struct TagRequest {
     pub dir: Option<String>,
 }
 
+/// Body for `POST /api/tag-bulk` and `POST /api/untag-bulk`.
+///
+/// Applies or removes tags across multiple files in a single SQLite transaction
+/// per database root.  This is dramatically faster than issuing one request per
+/// file because it reduces the number of disk fsyncs from O(n) to O(k), where
+/// k is the number of distinct database roots in the selection.
+#[derive(Deserialize)]
+pub struct BulkTagRequest {
+    pub paths: Vec<String>,
+    pub tags: Vec<String>,
+    /// Optional subject group for the operation.
+    pub subject: Option<String>,
+    /// Absolute filesystem path of the currently browsed directory.
+    /// Used to resolve the entry-point database root.
+    pub dir: Option<String>,
+}
+
 /// Generic query param carrying the current browsing directory.
 /// The backend resolves the active (deepest) root from this path.
 #[derive(Deserialize, Default)]

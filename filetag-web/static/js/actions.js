@@ -853,12 +853,9 @@ async function doBulkAddTag() {
     const paths = [...state.selectedPaths];
     const status = document.getElementById('bulk-status');
     status.textContent = 'Adding...';
-    const body = (p) => {
-        const b = { path: p, tags: [tagStr], dir: currentAbsDir() };
-        if (subject) b.subject = subject;
-        return b;
-    };
-    await Promise.all(paths.map(p => apiPost('/api/tag', body(p))));
+    const bulkBody = { paths, tags: [tagStr], dir: currentAbsDir() };
+    if (subject) bulkBody.subject = subject;
+    await apiPost('/api/tag-bulk', bulkBody);
     // Refresh cached data for all selected files
     await Promise.all(paths.map(async p => {
         const data = await api('/api/file?path=' + encodeURIComponent(p) + dirParam('&'));
@@ -2419,19 +2416,31 @@ async function applyTagPicker() {
     const dir = currentAbsDir();
     const ops = [];
 
-    // Add new tags (with selected subject if any).
-    for (const p of paths) {
-        for (const t of toAdd) {
-            ops.push(apiPost('/api/tag', { path: p, tags: [t], dir, ...(subject ? { subject } : {}) }));
+    // Helper: group paths by their root dir (handles cross-root search results).
+    function groupByDir(ps) {
+        const map = new Map();
+        for (const p of ps) {
+            const d = searchDirForPath(p);
+            if (!map.has(d)) map.set(d, []);
+            map.get(d).push(p);
+        }
+        return map;
+    }
+
+    // Add new tags (with selected subject if any) — one bulk request per root.
+    if (toAdd.length > 0) {
+        for (const [d, ps] of groupByDir(paths)) {
+            ops.push(apiPost('/api/tag-bulk', { paths: ps, tags: toAdd, dir: d, ...(subject ? { subject } : {}) }));
         }
     }
-    // Remove unchecked tags.
-    for (const p of paths) {
-        for (const t of toRemove) {
-            ops.push(apiPost('/api/untag', { path: p, tags: [t], dir }));
+    // Remove unchecked tags — one bulk request per root.
+    if (toRemove.length > 0) {
+        for (const [d, ps] of groupByDir(paths)) {
+            ops.push(apiPost('/api/untag-bulk', { paths: ps, tags: toRemove, dir: d }));
         }
     }
     // If subject changed but no tag delta, re-apply existing tags with new subject.
+    // Each file may have different tags, so fall back to individual requests here.
     if (subjectChanged && toAdd.length === 0 && toRemove.length === 0 && subject) {
         for (const p of paths) {
             const data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);

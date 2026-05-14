@@ -347,6 +347,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/file", get(api::api_file_detail))
         .route("/api/tag", post(api::api_tag))
         .route("/api/untag", post(api::api_untag))
+        .route("/api/tag-bulk", post(api::api_tag_bulk))
+        .route("/api/untag-bulk", post(api::api_untag_bulk))
         .route("/api/tag-color", post(api::api_tag_color))
         .route("/api/rename-tag", post(api::api_rename_tag))
         .route("/api/delete-tag", post(api::api_delete_tag))

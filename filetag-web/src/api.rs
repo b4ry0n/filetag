@@ -12,7 +12,7 @@ use filetag_lib::{db, query};
 use crate::archive::ensure_zip_entry_record;
 use crate::state::{
     AppError, AppState, file_is_covered, load_features_for, open_conn, open_for_file_op, parse_tag,
-    resolve_preview, root_for_dir, safe_path,
+    preview_safe_path, resolve_preview, root_for_dir, safe_path,
 };
 use crate::types::*;
 use crate::video::video_info;
@@ -1501,6 +1501,187 @@ pub async fn api_untag(
     }
 
     Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+// ---------------------------------------------------------------------------
+// Bulk tag / untag
+// ---------------------------------------------------------------------------
+
+/// `POST /api/tag-bulk` — apply tags to multiple files in one request.
+///
+/// All files belonging to the same database root are processed in a single
+/// SQLite transaction, reducing I/O from O(n) fsyncs to O(k) fsyncs where k
+/// is the number of distinct database roots in the selection.  Tag IDs are
+/// resolved once per database root rather than once per file.
+pub async fn api_tag_bulk(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<BulkTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    if body.paths.is_empty() {
+        return Ok(Json(serde_json::json!({ "added": 0 })));
+    }
+
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+
+    // Group paths by their effective database root (handles child-DB routing).
+    // Use find_root — a pure path-walk — to avoid opening N connections.
+    let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
+    for path in &body.paths {
+        let fs_path = if let Some(zip_part) = path.split_once("::").map(|(z, _)| z) {
+            preview_safe_path(&db_root.root, zip_part)
+                .ok_or_else(|| AppError(anyhow::anyhow!("invalid path '{}': escapes root", path)))?
+        } else {
+            safe_path(&db_root.root, path).map_err(AppError)?
+        };
+        let start = fs_path.parent().unwrap_or(&fs_path);
+        let effective_root = db::find_root(start).map_err(AppError)?;
+        let effective_rel = if let Some(entry) = path.split_once("::").map(|(_, e)| e) {
+            let zip_rel = db::relative_to_root(&fs_path, &effective_root).map_err(AppError)?;
+            format!("{}::{}", zip_rel, entry)
+        } else {
+            db::relative_to_root(&fs_path, &effective_root).map_err(AppError)?
+        };
+        by_root
+            .entry(effective_root)
+            .or_default()
+            .push((path.clone(), effective_rel));
+    }
+
+    let mut total_added = 0i64;
+    for (effective_root, path_pairs) in by_root {
+        // One connection per DB root (find_and_open_fast skips migrations).
+        let (conn, _) = db::find_and_open_fast(&effective_root).map_err(AppError)?;
+
+        if let Some(ref s) = body.subject
+            && !s.is_empty()
+        {
+            db::create_subject(&conn, s).map_err(AppError)?;
+        }
+
+        // Resolve tag IDs once per root — not once per file.
+        let mut tag_specs: Vec<(i64, Option<String>)> = Vec::new();
+        for tag_str in &body.tags {
+            let (name, value) = parse_tag(tag_str);
+            let tag_id = db::get_or_create_tag(&conn, &name).map_err(AppError)?;
+            tag_specs.push((tag_id, value));
+        }
+
+        // Single transaction for all files in this root.
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError(e.into()))?;
+        for (path, effective_rel) in &path_pairs {
+            let file_id = if path.contains("::") {
+                ensure_zip_entry_record(&tx, effective_rel).map_err(AppError)?
+            } else {
+                db::get_or_index_file(&tx, effective_rel, &effective_root)
+                    .map_err(AppError)?
+                    .id
+            };
+            for (tag_id, value) in &tag_specs {
+                db::apply_tag(
+                    &tx,
+                    file_id,
+                    *tag_id,
+                    value.as_deref(),
+                    body.subject.as_deref(),
+                )
+                .map_err(AppError)?;
+                total_added += 1;
+            }
+        }
+        tx.commit().map_err(|e| AppError(e.into()))?;
+    }
+
+    Ok(Json(serde_json::json!({ "added": total_added })))
+}
+
+/// `POST /api/untag-bulk` — remove tags from multiple files in one request.
+///
+/// Like [`api_tag_bulk`] but for removal.  Files are grouped by database root
+/// and each group is processed in a single transaction.
+pub async fn api_untag_bulk(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<BulkTagRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    if body.paths.is_empty() {
+        return Ok(Json(serde_json::json!({ "removed": 0 })));
+    }
+
+    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+
+    let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
+    for path in &body.paths {
+        let fs_path = if let Some(zip_part) = path.split_once("::").map(|(z, _)| z) {
+            preview_safe_path(&db_root.root, zip_part)
+                .ok_or_else(|| AppError(anyhow::anyhow!("invalid path '{}': escapes root", path)))?
+        } else {
+            safe_path(&db_root.root, path).map_err(AppError)?
+        };
+        let start = fs_path.parent().unwrap_or(&fs_path);
+        let effective_root = db::find_root(start).map_err(AppError)?;
+        let effective_rel = if let Some(entry) = path.split_once("::").map(|(_, e)| e) {
+            let zip_rel = db::relative_to_root(&fs_path, &effective_root).map_err(AppError)?;
+            format!("{}::{}", zip_rel, entry)
+        } else {
+            db::relative_to_root(&fs_path, &effective_root).map_err(AppError)?
+        };
+        by_root
+            .entry(effective_root)
+            .or_default()
+            .push((path.clone(), effective_rel));
+    }
+
+    let mut total_removed = 0i64;
+    for (effective_root, path_pairs) in by_root {
+        let (conn, _) = db::find_and_open_fast(&effective_root).map_err(AppError)?;
+
+        let mut tag_specs: Vec<(i64, Option<String>)> = Vec::new();
+        for tag_str in &body.tags {
+            let (name, value) = parse_tag(tag_str);
+            if let Ok(tag_id) = conn.query_row(
+                "SELECT id FROM tags WHERE name = ?1",
+                rusqlite::params![&name],
+                |r| r.get::<_, i64>(0),
+            ) {
+                tag_specs.push((tag_id, value));
+            }
+        }
+
+        if tag_specs.is_empty() {
+            continue;
+        }
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError(e.into()))?;
+        for (_, effective_rel) in &path_pairs {
+            if let Ok(Some(record)) = db::file_by_path(&tx, effective_rel) {
+                for (tag_id, value) in &tag_specs {
+                    if db::remove_tag(
+                        &tx,
+                        record.id,
+                        *tag_id,
+                        value.as_deref(),
+                        body.subject.as_deref(),
+                    )
+                    .map_err(AppError)?
+                    {
+                        total_removed += 1;
+                    }
+                }
+            }
+        }
+        tx.commit().map_err(|e| AppError(e.into()))?;
+    }
+
+    Ok(Json(serde_json::json!({ "removed": total_removed })))
 }
 
 // ---------------------------------------------------------------------------

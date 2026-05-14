@@ -1812,7 +1812,10 @@ async function doBulkApplyTagToAll(tagStr) {
         return data && !(data.tags || []).some(t => formatTag(t) === tagStr);
     });
     if (!paths.length) return;
-    await Promise.all(paths.map(p => apiPost('/api/tag', { path: p, tags: [tagStr], dir: searchDirForPath(p) })));
+    // Group paths by root and issue one bulk request per root.
+    const byDir = new Map();
+    for (const p of paths) { const d = searchDirForPath(p); if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(p); }
+    await Promise.all([...byDir.entries()].map(([d, ps]) => apiPost('/api/tag-bulk', { paths: ps, tags: [tagStr], dir: d })));
     // Update local cache
     const eqIdx = tagStr.indexOf('=');
     const tName  = eqIdx !== -1 ? tagStr.slice(0, eqIdx) : tagStr;
@@ -1849,7 +1852,9 @@ async function doBulkRemoveTagChip(tagStr) {
         const data = state.selectedFilesData.get(p);
         return data && data.tags.some(t => formatTag(t) === tagStr);
     });
-    await Promise.all(paths.map(p => apiPost('/api/untag', { path: p, tags: [tagStr], dir: searchDirForPath(p) })));
+    const byDir = new Map();
+    for (const p of paths) { const d = searchDirForPath(p); if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(p); }
+    await Promise.all([...byDir.entries()].map(([d, ps]) => apiPost('/api/untag-bulk', { paths: ps, tags: [tagStr], dir: d })));
     // Update local cache immediately so the chip list refreshes right away,
     // before the slower loadTags() / loadFiles() network calls complete.
     for (const p of paths) {
