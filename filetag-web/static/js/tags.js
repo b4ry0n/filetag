@@ -2096,7 +2096,7 @@ async function renderTmDetail(name) {
                         onkeydown="if(event.key==='Enter') tmDoRename('${jesc(name)}')">
                     <button class="tm-btn" onclick="tmDoRename('${jesc(name)}')">Rename</button>
                 </div>
-                <div class="tm-op-hint">Renaming to an existing tag merges them. Use <code>key=value</code> form to convert to a key=value tag (e.g. <code>shirt/color=blue</code> &rarr; tag <em>shirt/color</em> with value <em>blue</em>).</div>
+                <div class="tm-op-hint">Use <code>key=value</code> form to convert to a key=value tag (e.g. <code>shirt/color=blue</code> &rarr; tag <em>shirt/color</em> with value <em>blue</em>). To combine two existing tags, use <em>Merge into</em> below.</div>
             </div>
 
             <div class="tm-op-row">
@@ -2171,12 +2171,14 @@ async function tmDoRename(oldName) {
     const targetTag = isKvConvert ? newName.slice(0, eqIdx) : newName;
 
     const existingTarget = state.tags.find(t => t.name === targetTag);
+    if (!isKvConvert && existingTarget) {
+        alert(`Tag "${targetTag}" already exists.\nUse 'Merge into' to merge the two tags.`);
+        return;
+    }
     let confirmMsg = `Rename "${oldName}" to "${newName}"?`;
     if (isKvConvert) {
         const kv = newName.slice(eqIdx + 1);
         confirmMsg += `\n\nThis converts the tag to key=value form:\n  tag: "${targetTag}"\n  value: "${kv}"\n\nAll files tagged with "${oldName}" will receive "${targetTag}=${kv}" instead.`;
-    } else if (existingTarget) {
-        confirmMsg += '\n\nTarget tag already exists \u2014 they will be merged.';
     }
     if (!confirm(confirmMsg)) return;
 
