@@ -205,9 +205,26 @@ window.toggleSectionsPopover = function(e) {
             <span>${esc(s.label)}</span>
         </label>`;
     }).join('');
-    pop.innerHTML = `<div class="sections-pop-title">Sidebar sections</div>${rows}`;
+    const anyHidden = Object.values(state.sectionVisibility).some((v, i) => {
+        const key = Object.keys(state.sectionVisibility)[i];
+        // 'distribution' is off by default — only count non-default-off sections
+        return key !== 'distribution' && v === false;
+    });
+    const resetBtn = anyHidden
+        ? `<button class="sections-pop-reset" onclick="resetSectionVisibility()">Reset to defaults</button>`
+        : '';
+    pop.innerHTML = `<div class="sections-pop-title">Sidebar sections</div>${rows}${resetBtn}`;
     pop.hidden = false;
     e.stopPropagation();
+};
+
+window.resetSectionVisibility = function() {
+    const defaults = { tags: true, subjects: true, people: true, ai: true, distribution: false };
+    state.sectionVisibility = { ...defaults };
+    saveSectionVisibility();
+    const pop = document.getElementById('sidebar-sections-popover');
+    if (pop) pop.hidden = true;
+    renderTags();
 };
 
 window.setSectionVisible = function(key, visible) {

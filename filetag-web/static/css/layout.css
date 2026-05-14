@@ -2017,6 +2017,21 @@ mark.tag-filter-match {
 .sections-pop-row:hover { background: var(--bg-hover); }
 .sections-pop-row input[type="checkbox"] { accent-color: var(--primary); cursor: pointer; }
 
+.sections-pop-reset {
+    display: block;
+    width: calc(100% - 20px);
+    margin: 6px 10px 2px;
+    padding: 4px 8px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-align: center;
+}
+.sections-pop-reset:hover { background: var(--bg-hover); color: var(--text); }
+
 /* ------------------------------------------------------------------ */
 /* Tag distribution panel (horizontal bar chart)                        */
 /* ------------------------------------------------------------------ */
