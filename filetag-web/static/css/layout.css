@@ -1050,6 +1050,9 @@ mark.tag-filter-match {
     vertical-align: middle;
     opacity: 0.65;
     transition: opacity 0.15s;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
 }
 .tag-kv-inline-btn:hover { opacity: 1; background: transparent; }
 .tag-kv-inline-btn.active { opacity: 1; }

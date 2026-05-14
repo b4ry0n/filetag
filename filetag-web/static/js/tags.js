@@ -726,7 +726,7 @@ function renderTagTreeNode(node, depth) {
     const kvKey = '\x01kv:' + fullPath;
     const kvExpanded = hasValues && state.expandedGroups.has(kvKey);
     const kvBadge = hasValues
-        ? ` <button class="tag-kv-inline-btn${kvExpanded ? ' active' : ''}" onclick="event.stopPropagation();toggleKvExpand('${jesc(fullPath)}')" title="Show values"><span class="tag-kv-badge">k=v</span></button>`
+        ? ` <span role="button" tabindex="0" class="tag-kv-inline-btn${kvExpanded ? ' active' : ''}" onclick="event.stopPropagation();toggleKvExpand('${jesc(fullPath)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.stopPropagation();toggleKvExpand('${jesc(fullPath)}')}" title="Show values"><span class="tag-kv-badge">k=v</span></span>`
         : '';
     let kvValuesHtml = '';
     if (kvExpanded) {
@@ -740,6 +740,7 @@ function renderTagTreeNode(node, depth) {
                 const valFilter = `${fullPath}=${v.value}`;
                 const valActive = state.activeTags.has(valFilter) ? ' active' : '';
                 kvValuesHtml += `<button class="tag-item tag-kv-value${valActive}"
+                    draggable="true" ondragstart="tagDragStart(event,'${jesc(valFilter)}')"
                     onclick="toggleTagFilter('${jesc(valFilter)}',event)"
                     oncontextmenu="showKvValueMenu(event,'${jesc(fullPath)}','${jesc(v.value)}')"
                     ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(valFilter)}')"
@@ -795,6 +796,7 @@ function _renderKvNode(tag, segment, marginStyle, f = '') {
                 const valFilter = `${tag.name}=${v.value}`;
                 const valActive = state.activeTags.has(valFilter) ? ' active' : '';
                 html += `<button class="tag-item tag-kv-value${valActive}"
+                    draggable="true" ondragstart="tagDragStart(event,'${jesc(valFilter)}')"
                     onclick="toggleTagFilter('${jesc(valFilter)}',event)"
                     oncontextmenu="showKvValueMenu(event,'${jesc(tag.name)}','${jesc(v.value)}')"
                     ondragover="tagDragOver(event)" ondragleave="tagDragLeave(event)" ondrop="tagDrop(event,'${jesc(valFilter)}')"
@@ -1400,10 +1402,16 @@ async function tagDrop(event, tagName) {
     event.stopPropagation();
     event.currentTarget.classList.remove('tag-drag-over');
 
-    // Tag-to-tag: move dragged tag under the drop target.
+    // Tag-to-tag: move/merge dragged tag.
     const draggedTag = event.dataTransfer.getData('text/filetag-tag');
     if (draggedTag) {
         if (draggedTag === tagName) return;
+        // k=v value drag: rename value directly (no nesting).
+        if (draggedTag.includes('=')) {
+            if (!tagName.includes('=')) return; // only allow dropping onto another k=v value
+            await renameTag(draggedTag, tagName);
+            return;
+        }
         if (tagName.startsWith(draggedTag + '/')) return; // can't nest under own descendant
         const segment = draggedTag.split('/').pop();
         const newName = tagName + '/' + segment;
