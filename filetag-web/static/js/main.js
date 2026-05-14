@@ -412,6 +412,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             const el = document.getElementById(focusedId);
             if (el) el.focus();
         }
+        // Re-fetch kv values for any expanded groups so the sidebar stays up to date.
+        for (const key of state.expandedGroups) {
+            if (!key.startsWith('\x01kv:')) continue;
+            const tagName = key.slice(4);
+            api('/api/tag-values?' + new URLSearchParams({ name: tagName, dir: currentAbsDir() }))
+                .then(values => { state.kvValueCache[tagName] = values; renderTags(); })
+                .catch(() => { state.kvValueCache[tagName] = null; });
+        }
     });
 });
 

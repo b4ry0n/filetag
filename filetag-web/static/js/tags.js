@@ -1406,10 +1406,14 @@ async function tagDrop(event, tagName) {
     const draggedTag = event.dataTransfer.getData('text/filetag-tag');
     if (draggedTag) {
         if (draggedTag === tagName) return;
-        // k=v value drag: rename value directly (no nesting).
+        // k=v value drag: rename/merge value.
         if (draggedTag.includes('=')) {
-            if (!tagName.includes('=')) return; // only allow dropping onto another k=v value
-            await renameTag(draggedTag, tagName);
+            const fromValue = draggedTag.substring(draggedTag.indexOf('=') + 1);
+            // Drop on kv-value → change to that exact key=value.
+            // Drop on plain tag/group → keep the value, change only the key.
+            const target = tagName.includes('=') ? tagName : `${tagName}=${fromValue}`;
+            if (target === draggedTag) return;
+            await renameTag(draggedTag, target);
             return;
         }
         if (tagName.startsWith(draggedTag + '/')) return; // can't nest under own descendant
@@ -1567,11 +1571,21 @@ async function renameTag(oldName, newName) {
     const eqIdx = newName.indexOf('=');
     const baseName = eqIdx > 0 ? newName.slice(0, eqIdx) : newName;
     // Clear kv value caches for affected tags so the sidebar reflects the rename.
-    for (const n of [oldName, baseName]) {
+    const oldEqIdx = oldName.indexOf('=');
+    const oldBase = oldEqIdx > 0 ? oldName.slice(0, oldEqIdx) : oldName;
+    for (const n of [oldBase, baseName]) {
         delete state.kvValueCache[n];
     }
     const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
-    if (eqIdx > 0) {
+    const oldEq = oldName.indexOf('=') > 0;
+    if (oldEq && eqIdx > 0) {
+        // kv-value → kv-value: merge/move value
+        if (res && res.merged) {
+            showToast(`Merged "${oldName}" \u2192 "${newName}".`);
+        } else {
+            showToast(`Moved "${oldName}" \u2192 "${newName}".`);
+        }
+    } else if (eqIdx > 0) {
         showToast(`Converted "${oldName}" \u2192 "${baseName}" (k=v).`);
     } else if (res && res.merged) {
         showToast(`Tags merged into "${newName}".`);
