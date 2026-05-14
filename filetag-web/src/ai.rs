@@ -244,7 +244,7 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(2048);
+        .unwrap_or(4096);
     let format = db::get_setting(conn, "ai.format")
         .ok()
         .flatten()
@@ -1794,7 +1794,7 @@ pub async fn api_ai_config_get(
         tag_prefix_raw
     };
     let max_tokens = g("ai.max_tokens").parse::<u32>().unwrap_or(512);
-    let chat_max_tokens = g("ai.chat_max_tokens").parse::<u32>().unwrap_or(2048);
+    let chat_max_tokens = g("ai.chat_max_tokens").parse::<u32>().unwrap_or(4096);
     let format_raw = g("ai.format");
     let format = if format_raw.is_empty() {
         "openai".to_string()
@@ -2162,6 +2162,9 @@ pub struct AiChatRequest {
     pub messages: Vec<AiChatMessage>,
     /// Override frame count for video analysis (None = auto based on duration).
     pub n_frames: Option<u32>,
+    /// Current tag names from the sidebar (kept up-to-date on every prompt).
+    /// Injected as a system message so the model knows the collection vocabulary.
+    pub tags: Option<Vec<String>>,
 }
 
 /// Response for `POST /api/ai/chat`.
@@ -2178,28 +2181,34 @@ async fn vlm_chat_with_history(
     config: &AiConfig,
     messages: &[AiChatMessage],
     b64_images: &[String],
+    system_prompt: Option<&str>,
 ) -> anyhow::Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(180))
         .build()?;
 
+    // Index of the first user message — images are attached here so the model
+    // can refer back to them throughout the conversation.  We search by role
+    // rather than using index 0 because a system message may be prepended.
+    let first_user_idx = messages.iter().position(|m| m.role == "user");
+
     let raw = if config.format == "ollama" {
         let url = format!("{}/api/chat", config.endpoint.trim_end_matches('/'));
-        let api_messages: Vec<serde_json::Value> = messages
-            .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                if i == 0 && !b64_images.is_empty() {
-                    serde_json::json!({
-                        "role": m.role,
-                        "content": m.content,
-                        "images": b64_images,
-                    })
-                } else {
-                    serde_json::json!({ "role": m.role, "content": m.content })
-                }
-            })
-            .collect();
+        let mut api_messages: Vec<serde_json::Value> = Vec::new();
+        if let Some(sys) = system_prompt {
+            api_messages.push(serde_json::json!({ "role": "system", "content": sys }));
+        }
+        for (i, m) in messages.iter().enumerate() {
+            if Some(i) == first_user_idx && !b64_images.is_empty() {
+                api_messages.push(serde_json::json!({
+                    "role": m.role,
+                    "content": m.content,
+                    "images": b64_images,
+                }));
+            } else {
+                api_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
+            }
+        }
         let body = serde_json::json!({
             "model": config.model,
             "stream": false,
@@ -2224,25 +2233,25 @@ async fn vlm_chat_with_history(
             "{}/v1/chat/completions",
             config.endpoint.trim_end_matches('/')
         );
-        let api_messages: Vec<serde_json::Value> = messages
-            .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                if i == 0 && !b64_images.is_empty() {
-                    let mut parts = vec![serde_json::json!({"type": "text", "text": m.content})];
-                    for b64 in b64_images {
-                        let data_uri = format!("data:image/jpeg;base64,{b64}");
-                        parts.push(serde_json::json!({
-                            "type": "image_url",
-                            "image_url": { "url": data_uri }
-                        }));
-                    }
-                    serde_json::json!({ "role": m.role, "content": parts })
-                } else {
-                    serde_json::json!({ "role": m.role, "content": m.content })
+        let mut api_messages: Vec<serde_json::Value> = Vec::new();
+        if let Some(sys) = system_prompt {
+            api_messages.push(serde_json::json!({ "role": "system", "content": sys }));
+        }
+        for (i, m) in messages.iter().enumerate() {
+            if Some(i) == first_user_idx && !b64_images.is_empty() {
+                let mut parts = vec![serde_json::json!({"type": "text", "text": m.content})];
+                for b64 in b64_images {
+                    let data_uri = format!("data:image/jpeg;base64,{b64}");
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": { "url": data_uri }
+                    }));
                 }
-            })
-            .collect();
+                api_messages.push(serde_json::json!({ "role": m.role, "content": parts }));
+            } else {
+                api_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
+            }
+        }
         let body = serde_json::json!({
             "model": config.model,
             "max_tokens": config.chat_max_tokens,
@@ -2647,7 +2656,17 @@ pub async fn api_ai_chat(
         };
     }
 
-    let reply = vlm_chat_with_history(&config, &messages, &b64_images)
+    // Build a system message with the current tag vocabulary so the model
+    // knows which tags exist in this collection.  The list is sent with every
+    // prompt so it stays up-to-date even if the user adds tags mid-session.
+    let system_prompt: Option<String> = req.tags.as_ref().filter(|t| !t.is_empty()).map(|tags| {
+        format!(
+            "The following tags are defined in this collection: {}.",
+            tags.join(", ")
+        )
+    });
+
+    let reply = vlm_chat_with_history(&config, &messages, &b64_images, system_prompt.as_deref())
         .await
         .map_err(AppError)?;
 
