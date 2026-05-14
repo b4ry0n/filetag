@@ -2659,6 +2659,11 @@ pub async fn api_ai_chat(
     // Look up the tags currently applied to each file being discussed.
     // This ensures the model always sees up-to-date per-file tag data even
     // if the user modified tags after opening the chat panel.
+    //
+    // Format (compact, human-readable):
+    //   photo.jpg
+    //     tags: genre=landscape, year=2024
+    //     John: file:[Personen] props:[naam=John, leeftijd=32]
     let mut file_tag_lines: Vec<String> = Vec::new();
     for file_path in &req.files {
         // For archive sub-entries ("archive.cbz::entry.jpg") look up the
@@ -2669,30 +2674,76 @@ pub async fn api_ai_chat(
             file_path.as_str()
         };
         if let Ok(Some(record)) = db::file_by_path(&conn, lookup_path)
-            && let Ok(tags) = db::tags_for_file(&conn, record.id)
-            && !tags.is_empty()
+            && let Ok(file_tags) = db::tags_for_file_with_subject(&conn, record.id)
+            && !file_tags.is_empty()
         {
             let file_name = std::path::Path::new(lookup_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(lookup_path);
-            let tag_strs: Vec<String> = tags
-                .iter()
-                .map(|(name, val)| match val {
+
+            // Group file tags by subject ("" = no subject).
+            let mut by_subject: std::collections::BTreeMap<&str, Vec<String>> =
+                std::collections::BTreeMap::new();
+            for (name, val, subject) in &file_tags {
+                let tag_str = match val {
                     Some(v) => format!("{name}={v}"),
                     None => name.clone(),
-                })
-                .collect();
-            file_tag_lines.push(format!(
-                "\"{file_name}\" has tags: {}.",
-                tag_strs.join(", ")
-            ));
+                };
+                by_subject.entry(subject.as_str()).or_default().push(tag_str);
+            }
+
+            // Collect subject own-properties keyed by subject name.
+            let subject_props: std::collections::BTreeMap<String, Vec<String>> =
+                if let Ok(props) = db::subject_props_for_file(&conn, record.id) {
+                    let mut map: std::collections::BTreeMap<String, Vec<String>> =
+                        std::collections::BTreeMap::new();
+                    for (subj, tag_name, value) in &props {
+                        let s = if value.is_empty() {
+                            tag_name.clone()
+                        } else {
+                            format!("{tag_name}={value}")
+                        };
+                        map.entry(subj.clone()).or_default().push(s);
+                    }
+                    map
+                } else {
+                    std::collections::BTreeMap::new()
+                };
+
+            // Build the compact text block for this file.
+            let mut block = format!("{file_name}");
+            if let Some(bare) = by_subject.get("") {
+                block.push_str(&format!("\n  tags: {}", bare.join(", ")));
+            }
+            // Collect all subject names from both file_tags and subject_props.
+            let mut all_subjects: std::collections::BTreeSet<&str> =
+                std::collections::BTreeSet::new();
+            for key in by_subject.keys() {
+                if !key.is_empty() {
+                    all_subjects.insert(key);
+                }
+            }
+            for key in subject_props.keys() {
+                all_subjects.insert(key.as_str());
+            }
+            for subj in all_subjects {
+                let mut parts = Vec::new();
+                if let Some(ftags) = by_subject.get(subj) {
+                    parts.push(format!("tagged:[{}]", ftags.join(", ")));
+                }
+                if let Some(props) = subject_props.get(subj) {
+                    parts.push(format!("props:[{}]", props.join(", ")));
+                }
+                block.push_str(&format!("\n  {subj}: {}", parts.join(" ")));
+            }
+            file_tag_lines.push(block);
         }
     }
 
     // Build a system message with the current tag vocabulary so the model
     // knows which tags exist in this collection, and with the per-file tags
-    // so the model can answer questions about them accurately.
+    // (as JSON) so the model can answer questions about them accurately.
     let system_prompt: Option<String> = {
         let mut parts: Vec<String> = Vec::new();
         if let Some(tags) = req.tags.as_ref().filter(|t| !t.is_empty()) {
@@ -2710,7 +2761,10 @@ pub async fn api_ai_chat(
         }
         if !file_tag_lines.is_empty() {
             parts.push(format!(
-                "Current tags on the discussed file(s):\n{}",
+                "Current tags on the discussed file(s):\n\
+                 (Legend: \"tags\" = bare file tags with no subject; per subject block: \
+                 \"tagged\" = tags applied to the file under that subject, \
+                 \"props\" = the subject entity's own attributes)\n{}",
                 file_tag_lines.join("\n")
             ));
         }
