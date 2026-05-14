@@ -2058,13 +2058,12 @@ async fn do_tag_dir_recursive(
                 true
             })
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
         {
             let abs = entry.path();
             let rel = db::relative_to_root(abs, &root_path)?;
             paths.push(rel.clone());
 
-            if include_archives {
+            if include_archives && entry.file_type().is_file() {
                 let ext = abs
                     .extension()
                     .and_then(|e| e.to_str())
