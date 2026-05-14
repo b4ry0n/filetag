@@ -2690,7 +2690,10 @@ pub async fn api_ai_chat(
                     Some(v) => format!("{name}={v}"),
                     None => name.clone(),
                 };
-                by_subject.entry(subject.as_str()).or_default().push(tag_str);
+                by_subject
+                    .entry(subject.as_str())
+                    .or_default()
+                    .push(tag_str);
             }
 
             // Collect subject own-properties keyed by subject name.
@@ -2712,7 +2715,7 @@ pub async fn api_ai_chat(
                 };
 
             // Build the compact text block for this file.
-            let mut block = format!("{file_name}");
+            let mut block = file_name.to_string();
             if let Some(bare) = by_subject.get("") {
                 block.push_str(&format!("\n  tags: {}", bare.join(", ")));
             }

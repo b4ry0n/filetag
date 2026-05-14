@@ -653,7 +653,7 @@ function renderTagTreeNodes(nodeMap, depth) {
     const mode = state.tagSortMode;
     if (mode === 'count') {
         nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
-    } else if (depth === 0 && mode === 'groups-first' && !f) {
+    } else if (mode === 'groups-first' && !f) {
         nodes.sort((a, b) => {
             const ag = (a.children.size > 0 || (a.tag && a.tag.has_values)) ? 0 : 1;
             const bg = (b.children.size > 0 || (b.tag && b.tag.has_values)) ? 0 : 1;
@@ -1066,19 +1066,15 @@ function renderSubjects() {
 function renderSubjectTreeNodes(nodeMap, depth) {
     const nodes = [...nodeMap.values()];
     const mode = state.tagSortMode;
-    if (depth === 0) {
-        if (mode === 'count') {
-            nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
-        } else if (mode === 'groups-first') {
-            nodes.sort((a, b) => {
-                const ag = a.children.size > 0 ? 0 : 1;
-                const bg = b.children.size > 0 ? 0 : 1;
-                if (ag !== bg) return ag - bg;
-                return a.segment.localeCompare(b.segment);
-            });
-        } else {
-            nodes.sort((a, b) => a.segment.localeCompare(b.segment));
-        }
+    if (mode === 'count') {
+        nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
+    } else if (mode === 'groups-first') {
+        nodes.sort((a, b) => {
+            const ag = a.children.size > 0 ? 0 : 1;
+            const bg = b.children.size > 0 ? 0 : 1;
+            if (ag !== bg) return ag - bg;
+            return a.segment.localeCompare(b.segment);
+        });
     } else {
         nodes.sort((a, b) => a.segment.localeCompare(b.segment));
     }
@@ -1839,7 +1835,7 @@ function renderTmTagTreeNodes(nodeMap, depth) {
     const mode = state.tagSortMode;
     if (mode === 'count') {
         nodes.sort((a, b) => _nodeCount(b) - _nodeCount(a) || a.segment.localeCompare(b.segment));
-    } else if (depth === 0 && mode === 'groups-first' && !q) {
+    } else if (mode === 'groups-first' && !q) {
         nodes.sort((a, b) => {
             const ag = a.children.size > 0 ? 0 : 1;
             const bg = b.children.size > 0 ? 0 : 1;
