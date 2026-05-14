@@ -351,13 +351,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e2) { console.error('loadFiles fallback also failed:', e2); }
     }
     // If db-specific data was not loaded before loadFiles (no context at startup),
-    // load it now that currentBasePath has been resolved from the server response.
-    if (!_hadContext && currentAbsDir() != null) {
-        await loadInfo().catch(e => console.error('loadInfo failed:', e));
+    // load it now. /api/tags works without a dir param (merges all roots), so we
+    // always load tags. /api/info and /api/settings require a dir, so only load
+    // those when a root is now known.
+    if (!_hadContext) {
         await loadTags().catch(e => console.error('loadTags failed:', e));
-        await loadSettings().catch(() => {});
-        if (typeof loadFaceConfig === 'function') {
-            Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
+        if (currentAbsDir() != null) {
+            await loadInfo().catch(e => console.error('loadInfo failed:', e));
+            await loadSettings().catch(() => {});
+            if (typeof loadFaceConfig === 'function') {
+                Promise.all([loadFaceConfig(), loadPeople()]).catch(() => {});
+            }
         }
     }
     _navPush(); // seed the history with the initial location so back-button works after first navigation
