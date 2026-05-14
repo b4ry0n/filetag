@@ -1669,13 +1669,13 @@ async function deleteKvValue(tagName, value) {
 
 let _tmSelectedTag = null;
 let _tmSearchQuery = '';
-let _tmCollapsedGroups = new Set();
+let _tmExpandedGroups = new Set(); // groups explicitly opened by the user in TM; default = all collapsed
 
 function tmToggleGroup(prefix) {
-    if (_tmCollapsedGroups.has(prefix)) {
-        _tmCollapsedGroups.delete(prefix);
+    if (_tmExpandedGroups.has(prefix)) {
+        _tmExpandedGroups.delete(prefix);
     } else {
-        _tmCollapsedGroups.add(prefix);
+        _tmExpandedGroups.add(prefix);
     }
     renderTmList();
 }
@@ -1760,7 +1760,7 @@ function showTagManager(selectTag) {
     _tmTab = 'tags';
     _tmSelectedTag = selectTag || null;
     _tmSearchQuery = '';
-    _tmCollapsedGroups = new Set();
+    _tmExpandedGroups = new Set();
     _tmSelectedSubject = null;
     _tmSubjectSearch = '';
     _tmSubjectExpandedGroups = new Set();
@@ -1920,7 +1920,7 @@ function renderTmTagTreeNode(node, depth) {
 
     // --- Group node ---
     const totalCount = _nodeCount(node);
-    const expanded = !_tmCollapsedGroups.has(fullPath) || !!q;
+    const expanded = _tmExpandedGroups.has(fullPath) || !!q;
     const expandedClass = expanded ? ' expanded' : '';
     const sel = _tmSelectedTag === fullPath ? ' active' : '';
     const groupColor = tag ? tag.color : null;
