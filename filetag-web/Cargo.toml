@@ -35,4 +35,5 @@ which = "8.0.2"
 hex = "0.4"
 
 [features]
+default = ["rar"]
 rar = ["dep:unrar"]
