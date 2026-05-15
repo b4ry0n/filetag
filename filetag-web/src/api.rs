@@ -2510,7 +2510,7 @@ pub async fn api_settings_get(
         .map_err(AppError)?
         .and_then(|v| v.parse().ok())
         .unwrap_or(8u32)
-        .clamp(2, 120);
+        .clamp(0, 120);
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
         "sprite_max": sprite_max,
@@ -2570,7 +2570,7 @@ pub async fn api_settings_set(
         db::set_setting(&conn, "tile_preview_mode", &v).map_err(AppError)?;
     }
     if let Some(v) = body.vtile_duration {
-        let clamped = v.clamp(2, 120);
+        let clamped = v.clamp(0, 120);
         db::set_setting(&conn, "vtile_duration", &clamped.to_string()).map_err(AppError)?;
     }
     Ok(Json(serde_json::json!({ "ok": true })))

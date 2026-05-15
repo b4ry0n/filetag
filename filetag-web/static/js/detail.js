@@ -428,6 +428,7 @@ function _trickplayAttach(img, path) {
     if (tileMode === 'webm-seek') {
         let floatVideo = null;
         let pinnedVideo = null;
+        let seekTimer  = null; // fires when mouse stops moving → start playback
 
         function makeSeekVideo(inline) {
             const v = document.createElement('video');
@@ -492,18 +493,31 @@ function _trickplayAttach(img, path) {
         }
 
         function teardownSeekOverlay() {
+            clearTimeout(seekTimer); seekTimer = null;
             if (floatVideo) { floatVideo.pause(); floatVideo.remove(); floatVideo = null; }
         }
 
         function teardownSeekInline() {
+            clearTimeout(seekTimer); seekTimer = null;
             if (pinnedVideo) { pinnedVideo.pause(); pinnedVideo.remove(); pinnedVideo = null; }
         }
 
+        // On mouse move: pause + seek immediately; start playing once the
+        // mouse has been still for 300 ms.
         function onMouseMove(e) {
             const rect = wrap.getBoundingClientRect();
             const frac = (e.clientX - rect.left) / rect.width;
+
+            if (floatVideo && !floatVideo.paused) floatVideo.pause();
+            if (pinnedVideo && !pinnedVideo.paused) pinnedVideo.pause();
             if (floatVideo) seekToFrac(floatVideo, frac);
             if (pinnedVideo) seekToFrac(pinnedVideo, frac);
+
+            clearTimeout(seekTimer);
+            seekTimer = setTimeout(() => {
+                if (floatVideo)  floatVideo.play().catch(() => {});
+                if (pinnedVideo) pinnedVideo.play().catch(() => {});
+            }, 300);
         }
 
         card.addEventListener('mouseenter', () => {
@@ -533,7 +547,7 @@ function _trickplayAttach(img, path) {
     }
     // ---- end mode: "webm-seek" ----
 
-    // ---- mode: "autoplay" — video always playing inline, replaces thumbnail ----
+    // ---- mode: "autoplay" — video always playing inline; hover expands to AR popup ----
     if (tileMode === 'autoplay') {
         const v = document.createElement('video');
         v.src = '/api/vtile?' + new URLSearchParams({ path }) + dirParam('&');
@@ -545,6 +559,50 @@ function _trickplayAttach(img, path) {
         Object.assign(v.style, { objectFit: 'cover', width: '100%', height: '100%' });
         wrap.appendChild(v);
         v.play().catch(() => {});
+
+        // On hover: show the same clip in an aspect-ratio-correct floating popup.
+        let floatVideo = null;
+
+        card.addEventListener('mouseenter', () => {
+            if (floatVideo) return;
+            const cardRect = wrap.getBoundingClientRect();
+            if (!cardRect.width) return;
+
+            floatVideo = document.createElement('video');
+            floatVideo.src = v.src;
+            floatVideo.muted = true;
+            floatVideo.loop = true;
+            floatVideo.playsInline = true;
+            floatVideo.style.pointerEvents = 'none';
+            floatVideo.className = 'card-trickplay-sprite';
+            Object.assign(floatVideo.style, {
+                position: 'fixed', zIndex: '1000',
+                display: 'none', objectFit: 'cover', borderRadius: '4px',
+            });
+
+            const positionAndPlay = () => {
+                if (!floatVideo) return;
+                const g = _videoPopupGeometry(floatVideo, cardRect);
+                Object.assign(floatVideo.style, {
+                    width:   g.popupW + 'px', height: g.popupH + 'px',
+                    left:    g.left.toFixed(1) + 'px',
+                    top:     g.top.toFixed(1)  + 'px',
+                    display: '',
+                });
+                // Start from the same position as the inline video.
+                floatVideo.currentTime = v.currentTime;
+                floatVideo.play().catch(() => {});
+            };
+            floatVideo.addEventListener('loadedmetadata', positionAndPlay, { once: true });
+            setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionAndPlay(); }, 800);
+
+            document.body.appendChild(floatVideo);
+        }, { passive: true });
+
+        card.addEventListener('mouseleave', () => {
+            if (floatVideo) { floatVideo.pause(); floatVideo.remove(); floatVideo = null; }
+        });
+
         return;
     }
     // ---- end mode: "autoplay" ----

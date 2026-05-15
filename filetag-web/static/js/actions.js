@@ -1198,7 +1198,7 @@ async function saveVideoSettings() {
             sprite_max: Math.max(max, min),
             dir_preview_style: document.getElementById('dir-preview-style')?.value ?? 'crop',
             tile_preview_mode: document.getElementById('tile-preview-mode')?.value ?? 'sprite',
-            vtile_duration: Math.min(120, Math.max(2, parseInt(document.getElementById('vtile-duration')?.value ?? '8', 10))),
+            vtile_duration: Math.min(120, Math.max(0, parseInt(document.getElementById('vtile-duration')?.value ?? '8', 10))),
         };
         try {
             await apiPost('/api/settings', body);

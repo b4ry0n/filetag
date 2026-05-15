@@ -1058,7 +1058,12 @@ pub struct VTileParams {
 ///
 /// Returns the path to the cached WebM on success.
 async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::Result<PathBuf> {
-    let cache_name = format!("tile_{clip_secs}s.webm");
+    // clip_secs == 0 means "full video".
+    let cache_name = if clip_secs == 0 {
+        "tile_full.webm".to_string()
+    } else {
+        format!("tile_{clip_secs}s.webm")
+    };
     let cache_path = file_cache_path(abs, root, "vtiles", &cache_name)
         .ok_or_else(|| anyhow::anyhow!("cannot compute vtile cache path for {}", abs.display()))?;
 
@@ -1077,11 +1082,11 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
     let dur = info.duration;
     let clip = clip_secs as f64;
 
-    // If the video is shorter than the requested clip, show the whole thing.
-    let (start, length) = if dur <= clip {
+    // clip_secs == 0 → full video; also use full video when the requested
+    // clip is longer than the actual duration.
+    let (start, length) = if clip_secs == 0 || dur <= clip {
         (0.0_f64, dur)
     } else {
-        // Skip the first 15 % of the video (intro/logos), capped at 60 s.
         let skip = (dur * 0.15_f64).min(60.0_f64);
         (skip, clip)
     };
@@ -1158,7 +1163,7 @@ pub async fn api_vtile(
             .flatten()
             .and_then(|v| v.parse().ok())
             .unwrap_or(8u32)
-            .clamp(2, 120)
+            .clamp(0, 120)
     };
 
     let _permit = match VTHUMB_LIMITER.try_acquire() {
