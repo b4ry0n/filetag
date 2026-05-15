@@ -73,7 +73,7 @@
 .layout {
     display: grid;
     grid-template-columns: var(--sidebar-width) 6px 1fr 6px var(--detail-width);
-    height: calc(100vh - var(--header-height));
+    height: calc(100vh - var(--header-height) - var(--statusbar-height));
 }
 
 .layout.detail-collapsed {

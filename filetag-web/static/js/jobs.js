@@ -83,6 +83,7 @@ function renderJobsBar() {
     const jobs = state.jobs || [];
     if (jobs.length === 0) {
         btn.classList.add('hidden');
+        renderStatusBar();
         return;
     }
     btn.classList.remove('hidden');
@@ -95,6 +96,33 @@ function renderJobsBar() {
         countEl.textContent = active.length > 0
             ? `${active.length} actief`
             : `${jobs.length} klaar`;
+    }
+    renderStatusBar();
+}
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+function renderStatusBar() {
+    const sbBtn   = document.getElementById('statusbar-jobs');
+    const sbLabel = document.getElementById('statusbar-jobs-label');
+    if (!sbBtn || !sbLabel) return;
+
+    const jobs   = state.jobs || [];
+    const active = jobs.filter(j => j.status === 'pending' || j.status === 'running');
+    const done   = jobs.filter(j => j.status === 'done' || j.status === 'failed');
+
+    if (active.length > 0) {
+        sbBtn.className = 'statusbar-jobs jobs-active';
+        const kinds = [...new Set(active.map(j => KIND_ICONS[j.kind] || '⚙'))];
+        sbLabel.textContent = `${kinds.join('')} ${active.length} bezig`;
+    } else if (jobs.length > 0) {
+        sbBtn.className = 'statusbar-jobs jobs-done';
+        sbLabel.textContent = `✓ ${done.length} klaar`;
+    } else {
+        sbBtn.className = 'statusbar-jobs';
+        sbLabel.textContent = '';
     }
 }
 
@@ -240,5 +268,6 @@ window.dismissAllJobs    = dismissAllJobs;
 window.onJobSubmitted    = onJobSubmitted;
 window.whenJobDone       = whenJobDone;
 window.renderJobsBar     = renderJobsBar;
+window.renderStatusBar   = renderStatusBar;
 
 })();

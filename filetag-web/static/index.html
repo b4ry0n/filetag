@@ -806,5 +806,14 @@
             </div>
         </div>
     </div>
+    <!-- Persistent status bar, always visible at the bottom of the viewport -->
+    <div id="statusbar" class="statusbar">
+        <button class="statusbar-jobs" id="statusbar-jobs" onclick="toggleJobsPanel()" title="Achtergrond jobs">
+            <span class="statusbar-jobs-ring" id="statusbar-jobs-ring"></span>
+            <span class="statusbar-jobs-label" id="statusbar-jobs-label"></span>
+        </button>
+        <div class="statusbar-spacer"></div>
+        <span class="statusbar-info" id="statusbar-info"></span>
+    </div>
 </body>
 </html>

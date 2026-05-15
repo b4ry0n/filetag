@@ -583,6 +583,9 @@ function renderContent() {
     if (_files.length > 0) _parts.push(`${_files.length} file${_files.length === 1 ? '' : 's'}`);
     document.getElementById('entry-count').textContent = _parts.join(', ');
 
+    // Auto-trigger vtile pregen for webm/autoplay mode when navigating a directory.
+    if (typeof _autoPregenVtiles === 'function') _autoPregenVtiles();
+
     const isGrid = state.viewMode === 'grid';
 
     // --- First paint: render up to _RENDER_INITIAL items synchronously ---

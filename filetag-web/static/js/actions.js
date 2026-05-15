@@ -1125,6 +1125,42 @@ async function pregenSprites() {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-pregen vtiles on directory navigation (webm/autoplay mode)
+// ---------------------------------------------------------------------------
+
+// Set of directory paths for which vtile pregen was already triggered
+// this session.  Prevents duplicate pregen jobs on repeated navigation.
+const _autoPregenDirs = new Set();
+
+async function _autoPregenVtiles() {
+    const tileMode = state.settings.tile_preview_mode ?? 'sprite';
+    if (tileMode !== 'webm' && tileMode !== 'autoplay') return;
+    if (state.mode !== 'browse') return;
+
+    const dirKey = state.currentPath || '';
+    if (!dirKey || _autoPregenDirs.has(dirKey)) return;
+    _autoPregenDirs.add(dirKey);
+
+    const VIDEO_EXTS = new Set([
+        'mp4','webm','mkv','avi','mov','wmv','flv','m4v','3gp','f4v','mpg','mpeg',
+        'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
+        'mpe','m1v','mpv','qt',
+    ]);
+
+    const videoPaths = (state.entries || [])
+        .filter(e => !e.is_dir)
+        .map(e => fullPath(e))
+        .filter(p => p && VIDEO_EXTS.has(p.split('.').pop().toLowerCase()));
+
+    if (videoPaths.length === 0) return;
+
+    try {
+        const res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
+        if (res?.job_id) onJobSubmitted(res.job_id);
+    } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
 // AI image analysis
 // ---------------------------------------------------------------------------
 
