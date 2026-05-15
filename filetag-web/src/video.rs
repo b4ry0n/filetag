@@ -433,7 +433,7 @@ pub async fn generate_sprite_cached(
     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
     let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
 
-    let tmp_path = cache_path.with_extension("tmp");
+    let tmp_path = cache_path.with_extension("tmp.webp");
     let mut cmd = tokio::process::Command::new("nice");
     cmd.args(["-n", "10", "ffmpeg"]);
     for t in &positions {
@@ -763,7 +763,7 @@ pub async fn generate_ai_sprites(
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let tmp_path = cache_path.with_extension("tmp");
+        let tmp_path = cache_path.with_extension("tmp.webp");
         let out = run_sprite_sheet_ffmpeg(abs, chunk, &tmp_path, &filter).await?;
 
         if !out.status.success() || !tmp_path.exists() {
@@ -1057,7 +1057,7 @@ pub async fn api_vthumbs_pregen(
                     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
                     let filter =
                         format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
-                    let tmp_path = cache_path.with_extension("tmp");
+                    let tmp_path = cache_path.with_extension("tmp.webp");
                     let ok = cmd
                         .args([
                             "-filter_complex",
@@ -1219,7 +1219,7 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
         (skip, clip)
     };
 
-    let tmp_path = cache_path.with_extension("tmp");
+    let tmp_path = cache_path.with_extension("tmp.webm");
     let ok = tokio::process::Command::new("nice")
         .args([
             "-n",
