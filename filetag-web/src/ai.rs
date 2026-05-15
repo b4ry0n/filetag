@@ -281,11 +281,14 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .filter(|s| !s.is_empty());
-    let prompt_image = db::get_setting(conn, "ai.prompt_image")
-        .ok()
-        .flatten()
-        .filter(|s| !s.is_empty())
-        .or_else(|| legacy_prompt.clone());
+    // Fall back to legacy `ai.prompt` only when `ai.prompt_image` has
+    // never been written (key absent from DB, i.e. `None`).  An explicit
+    // empty string means "use the built-in default" and must be respected.
+    let prompt_image = match db::get_setting(conn, "ai.prompt_image").ok().flatten() {
+        None => legacy_prompt.clone(),
+        Some(ref v) if v.is_empty() => None,
+        Some(v) => Some(v),
+    };
     let prompt_video = db::get_setting(conn, "ai.prompt_video")
         .ok()
         .flatten()
@@ -1818,12 +1821,12 @@ pub async fn api_ai_config_get(
     } else {
         "interval".to_string()
     };
-    // Backward compat: if ai.prompt_image is unset, fall back to legacy ai.prompt.
-    let prompt_image_raw = g("ai.prompt_image");
-    let prompt_image = if prompt_image_raw.is_empty() {
-        g("ai.prompt")
-    } else {
-        prompt_image_raw
+    // Backward compat: fall back to legacy `ai.prompt` only when
+    // `ai.prompt_image` has never been written (key absent, i.e. None).
+    // An explicit empty string means "cleared by the user; use the default".
+    let prompt_image = match db::get_setting(&conn, "ai.prompt_image").ok().flatten() {
+        None => g("ai.prompt"),
+        Some(v) => v,
     };
 
     Ok(Json(serde_json::json!({
