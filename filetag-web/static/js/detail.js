@@ -700,7 +700,6 @@ function _trickplayAttach(img, path) {
         v.autoplay = true;
         v.playsInline = true;
         v.className = 'card-trickplay-pinned';
-        v.style.objectFit = 'cover';
         wrap.appendChild(v);
         v.play().catch(() => {});
 

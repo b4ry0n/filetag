@@ -78,25 +78,7 @@ async function _pollJobs() {
 // ---------------------------------------------------------------------------
 
 function renderJobsBar() {
-    const btn = document.getElementById('jobs-btn');
-    if (!btn) return;
-    const jobs = state.jobs || [];
-    if (jobs.length === 0) {
-        btn.classList.add('hidden');
-        renderStatusBar();
-        return;
-    }
-    btn.classList.remove('hidden');
-
-    const active = jobs.filter(j => j.status === 'pending' || j.status === 'running');
-    btn.classList.toggle('jobs-btn-running', active.length > 0);
-
-    const countEl = document.getElementById('jobs-btn-count');
-    if (countEl) {
-        countEl.textContent = active.length > 0
-            ? `${active.length} actief`
-            : `${jobs.length} klaar`;
-    }
+    // The header jobs button is removed; the status bar is the sole indicator.
     renderStatusBar();
 }
 
