@@ -336,9 +336,9 @@ pub async fn transcode_handler(
 // Video contact-sheet thumbnail
 // ---------------------------------------------------------------------------
 
-/// Generate a JPEG contact-sheet thumbnail for a video file.
+/// Generate a WebP contact-sheet thumbnail for a video file.
 pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
-    let cache = match file_cache_path(path, root, "thumbs", "vthumb.jpg") {
+    let cache = match file_cache_path(path, root, "thumbs", "vthumb.webp") {
         Some(p) => p,
         None => {
             return (StatusCode::INTERNAL_SERVER_ERROR, "cache path unavailable").into_response();
@@ -346,7 +346,7 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
     };
 
     if let Ok(data) = tokio::fs::read(&cache).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
     }
 
     let _permit = match THUMB_LIMITER.try_acquire() {
@@ -377,7 +377,7 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
     let ok = tokio::process::Command::new("nice")
         .args(["-n", "10", "ffmpeg", "-ss", &ss, "-i"])
         .arg(path)
-        .args(["-vframes", "1", "-vf", "scale=480:-2", "-q:v", "5", "-y"])
+        .args(["-vframes", "1", "-vf", "scale=480:-2", "-q:v", "80", "-y"])
         .arg(&cache)
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
@@ -387,7 +387,7 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
         .unwrap_or(false);
 
     if ok && let Ok(data) = tokio::fs::read(&cache).await {
-        return ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response();
+        return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
     }
 
     (
@@ -403,7 +403,7 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 
 /// Generate (or reuse from cache) a trickplay sprite sheet for `abs`.
 ///
-/// Returns the path to the cached JPEG on success.  The file is guaranteed to
+/// Returns the path to the cached WebP on success.  The file is guaranteed to
 /// exist when `Ok` is returned.  The frame count `n` and video `duration_secs`
 /// must already be known by the caller (via [`video_info`] + [`sprites_for_duration`]).
 pub async fn generate_sprite_cached(
@@ -412,7 +412,7 @@ pub async fn generate_sprite_cached(
     n: usize,
     duration_secs: f64,
 ) -> anyhow::Result<PathBuf> {
-    let cache_path = file_cache_path(abs, root, "vthumbs", &format!("sprite{n}x1.jpg"))
+    let cache_path = file_cache_path(abs, root, "vthumbs", &format!("sprite{n}x1.webp"))
         .ok_or_else(|| anyhow::anyhow!("cannot compute cache path for {}", abs.display()))?;
 
     if cache_path.exists() {
@@ -611,7 +611,7 @@ async fn run_sprite_sheet_ffmpeg(
             "-frames:v",
             "1",
             "-q:v",
-            "4",
+            "80",
             "-y",
         ])
         .arg(cache_path)
@@ -743,7 +743,7 @@ pub async fn generate_ai_sprites(
             root,
             "ai_sprites",
             &format!(
-                "ai{n}_{mode_suffix}_s{:02}_{chunk_n}_{cols}x{rows}.jpg",
+                "ai{n}_{mode_suffix}_s{:02}_{chunk_n}_{cols}x{rows}.webp",
                 sheet_idx + 1
             ),
         )
@@ -868,7 +868,7 @@ pub async fn api_vthumbs(
     };
 
     let cache_path =
-        match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.jpg")) {
+        match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.webp")) {
             Some(p) => p,
             None => return (StatusCode::INTERNAL_SERVER_ERROR, "Cache path error").into_response(),
         };
@@ -917,7 +917,7 @@ pub async fn api_vthumbs(
     };
 
     match tokio::fs::read(&cache_path).await {
-        Ok(data) => ([(header::CONTENT_TYPE, "image/jpeg")], data).into_response(),
+        Ok(data) => ([(header::CONTENT_TYPE, "image/webp")], data).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
     }
 }
@@ -981,7 +981,7 @@ pub async fn api_vthumbs_pregen(
             };
             let n = sprites_for_duration(info.duration, 8, 16);
             let cache_path =
-                match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.jpg")) {
+                match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.webp")) {
                     Some(p) => p,
                     None => continue,
                 };
@@ -1017,7 +1017,7 @@ pub async fn api_vthumbs_pregen(
                     "-frames:v",
                     "1",
                     "-q:v",
-                    "4",
+                    "80",
                     "-y",
                 ])
                 .arg(&cache_path)
