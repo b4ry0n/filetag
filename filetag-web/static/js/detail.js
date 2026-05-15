@@ -389,9 +389,22 @@ function _trickplayAttach(img, path) {
             teardownWebmOverlay();
             pinnedVideo = makeWebmVideo();
             pinnedVideo.className = 'card-trickplay-pinned';
-            Object.assign(pinnedVideo.style, { objectFit: 'cover', width: '100%', height: '100%' });
+            Object.assign(pinnedVideo.style, {
+                objectFit: 'cover', width: '100%', height: '100%',
+                opacity: '0', transition: 'opacity 0.4s ease',
+            });
             wrap.appendChild(pinnedVideo);
             pinnedVideo.play().catch(() => {});
+            pinnedVideo.addEventListener('canplay', () => {
+                if (pinnedVideo) pinnedVideo.style.opacity = '1';
+            }, { once: true });
+            // Retry if the tile is not yet cached.
+            let _pr = 0;
+            pinnedVideo.addEventListener('error', function _pRetry() {
+                if (!pinnedVideo || _pr >= 8) { if (pinnedVideo) pinnedVideo.removeEventListener('error', _pRetry); return; }
+                const d = Math.min(2000 * (_pr + 1), 10000); _pr++;
+                setTimeout(() => { if (pinnedVideo) { pinnedVideo.load(); pinnedVideo.play().catch(() => {}); } }, d);
+            });
         }
 
         function teardownWebmOverlay() {
@@ -700,8 +713,19 @@ function _trickplayAttach(img, path) {
         v.autoplay = true;
         v.playsInline = true;
         v.className = 'card-trickplay-pinned';
+        // Start invisible — the existing card thumbnail (contact-strip or
+        // first-frame) shows as a fallback until the tile is playable.
+        v.style.opacity    = '0';
+        v.style.transition = 'opacity 0.4s ease';
         wrap.appendChild(v);
         v.play().catch(() => {});
+
+        // Reveal the video once the browser has enough data to play it.
+        let _videoReady = false;
+        v.addEventListener('canplay', () => {
+            _videoReady = true;
+            v.style.opacity = '1';
+        }, { once: true });
 
         // Retry when the tile is not yet cached (backend returns 202 queue-full or
         // 422 unavailable).  Use capped exponential back-off.
@@ -719,7 +743,7 @@ function _trickplayAttach(img, path) {
         let _isFloating = false;
 
         card.addEventListener('mouseenter', () => {
-            if (_isFloating || v.readyState < 1) return;
+            if (_isFloating || !_videoReady) return;
             _isFloating = true;
             const cardRect = wrap.getBoundingClientRect();
             if (!cardRect.width) { _isFloating = false; return; }
