@@ -453,9 +453,11 @@
                     <label>Tile hover preview
                         <select id="tile-preview-mode">
                             <option value="sprite">Sprite sheet (scrub on hover)</option>
-                            <option value="webm">WebM clip (autoplay loop)</option>
+                            <option value="webm">WebM clip (autoplay loop on hover)</option>
+                            <option value="webm-seek">WebM scrub (mouse position = timeline seek)</option>
+                            <option value="autoplay">Autoplay (always playing in tile)</option>
                         </select>
-                        <small>WebM plays back smoothly like Netflix / YouTube tile previews, but uses more storage. Requires ffmpeg with libvpx.</small>
+                        <small>WebM modes require ffmpeg with libvpx. <em>Autoplay</em> plays all visible video tiles continuously — may use significant GPU/CPU.</small>
                     </label>
                     <label>WebM clip duration (seconds)
                         <input type="number" id="vtile-duration" value="8" min="2" max="120">

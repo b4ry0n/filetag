@@ -293,8 +293,49 @@ function _trickplayAttach(img, path) {
     // when moving between the thumbnail area and the title/meta area below it.
     const card = wrap.closest('.card') || wrap;
 
-    // ---- WebM branch: show a looping clip instead of a sprite sheet ----
-    if ((state.settings.tile_preview_mode ?? 'sprite') === 'webm') {
+    // ---- Video-based tile preview branches (webm / webm-seek / autoplay) ----
+    const tileMode = state.settings.tile_preview_mode ?? 'sprite';
+
+    // Shared helper: compute popup geometry from a video element's natural
+    // dimensions (or fall back to card dimensions if not yet loaded).
+    // Returns { popupW, popupH, left, top } in pixels.
+    function _videoPopupGeometry(v, cardRect) {
+        const vw = v.videoWidth  || cardRect.width;
+        const vh = v.videoHeight || cardRect.height;
+        const ar = vw / vh;
+        const isPortrait = ar < 1;
+        let popupW, popupH;
+        if (isPortrait) {
+            const clampedAR = Math.max(ar, 9 / 16);
+            popupW = cardRect.width;
+            popupH = popupW / clampedAR;
+        } else {
+            const clampedAR = Math.min(ar, 16 / 9);
+            popupH = cardRect.height;
+            popupW = popupH * clampedAR;
+        }
+        popupW = Math.round(popupW);
+        popupH = Math.round(popupH);
+        let left = cardRect.left + (cardRect.width  - popupW) / 2;
+        let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+        top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+        return { popupW, popupH, left, top };
+    }
+
+    // Shared helper: un-pin any video pinned to another card.
+    function _unpinOtherCards() {
+        document.querySelectorAll('.card-trickplay-pinned').forEach(el => {
+            if (!wrap.contains(el)) {
+                const v = el.tagName === 'VIDEO' ? el : el.querySelector('video');
+                if (v) v.pause();
+                el.remove();
+            }
+        });
+    }
+
+    // ---- mode: "webm" — looping clip, aspect-ratio-correct popup ----
+    if (tileMode === 'webm') {
         let floatVideo = null;
         let pinnedVideo = null;
 
@@ -305,7 +346,6 @@ function _trickplayAttach(img, path) {
             v.loop = true;
             v.autoplay = true;
             v.playsInline = true;
-            v.style.display = 'block';
             v.style.pointerEvents = 'none';
             return v;
         }
@@ -314,25 +354,29 @@ function _trickplayAttach(img, path) {
             if (floatVideo || pinnedVideo) return;
             const cardRect = wrap.getBoundingClientRect();
             if (!cardRect.width) return;
-            const w = cardRect.width;
-            const h = cardRect.height;
-            let left = cardRect.left;
-            let top  = cardRect.top;
-            left = Math.max(4, Math.min(left, window.innerWidth  - w - 4));
-            top  = Math.max(4, Math.min(top,  window.innerHeight - h - 4));
 
             floatVideo = makeWebmVideo();
             floatVideo.className = 'card-trickplay-sprite';
+            // Hide until we know the video's dimensions.
             Object.assign(floatVideo.style, {
-                position:    'fixed',
-                zIndex:      '1000',
-                width:       w + 'px',
-                height:      h + 'px',
-                left:        left.toFixed(1) + 'px',
-                top:         top.toFixed(1)  + 'px',
-                objectFit:   'cover',
-                borderRadius: '4px',
+                position: 'fixed', zIndex: '1000',
+                display: 'none', objectFit: 'cover', borderRadius: '4px',
             });
+
+            const positionOverlay = () => {
+                if (!floatVideo) return;
+                const g = _videoPopupGeometry(floatVideo, cardRect);
+                Object.assign(floatVideo.style, {
+                    width:   g.popupW + 'px', height: g.popupH + 'px',
+                    left:    g.left.toFixed(1) + 'px',
+                    top:     g.top.toFixed(1)  + 'px',
+                    display: '',
+                });
+            };
+            floatVideo.addEventListener('loadedmetadata', positionOverlay, { once: true });
+            // Fallback if metadata stalls (e.g. server slow to respond).
+            setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionOverlay(); }, 800);
+
             document.body.appendChild(floatVideo);
             floatVideo.play().catch(() => {});
         }
@@ -342,11 +386,7 @@ function _trickplayAttach(img, path) {
             teardownWebmOverlay();
             pinnedVideo = makeWebmVideo();
             pinnedVideo.className = 'card-trickplay-pinned';
-            Object.assign(pinnedVideo.style, {
-                objectFit: 'cover',
-                width: '100%',
-                height: '100%',
-            });
+            Object.assign(pinnedVideo.style, { objectFit: 'cover', width: '100%', height: '100%' });
             wrap.appendChild(pinnedVideo);
             pinnedVideo.play().catch(() => {});
         }
@@ -371,14 +411,7 @@ function _trickplayAttach(img, path) {
         card.addEventListener('click', e => {
             if (e.target.closest('button, a')) return;
             teardownWebmOverlay();
-            // Unpin any other card that was previously pinned.
-            document.querySelectorAll('.card-trickplay-pinned').forEach(el => {
-                if (!wrap.contains(el)) {
-                    const v = el.tagName === 'VIDEO' ? el : el.querySelector('video');
-                    if (v) v.pause();
-                    el.remove();
-                }
-            });
+            _unpinOtherCards();
             if (pinnedVideo && pinnedVideo.isConnected) {
                 teardownWebmInline();
             } else {
@@ -387,9 +420,134 @@ function _trickplayAttach(img, path) {
             }
         });
 
-        return; // WebM branch complete — skip sprite sheet setup below.
+        return;
     }
-    // ---- end WebM branch ----
+    // ---- end mode: "webm" ----
+
+    // ---- mode: "webm-seek" — hover shows full video, mouse X = seek position ----
+    if (tileMode === 'webm-seek') {
+        let floatVideo = null;
+        let pinnedVideo = null;
+
+        function makeSeekVideo(inline) {
+            const v = document.createElement('video');
+            v.src = '/api/vtile-full?' + new URLSearchParams({ path }) + dirParam('&');
+            v.muted = true;
+            v.preload = 'auto';
+            v.playsInline = true;
+            v.style.pointerEvents = 'none';
+            if (inline) {
+                v.style.display = 'none'; // shown after metadata
+            }
+            return v;
+        }
+
+        function seekToFrac(v, frac) {
+            if (!v || !v.duration) return;
+            v.currentTime = Math.max(0, Math.min(1, frac)) * v.duration;
+        }
+
+        function buildSeekOverlay() {
+            if (floatVideo || pinnedVideo) return;
+            const cardRect = wrap.getBoundingClientRect();
+            if (!cardRect.width) return;
+
+            floatVideo = makeSeekVideo(false);
+            floatVideo.className = 'card-trickplay-sprite';
+            Object.assign(floatVideo.style, {
+                position: 'fixed', zIndex: '1000',
+                display: 'none', objectFit: 'cover', borderRadius: '4px',
+            });
+
+            const positionOverlay = () => {
+                if (!floatVideo) return;
+                const g = _videoPopupGeometry(floatVideo, cardRect);
+                Object.assign(floatVideo.style, {
+                    width:   g.popupW + 'px', height: g.popupH + 'px',
+                    left:    g.left.toFixed(1) + 'px',
+                    top:     g.top.toFixed(1)  + 'px',
+                    display: '',
+                });
+            };
+            floatVideo.addEventListener('loadedmetadata', positionOverlay, { once: true });
+            setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionOverlay(); }, 800);
+
+            document.body.appendChild(floatVideo);
+        }
+
+        function buildSeekInline(clientX) {
+            if (pinnedVideo && pinnedVideo.isConnected) return;
+            teardownSeekOverlay();
+            pinnedVideo = makeSeekVideo(true);
+            pinnedVideo.className = 'card-trickplay-pinned';
+            Object.assign(pinnedVideo.style, { objectFit: 'cover', width: '100%', height: '100%' });
+            pinnedVideo.addEventListener('loadedmetadata', () => {
+                pinnedVideo.style.display = '';
+                if (clientX !== undefined) {
+                    const rect = wrap.getBoundingClientRect();
+                    seekToFrac(pinnedVideo, (clientX - rect.left) / rect.width);
+                }
+            }, { once: true });
+            wrap.appendChild(pinnedVideo);
+        }
+
+        function teardownSeekOverlay() {
+            if (floatVideo) { floatVideo.pause(); floatVideo.remove(); floatVideo = null; }
+        }
+
+        function teardownSeekInline() {
+            if (pinnedVideo) { pinnedVideo.pause(); pinnedVideo.remove(); pinnedVideo = null; }
+        }
+
+        function onMouseMove(e) {
+            const rect = wrap.getBoundingClientRect();
+            const frac = (e.clientX - rect.left) / rect.width;
+            if (floatVideo) seekToFrac(floatVideo, frac);
+            if (pinnedVideo) seekToFrac(pinnedVideo, frac);
+        }
+
+        card.addEventListener('mouseenter', () => {
+            if (!pinnedVideo) buildSeekOverlay();
+        }, { passive: true });
+
+        card.addEventListener('mouseleave', () => {
+            teardownSeekOverlay();
+            teardownSeekInline();
+        });
+
+        card.addEventListener('mousemove', onMouseMove, { passive: true });
+
+        card.addEventListener('click', e => {
+            if (e.target.closest('button, a')) return;
+            teardownSeekOverlay();
+            _unpinOtherCards();
+            if (pinnedVideo && pinnedVideo.isConnected) {
+                teardownSeekInline();
+            } else {
+                pinnedVideo = null;
+                buildSeekInline(e.clientX);
+            }
+        });
+
+        return;
+    }
+    // ---- end mode: "webm-seek" ----
+
+    // ---- mode: "autoplay" — video always playing inline, replaces thumbnail ----
+    if (tileMode === 'autoplay') {
+        const v = document.createElement('video');
+        v.src = '/api/vtile?' + new URLSearchParams({ path }) + dirParam('&');
+        v.muted = true;
+        v.loop = true;
+        v.autoplay = true;
+        v.playsInline = true;
+        v.className = 'card-trickplay-pinned';
+        Object.assign(v.style, { objectFit: 'cover', width: '100%', height: '100%' });
+        wrap.appendChild(v);
+        v.play().catch(() => {});
+        return;
+    }
+    // ---- end mode: "autoplay" ----
 
     let spriteEl  = null; // floating popup (hover)
     let pinnedEl  = null; // inline pinned (after click)

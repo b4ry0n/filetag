@@ -2504,7 +2504,7 @@ pub async fn api_settings_get(
         .unwrap_or_else(|| "crop".to_string());
     let tile_preview_mode: String = db::get_setting(&conn, "tile_preview_mode")
         .map_err(AppError)?
-        .filter(|v| v == "sprite" || v == "webm")
+        .filter(|v| v == "sprite" || v == "webm" || v == "webm-seek" || v == "autoplay")
         .unwrap_or_else(|| "sprite".to_string());
     let vtile_duration: u32 = db::get_setting(&conn, "vtile_duration")
         .map_err(AppError)?
@@ -2565,7 +2565,7 @@ pub async fn api_settings_set(
         }
     }
     if let Some(v) = body.tile_preview_mode
-        && (v == "sprite" || v == "webm")
+        && (v == "sprite" || v == "webm" || v == "webm-seek" || v == "autoplay")
     {
         db::set_setting(&conn, "tile_preview_mode", &v).map_err(AppError)?;
     }

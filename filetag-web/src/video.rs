@@ -1178,3 +1178,31 @@ pub async fn api_vtile(
             .into_response(),
     }
 }
+
+/// `GET /api/vtile-full` — serve the original video file with Range support so
+/// the browser can seek to arbitrary positions for the `webm-seek` tile preview
+/// mode.  No transcoding or clip generation; the original file is served as-is.
+pub async fn api_vtile_full(
+    Query(params): Query<VTileParams>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    };
+
+    if !load_features_for(&state, &db_root.root).video {
+        return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
+    }
+
+    let (abs, _cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    serve_file_range(&abs, &headers).await
+}
