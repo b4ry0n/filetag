@@ -457,6 +457,10 @@
                         </select>
                         <small>WebM plays back smoothly like Netflix / YouTube tile previews, but uses more storage. Requires ffmpeg with libvpx.</small>
                     </label>
+                    <label>WebM clip duration (seconds)
+                        <input type="number" id="vtile-duration" value="8" min="2" max="120">
+                        <small>Length of the WebM preview clip. Videos shorter than this are shown in full. The clip starts at ~15 % of the video to skip intros.</small>
+                    </label>
                     <div class="modal-actions">
                         <button onclick="saveVideoSettings()">Save</button>
                         <button onclick="closeSettings()">Cancel</button>

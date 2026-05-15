@@ -2506,6 +2506,11 @@ pub async fn api_settings_get(
         .map_err(AppError)?
         .filter(|v| v == "sprite" || v == "webm")
         .unwrap_or_else(|| "sprite".to_string());
+    let vtile_duration: u32 = db::get_setting(&conn, "vtile_duration")
+        .map_err(AppError)?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8u32)
+        .clamp(2, 120);
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
         "sprite_max": sprite_max,
@@ -2518,6 +2523,7 @@ pub async fn api_settings_get(
         "saliency_object_ready": crate::saliency::object_model_ready(),
         "dir_preview_style": dir_preview_style,
         "tile_preview_mode": tile_preview_mode,
+        "vtile_duration": vtile_duration,
         "imagemagick_installed": imagemagick_installed,
         "ffmpeg_installed": ffmpeg_installed
     })))
@@ -2562,6 +2568,10 @@ pub async fn api_settings_set(
         && (v == "sprite" || v == "webm")
     {
         db::set_setting(&conn, "tile_preview_mode", &v).map_err(AppError)?;
+    }
+    if let Some(v) = body.vtile_duration {
+        let clamped = v.clamp(2, 120);
+        db::set_setting(&conn, "vtile_duration", &clamped.to_string()).map_err(AppError)?;
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

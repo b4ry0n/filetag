@@ -1043,12 +1043,23 @@ pub struct VTileParams {
 }
 
 /// Generate (or reuse from cache) a short looping WebM clip for the tile
-/// preview of `abs`.  The clip is encoded with VP8 at 320 px wide, no audio,
-/// ~12 s long starting at 10 % of the video's duration.
+/// preview of `abs`.
+///
+/// `clip_secs` is the desired clip length in seconds (from settings,
+/// default 8).  The clip is VP8 at 320 px wide with no audio.
+///
+/// Position heuristic:
+/// - If the video is shorter than `clip_secs`, the whole video is used.
+/// - Otherwise the clip starts at 15 % of the total duration, capped at 60 s,
+///   to skip title cards and logos without jumping too far into the content.
+///
+/// The cache filename embeds the clip length so that changing the setting
+/// automatically triggers regeneration.
 ///
 /// Returns the path to the cached WebM on success.
-async fn generate_tile_webm(abs: &Path, root: &Path) -> anyhow::Result<PathBuf> {
-    let cache_path = file_cache_path(abs, root, "vtiles", "tile.webm")
+async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::Result<PathBuf> {
+    let cache_name = format!("tile_{clip_secs}s.webm");
+    let cache_path = file_cache_path(abs, root, "vtiles", &cache_name)
         .ok_or_else(|| anyhow::anyhow!("cannot compute vtile cache path for {}", abs.display()))?;
 
     if cache_path.exists() {
@@ -1064,10 +1075,16 @@ async fn generate_tile_webm(abs: &Path, root: &Path) -> anyhow::Result<PathBuf> 
         .ok_or_else(|| anyhow::anyhow!("cannot read video info for {}", abs.display()))?;
 
     let dur = info.duration;
-    // Start at 10 % of duration, but at least 3 s in (skip intros / logos).
-    let start = (dur * 0.10_f64).max(3.0_f64).min(dur.max(0.0));
-    // Clip length: 20 % of video, capped at 12 s, but at least 2 s.
-    let length = (dur * 0.20_f64).clamp(2.0_f64, 12.0_f64);
+    let clip = clip_secs as f64;
+
+    // If the video is shorter than the requested clip, show the whole thing.
+    let (start, length) = if dur <= clip {
+        (0.0_f64, dur)
+    } else {
+        // Skip the first 15 % of the video (intro/logos), capped at 60 s.
+        let skip = (dur * 0.15_f64).min(60.0_f64);
+        (skip, clip)
+    };
 
     let ok = tokio::process::Command::new("nice")
         .args([
@@ -1130,12 +1147,26 @@ pub async fn api_vtile(
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
 
+    // Read the configured clip duration (default 8 s).
+    let clip_secs: u32 = {
+        let conn = match crate::state::open_conn(db_root) {
+            Ok(c) => c,
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB open failed").into_response(),
+        };
+        filetag_lib::db::get_setting(&conn, "vtile_duration")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8u32)
+            .clamp(2, 120)
+    };
+
     let _permit = match VTHUMB_LIMITER.try_acquire() {
         Ok(p) => p,
         Err(_) => return (StatusCode::ACCEPTED, "vtile queue full").into_response(),
     };
 
-    match generate_tile_webm(&abs, &cache_root).await {
+    match generate_tile_webm(&abs, &cache_root, clip_secs).await {
         Ok(path) => match tokio::fs::read(&path).await {
             Ok(data) => ([(header::CONTENT_TYPE, "video/webm")], data).into_response(),
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),

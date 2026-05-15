@@ -424,6 +424,8 @@ pub struct SettingsBody {
     pub dir_preview_style: Option<String>,
     /// Tile hover preview mode: `"sprite"` (default) or `"webm"`.
     pub tile_preview_mode: Option<String>,
+    /// WebM tile preview clip length in seconds (default 8, range 2–120).
+    pub vtile_duration: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
