@@ -433,6 +433,7 @@ pub async fn generate_sprite_cached(
     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
     let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
 
+    let tmp_path = cache_path.with_extension("tmp");
     let mut cmd = tokio::process::Command::new("nice");
     cmd.args(["-n", "10", "ffmpeg"]);
     for t in &positions {
@@ -450,7 +451,7 @@ pub async fn generate_sprite_cached(
             "4",
             "-y",
         ])
-        .arg(&cache_path)
+        .arg(&tmp_path)
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .status()
@@ -458,9 +459,11 @@ pub async fn generate_sprite_cached(
         .map(|s| s.success())
         .unwrap_or(false);
 
-    if !ok || !cache_path.exists() {
+    if !ok || !tmp_path.exists() {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         anyhow::bail!("ffmpeg could not generate sprite sheet — is ffmpeg installed?");
     }
+    tokio::fs::rename(&tmp_path, &cache_path).await?;
 
     Ok(cache_path)
 }
@@ -760,9 +763,11 @@ pub async fn generate_ai_sprites(
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let out = run_sprite_sheet_ffmpeg(abs, chunk, &cache_path, &filter).await?;
+        let tmp_path = cache_path.with_extension("tmp");
+        let out = run_sprite_sheet_ffmpeg(abs, chunk, &tmp_path, &filter).await?;
 
-        if !out.status.success() || !cache_path.exists() {
+        if !out.status.success() || !tmp_path.exists() {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
             let stderr = String::from_utf8_lossy(&out.stderr);
 
             // Older/odd files can fail on specific seek positions. Retry with
@@ -778,12 +783,14 @@ pub async fn generate_ai_sprites(
                 if !valid_times.is_empty() && valid_times.len() < chunk.len() {
                     let (retry_filter, _, _) = build_sprite_filter(valid_times.len());
                     let retry =
-                        run_sprite_sheet_ffmpeg(abs, &valid_times, &cache_path, &retry_filter)
+                        run_sprite_sheet_ffmpeg(abs, &valid_times, &tmp_path, &retry_filter)
                             .await?;
-                    if retry.status.success() && cache_path.exists() {
+                    if retry.status.success() && tmp_path.exists() {
+                        tokio::fs::rename(&tmp_path, &cache_path).await?;
                         out_paths.push(cache_path);
                         continue;
                     }
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
                     let retry_stderr = String::from_utf8_lossy(&retry.stderr);
                     anyhow::bail!(
                         "ffmpeg sprite retry failed ({} of {} frames usable). first error: {} | retry error: {}",
@@ -802,6 +809,7 @@ pub async fn generate_ai_sprites(
             );
         }
 
+        tokio::fs::rename(&tmp_path, &cache_path).await?;
         out_paths.push(cache_path);
     }
 
@@ -1049,7 +1057,8 @@ pub async fn api_vthumbs_pregen(
                     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
                     let filter =
                         format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
-                    let _ = cmd
+                    let tmp_path = cache_path.with_extension("tmp");
+                    let ok = cmd
                         .args([
                             "-filter_complex",
                             &filter,
@@ -1061,11 +1070,18 @@ pub async fn api_vthumbs_pregen(
                             "80",
                             "-y",
                         ])
-                        .arg(&cache_path)
+                        .arg(&tmp_path)
                         .stderr(std::process::Stdio::null())
                         .kill_on_drop(true)
                         .status()
-                        .await;
+                        .await
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    if ok && tmp_path.exists() {
+                        let _ = tokio::fs::rename(&tmp_path, &cache_path).await;
+                    } else {
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
+                    }
                 }
             }
             done += 1;
@@ -1203,6 +1219,7 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
         (skip, clip)
     };
 
+    let tmp_path = cache_path.with_extension("tmp");
     let ok = tokio::process::Command::new("nice")
         .args([
             "-n",
@@ -1225,7 +1242,7 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
             "-an",
             "-y",
         ])
-        .arg(&cache_path)
+        .arg(&tmp_path)
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .status()
@@ -1233,11 +1250,13 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
         .map(|s| s.success())
         .unwrap_or(false);
 
-    if !ok || !cache_path.exists() {
+    if !ok || !tmp_path.exists() {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         anyhow::bail!(
             "ffmpeg could not generate WebM tile preview — is ffmpeg with libvpx installed?"
         );
     }
+    tokio::fs::rename(&tmp_path, &cache_path).await?;
 
     Ok(cache_path)
 }
