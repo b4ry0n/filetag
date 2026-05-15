@@ -13,6 +13,10 @@
 let _pollTimer = null;
 let _panelOpen = false;
 
+// Callbacks to fire when a specific job reaches 'done' status.
+// Map<job_id, Array<Function>>
+const _jobDoneCallbacks = new Map();
+
 // Kind → emoji icon
 const KIND_ICONS = {
     'tag-dir':      '🏷',
@@ -47,6 +51,17 @@ async function _pollJobs() {
         state.jobs = data.jobs || [];
     } catch (_) {
         // Silently ignore network errors during polling.
+    }
+
+    // Fire done callbacks before re-rendering so callbacks can update DOM immediately.
+    if (_jobDoneCallbacks.size > 0) {
+        (state.jobs || []).forEach(j => {
+            if (j.status === 'done' && _jobDoneCallbacks.has(j.id)) {
+                const cbs = _jobDoneCallbacks.get(j.id);
+                _jobDoneCallbacks.delete(j.id);
+                cbs.forEach(cb => { try { cb(j); } catch (_) {} });
+            }
+        });
     }
     renderJobsBar();
     if (_panelOpen) renderJobsList();
@@ -189,6 +204,17 @@ function onJobSubmitted(jobId) {
     if (btn) btn.classList.remove('hidden');
 }
 
+/**
+ * Register a callback to be invoked once when the given job reaches 'done'
+ * status.  If the job is already done in the current snapshot the callback
+ * fires on the next poll tick.  Polling is started automatically.
+ */
+function whenJobDone(jobId, callback) {
+    if (!_jobDoneCallbacks.has(jobId)) _jobDoneCallbacks.set(jobId, []);
+    _jobDoneCallbacks.get(jobId).push(callback);
+    startJobPolling();
+}
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -212,6 +238,7 @@ window.toggleJobsPanel   = toggleJobsPanel;
 window.dismissJob        = dismissJob;
 window.dismissAllJobs    = dismissAllJobs;
 window.onJobSubmitted    = onJobSubmitted;
+window.whenJobDone       = whenJobDone;
 window.renderJobsBar     = renderJobsBar;
 
 })();

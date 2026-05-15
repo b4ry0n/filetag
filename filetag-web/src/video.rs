@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
@@ -1296,12 +1296,12 @@ pub async fn api_vtile(
     }
 }
 
-/// `GET /api/vtile-full` — serve a full-length WebM re-encode of the video with
-/// Range support so the browser can seek to arbitrary positions for the
-/// `webm-seek` tile preview mode.  The original container/codec is irrelevant
-/// because the file is always transcoded to VP8/WebM (cached as
-/// `tile_full.webm`), ensuring browser compatibility for formats like AVI, FLV,
-/// WMV, etc.
+/// `GET /api/vtile-full` — serve the pre-generated full-length WebM for the
+/// `webm-seek` tile preview mode (VP8, cached as `tile_full.webm`).
+///
+/// Returns 200 with the file (range requests supported) if the cache entry
+/// exists, or 404 if generation has not completed yet.  Clients should call
+/// `POST /api/vtile-full` first to trigger background generation.
 pub async fn api_vtile_full(
     Query(params): Query<VTileParams>,
     State(state): State<Arc<AppState>>,
@@ -1324,18 +1324,134 @@ pub async fn api_vtile_full(
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
 
-    let _permit = match VTHUMB_LIMITER.try_acquire() {
-        Ok(p) => p,
-        Err(_) => return (StatusCode::ACCEPTED, "vtile queue full").into_response(),
+    let cache_path = match file_cache_path(&abs, &cache_root, "vtiles", "tile_full.webm") {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Cannot compute cache path",
+            )
+                .into_response();
+        }
     };
 
-    // clip_secs = 0 → full video; cached as tile_full.webm.
-    match generate_tile_webm(&abs, &cache_root, 0).await {
-        Ok(webm_path) => crate::preview::serve_file_range(&webm_path, &headers).await,
-        Err(_) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "WebM full-video preview unavailable — install ffmpeg with libvpx",
-        )
-            .into_response(),
+    if cache_path.exists() {
+        serve_file_range(&cache_path, &headers).await
+    } else {
+        StatusCode::NOT_FOUND.into_response()
     }
+}
+
+/// Body for `POST /api/vtile-full`.
+#[derive(Deserialize)]
+pub struct VtileFullTriggerBody {
+    pub path: String,
+}
+
+/// Response for `POST /api/vtile-full`.
+#[derive(Serialize)]
+pub struct VtileFullTriggerResponse {
+    pub ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+}
+
+/// `POST /api/vtile-full` — trigger background generation of the full-length
+/// WebM for the `webm-seek` tile preview mode.
+///
+/// If the cache entry already exists the response is `{"ready":true}`.
+/// Otherwise a background job is registered (kind `"tile-preview"`) and the
+/// response is `{"ready":false,"job_id":"…"}`.  Calling the endpoint again
+/// while generation is in progress returns the same `job_id` without
+/// starting a second transcoding process.
+pub async fn api_vtile_full_trigger(
+    Query(params): Query<VTileParams>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<VtileFullTriggerBody>,
+) -> Response {
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    };
+
+    if !load_features_for(&state, &db_root.root).video {
+        return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
+    }
+
+    let path = VTileParams {
+        path: body.path,
+        dir: params.dir,
+    };
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &path.path) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    let cache_path = match file_cache_path(&abs, &cache_root, "vtiles", "tile_full.webm") {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Cannot compute cache path",
+            )
+                .into_response();
+        }
+    };
+
+    if cache_path.exists() {
+        return Json(VtileFullTriggerResponse {
+            ready: true,
+            job_id: None,
+        })
+        .into_response();
+    }
+
+    // Check whether a job is already running for this file.
+    let existing_job_id = state.vtile_full_jobs.lock().unwrap().get(&abs).cloned();
+    if let Some(job_id) = existing_job_id {
+        return Json(VtileFullTriggerResponse {
+            ready: false,
+            job_id: Some(job_id),
+        })
+        .into_response();
+    }
+
+    // Register a new job and spawn the background task.
+    let filename = abs
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let job_id = state
+        .jobs
+        .lock()
+        .unwrap()
+        .submit("tile-preview", format!("Full WebM: {filename}"));
+    state
+        .vtile_full_jobs
+        .lock()
+        .unwrap()
+        .insert(abs.clone(), job_id.clone());
+
+    let state2 = Arc::clone(&state);
+    let abs2 = abs.clone();
+    let cache_root2 = cache_root.clone();
+    let job_id2 = job_id.clone();
+    tokio::spawn(async move {
+        state2.jobs.lock().unwrap().start(&job_id2, 1);
+        match generate_tile_webm(&abs2, &cache_root2, 0).await {
+            Ok(_) => state2.jobs.lock().unwrap().finish(&job_id2),
+            Err(e) => state2.jobs.lock().unwrap().fail(&job_id2, e.to_string()),
+        }
+        state2.vtile_full_jobs.lock().unwrap().remove(&abs2);
+    });
+
+    Json(VtileFullTriggerResponse {
+        ready: false,
+        job_id: Some(job_id),
+    })
+    .into_response()
 }

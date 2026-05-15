@@ -129,6 +129,9 @@ pub struct AppState {
     pub saliency_download: std::sync::Mutex<SaliencyDownloadProgress>,
     /// Session store for optional password authentication.
     pub sessions: SessionStore,
+    /// In-progress full-video WebM generation for `webm-seek` tile mode.
+    /// Maps absolute file path → job_id so duplicate requests reuse the same job.
+    pub vtile_full_jobs: std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, String>>,
 }
 
 /// Returns true when `abs_path` is covered by any loaded database root.

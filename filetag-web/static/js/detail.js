@@ -274,7 +274,10 @@ function _startTranscode(container, transcodeUrl, name) {
 // shifts a CSS background-position over the sprite, showing different frames
 // without any DOM or src changes (same technique as Jellyfin trickplay).
 
-const _trickplayCache = new Map(); // path → {src, n} | 'loading' | 'failed'
+const _trickplayCache  = new Map(); // path → {src, n} | 'loading' | 'failed'
+// Tracks per-path WebM-full readiness for the webm-seek tile mode.
+// Values: 'pending' (generation triggered) | 'ready' (tile_full.webm exists).
+const _webmFullStatus  = new Map();
 
 /**
  * Attach trickplay behaviour to the <img> that replaced a .card-thumb-pending
@@ -424,11 +427,21 @@ function _trickplayAttach(img, path) {
     }
     // ---- end mode: "webm" ----
 
-    // ---- mode: "webm-seek" — hover shows full video, mouse X = seek position ----
+    // ---- mode: "webm-seek" — hover seeks through a full-length VP8/WebM re-encode.
+    //          While the WebM is being generated in the background, the sprite-sheet
+    //          hover preview is shown as a fallback.  Once the job completes the card
+    //          seamlessly switches to the seek behaviour without a page reload. ----
     if (tileMode === 'webm-seek') {
+        // -- WebM seek state --
         let floatVideo = null;
         let pinnedVideo = null;
-        let seekTimer  = null; // fires when mouse stops moving → start playback
+        let seekTimer  = null;
+
+        // -- Sprite fallback state (used while WebM is not yet ready) --
+        let spriteCacheEntry = null;
+        let spriteEl         = null;
+
+        // ---------- WebM seek helpers ----------
 
         function makeSeekVideo(inline) {
             const v = document.createElement('video');
@@ -437,9 +450,7 @@ function _trickplayAttach(img, path) {
             v.preload = 'auto';
             v.playsInline = true;
             v.style.pointerEvents = 'none';
-            if (inline) {
-                v.style.display = 'none'; // shown after metadata
-            }
+            if (inline) v.style.display = 'none'; // shown after metadata
             return v;
         }
 
@@ -472,7 +483,6 @@ function _trickplayAttach(img, path) {
             };
             floatVideo.addEventListener('loadedmetadata', positionOverlay, { once: true });
             setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionOverlay(); }, 800);
-
             document.body.appendChild(floatVideo);
         }
 
@@ -502,17 +512,13 @@ function _trickplayAttach(img, path) {
             if (pinnedVideo) { pinnedVideo.pause(); pinnedVideo.remove(); pinnedVideo = null; }
         }
 
-        // On mouse move: pause + seek immediately; start playing once the
-        // mouse has been still for 300 ms.
-        function onMouseMove(e) {
+        function onSeekMouseMove(e) {
             const rect = wrap.getBoundingClientRect();
             const frac = (e.clientX - rect.left) / rect.width;
-
             if (floatVideo && !floatVideo.paused) floatVideo.pause();
             if (pinnedVideo && !pinnedVideo.paused) pinnedVideo.pause();
-            if (floatVideo) seekToFrac(floatVideo, frac);
+            if (floatVideo)  seekToFrac(floatVideo,  frac);
             if (pinnedVideo) seekToFrac(pinnedVideo, frac);
-
             clearTimeout(seekTimer);
             seekTimer = setTimeout(() => {
                 if (floatVideo)  floatVideo.play().catch(() => {});
@@ -520,26 +526,164 @@ function _trickplayAttach(img, path) {
             }, 300);
         }
 
+        // ---------- Sprite fallback helpers ----------
+
+        function ensureSpriteFallback() {
+            if (_trickplayCache.get(path) === 'loading' || _trickplayCache.get(path) === 'failed') return;
+            const cached = _trickplayCache.get(path);
+            if (cached && typeof cached === 'object') { spriteCacheEntry = cached; return; }
+            _trickplayCache.set(path, 'loading');
+            const src = '/api/vthumbs?' + new URLSearchParams({
+                path,
+                min_n: state.settings.sprite_min ?? 8,
+                max_n: state.settings.sprite_max ?? 16,
+            }) + dirParam('&');
+            const img = new Image();
+            img.onload = () => {
+                const n = Math.max(1, Math.round(img.naturalWidth / 320));
+                const entry = { src, n, natW: img.naturalWidth, natH: img.naturalHeight };
+                _trickplayCache.set(path, entry);
+                spriteCacheEntry = entry;
+                // Show immediately if the user is still hovering and WebM is not ready.
+                if (card.matches(':hover') && _webmFullStatus.get(path) !== 'ready') {
+                    buildSpriteOverlay();
+                }
+            };
+            img.onerror = () => _trickplayCache.set(path, 'failed');
+            img.src = src;
+        }
+
+        function buildSpriteOverlay() {
+            if (spriteEl || !spriteCacheEntry) return;
+            const cardRect = wrap.getBoundingClientRect();
+            if (!cardRect.width) return;
+            const frameW   = spriteCacheEntry.natW / spriteCacheEntry.n;
+            const ar       = frameW / spriteCacheEntry.natH;
+            const isPortrait = ar < 1;
+            let popupW, popupH;
+            if (isPortrait) {
+                const clampedAR = Math.max(ar, 9 / 16);
+                popupW = cardRect.width;
+                popupH = popupW / clampedAR;
+            } else {
+                const clampedAR = Math.min(ar, 16 / 9);
+                popupH = cardRect.height;
+                popupW = popupH * clampedAR;
+            }
+            popupW = Math.round(popupW);
+            popupH = Math.round(popupH);
+            let left = cardRect.left + (cardRect.width  - popupW) / 2;
+            let top  = cardRect.top  + (cardRect.height - popupH) / 2;
+            left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
+            top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+            spriteEl = document.createElement('div');
+            spriteEl.className = 'card-trickplay-sprite';
+            Object.assign(spriteEl.style, {
+                position:        'fixed',
+                zIndex:          '1000',
+                pointerEvents:   'none',
+                width:           popupW + 'px',
+                height:          popupH + 'px',
+                left:            left.toFixed(1) + 'px',
+                top:             top.toFixed(1)  + 'px',
+                backgroundImage: `url(${JSON.stringify(spriteCacheEntry.src)})`,
+                backgroundRepeat: 'no-repeat',
+            });
+            document.body.appendChild(spriteEl);
+            showSpriteFrame(0);
+        }
+
+        function showSpriteFrame(frac) {
+            if (!spriteEl || !spriteCacheEntry) return;
+            const idx    = Math.min(spriteCacheEntry.n - 1, Math.floor(Math.max(0, Math.min(0.9999, frac)) * spriteCacheEntry.n));
+            const popupH = parseFloat(spriteEl.style.height);
+            const popupW = parseFloat(spriteEl.style.width);
+            const frameW = spriteCacheEntry.natW / spriteCacheEntry.n;
+            const frameH = spriteCacheEntry.natH;
+            const scale  = Math.max(popupW / frameW, popupH / frameH);
+            const bsW    = Math.round(spriteCacheEntry.natW * scale);
+            const bsH    = Math.round(spriteCacheEntry.natH * scale);
+            const tileW  = frameW * scale;
+            const tileH  = frameH * scale;
+            const x      = popupW / 2 - tileW * (idx + 0.5);
+            const y      = (popupH - tileH) / 2;
+            spriteEl.style.backgroundSize     = `${bsW}px ${bsH}px`;
+            spriteEl.style.backgroundPosition = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
+        }
+
+        function teardownSpriteOverlay() {
+            if (spriteEl) { spriteEl.remove(); spriteEl = null; }
+        }
+
+        // ---------- WebM readiness trigger ----------
+
+        async function triggerWebmFull() {
+            const status = _webmFullStatus.get(path);
+            if (status === 'ready' || status === 'pending') return;
+            _webmFullStatus.set(path, 'pending');
+            try {
+                const res = await apiPost('/api/vtile-full' + dirParam('?'), { path });
+                if (res?.ready) {
+                    _webmFullStatus.set(path, 'ready');
+                    // Switch immediately if the user is still hovering.
+                    if (card.matches(':hover') && !pinnedVideo) {
+                        teardownSpriteOverlay();
+                        buildSeekOverlay();
+                    }
+                } else if (res?.job_id) {
+                    onJobSubmitted(res.job_id);
+                    whenJobDone(res.job_id, () => {
+                        _webmFullStatus.set(path, 'ready');
+                        if (card.matches(':hover') && !pinnedVideo) {
+                            teardownSpriteOverlay();
+                            buildSeekOverlay();
+                        }
+                    });
+                }
+            } catch (_) {
+                // Allow retry on next hover.
+                _webmFullStatus.delete(path);
+            }
+        }
+
+        // ---------- Event listeners ----------
+
         card.addEventListener('mouseenter', () => {
-            if (!pinnedVideo) buildSeekOverlay();
+            triggerWebmFull();
+            if (_webmFullStatus.get(path) === 'ready') {
+                if (!pinnedVideo) buildSeekOverlay();
+            } else {
+                ensureSpriteFallback();
+                if (spriteCacheEntry) buildSpriteOverlay();
+            }
         }, { passive: true });
 
         card.addEventListener('mouseleave', () => {
             teardownSeekOverlay();
             teardownSeekInline();
+            teardownSpriteOverlay();
         });
 
-        card.addEventListener('mousemove', onMouseMove, { passive: true });
+        card.addEventListener('mousemove', e => {
+            if (_webmFullStatus.get(path) === 'ready') {
+                onSeekMouseMove(e);
+            } else if (spriteEl) {
+                const rect = wrap.getBoundingClientRect();
+                showSpriteFrame((e.clientX - rect.left) / rect.width);
+            }
+        }, { passive: true });
 
         card.addEventListener('click', e => {
             if (e.target.closest('button, a')) return;
-            teardownSeekOverlay();
-            _unpinOtherCards();
-            if (pinnedVideo && pinnedVideo.isConnected) {
-                teardownSeekInline();
-            } else {
-                pinnedVideo = null;
-                buildSeekInline(e.clientX);
+            if (_webmFullStatus.get(path) === 'ready') {
+                teardownSeekOverlay();
+                _unpinOtherCards();
+                if (pinnedVideo && pinnedVideo.isConnected) {
+                    teardownSeekInline();
+                } else {
+                    pinnedVideo = null;
+                    buildSeekInline(e.clientX);
+                }
             }
         });
 
