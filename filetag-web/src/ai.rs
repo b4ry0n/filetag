@@ -275,20 +275,10 @@ fn load_ai_config(conn: &Connection) -> Option<AiConfig> {
         .ok()
         .flatten()
         .filter(|s| !s.is_empty());
-    // Backward compat: if the per-type key is absent, fall back to the legacy
-    // ai.prompt key (which previously acted as the image prompt).
-    let legacy_prompt = db::get_setting(conn, "ai.prompt")
+    let prompt_image = db::get_setting(conn, "ai.prompt_image")
         .ok()
         .flatten()
         .filter(|s| !s.is_empty());
-    // Fall back to legacy `ai.prompt` only when `ai.prompt_image` has
-    // never been written (key absent from DB, i.e. `None`).  An explicit
-    // empty string means "use the built-in default" and must be respected.
-    let prompt_image = match db::get_setting(conn, "ai.prompt_image").ok().flatten() {
-        None => legacy_prompt.clone(),
-        Some(ref v) if v.is_empty() => None,
-        Some(v) => Some(v),
-    };
     let prompt_video = db::get_setting(conn, "ai.prompt_video")
         .ok()
         .flatten()
@@ -1632,9 +1622,6 @@ pub(crate) struct AiConfigRequest {
     prompt_archive: Option<String>,
     /// User override for the output format instruction.
     output_format: Option<String>,
-    /// Legacy single-prompt field — treated as `prompt_image` when
-    /// `prompt_image` is not present in the same request.
-    prompt: Option<String>,
     tag_prefix: Option<String>,
     max_tokens: Option<u32>,
     chat_max_tokens: Option<u32>,
@@ -1693,15 +1680,6 @@ pub async fn api_ai_config_set(
     }
     if let Some(v) = &body.output_format {
         db::set_setting(&conn, "ai.output_format", v).map_err(AppError)?;
-    }
-    // Legacy: old clients send `prompt` (treated as prompt_image when the
-    // new per-type field is absent).
-    if body.prompt_image.is_none()
-        && body.prompt_video.is_none()
-        && body.prompt_archive.is_none()
-        && let Some(v) = &body.prompt
-    {
-        db::set_setting(&conn, "ai.prompt_image", v).map_err(AppError)?;
     }
     if let Some(v) = &body.tag_prefix {
         // Reject tag prefixes containing path-traversal sequences.
@@ -1821,20 +1799,12 @@ pub async fn api_ai_config_get(
     } else {
         "interval".to_string()
     };
-    // Backward compat: fall back to legacy `ai.prompt` only when
-    // `ai.prompt_image` has never been written (key absent, i.e. None).
-    // An explicit empty string means "cleared by the user; use the default".
-    let prompt_image = match db::get_setting(&conn, "ai.prompt_image").ok().flatten() {
-        None => g("ai.prompt"),
-        Some(v) => v,
-    };
-
     Ok(Json(serde_json::json!({
         "endpoint": g("ai.endpoint"),
         "model": g("ai.model"),
         "api_key": api_key_masked,
         "subject": g("ai.subject"),
-        "prompt_image": prompt_image,
+        "prompt_image": g("ai.prompt_image"),
         "prompt_video": g("ai.prompt_video"),
         "prompt_archive": g("ai.prompt_archive"),
         "tag_prefix": tag_prefix,

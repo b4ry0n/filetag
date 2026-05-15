@@ -11,7 +11,7 @@ use rusqlite::{Connection, params};
 
 const DB_DIR: &str = ".filetag";
 const DB_FILE: &str = "db.sqlite3";
-const SCHEMA_VERSION: i32 = 14;
+const SCHEMA_VERSION: i32 = 15;
 
 // ---------------------------------------------------------------------------
 // Database identity
@@ -487,6 +487,37 @@ fn migrate(conn: &Connection) -> Result<()> {
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![id],
             )?;
+        }
+    }
+
+    if version < 15 {
+        // Migrate the legacy `ai.prompt` setting (which used to act as the
+        // image prompt) to the canonical `ai.prompt_image` key, then remove
+        // the old key so no runtime fallback code is needed.
+        use rusqlite::OptionalExtension;
+        let old_prompt: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ai.prompt'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap_or(None);
+        let new_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM settings WHERE key = 'ai.prompt_image'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if let Some(v) = old_prompt {
+            if !new_exists {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('ai.prompt_image', ?1)",
+                    params![v],
+                )?;
+            }
+            conn.execute("DELETE FROM settings WHERE key = 'ai.prompt'", [])?;
         }
     }
 
