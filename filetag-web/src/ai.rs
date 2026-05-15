@@ -2778,6 +2778,23 @@ pub async fn api_ai_chat(
         }
     };
 
+    // On follow-up turns (messages.len() > 1) also inject the current file-tag
+    // state into the LAST user message, right before the model generates its
+    // response.  The system prompt is only at the top of the history; later
+    // turns the model may anchor on what it said earlier and ignore the system
+    // prompt.  Placing fresh tag data adjacent to the final user turn forces
+    // the model to see the up-to-date tags regardless of conversation length.
+    if !file_tag_lines.is_empty()
+        && messages.len() > 1
+        && let Some(last) = messages.iter_mut().rev().find(|m| m.role == "user")
+    {
+        let tag_note = format!(
+            "\n\n[Updated tag state — supersedes any tags mentioned earlier in this conversation:\n{}]",
+            file_tag_lines.join("\n")
+        );
+        last.content.push_str(&tag_note);
+    }
+
     let reply = vlm_chat_with_history(&config, &messages, &b64_images, system_prompt.as_deref())
         .await
         .map_err(AppError)?;
