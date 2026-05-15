@@ -2502,6 +2502,10 @@ pub async fn api_settings_get(
             v == "fit" || v == "crop" || v == "scattered" || v == "grid" || v == "bookshelf"
         })
         .unwrap_or_else(|| "crop".to_string());
+    let tile_preview_mode: String = db::get_setting(&conn, "tile_preview_mode")
+        .map_err(AppError)?
+        .filter(|v| v == "sprite" || v == "webm")
+        .unwrap_or_else(|| "sprite".to_string());
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
         "sprite_max": sprite_max,
@@ -2513,6 +2517,7 @@ pub async fn api_settings_get(
         "saliency_pose_ready": crate::saliency::pose_model_ready(),
         "saliency_object_ready": crate::saliency::object_model_ready(),
         "dir_preview_style": dir_preview_style,
+        "tile_preview_mode": tile_preview_mode,
         "imagemagick_installed": imagemagick_installed,
         "ffmpeg_installed": ffmpeg_installed
     })))
@@ -2552,6 +2557,11 @@ pub async fn api_settings_set(
         if v == "crop" || v == "fit" || v == "scattered" || v == "grid" || v == "bookshelf" {
             db::set_setting(&conn, "dir_preview_style", &v).map_err(AppError)?;
         }
+    }
+    if let Some(v) = body.tile_preview_mode
+        && (v == "sprite" || v == "webm")
+    {
+        db::set_setting(&conn, "tile_preview_mode", &v).map_err(AppError)?;
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

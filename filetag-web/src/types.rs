@@ -422,6 +422,8 @@ pub struct SettingsBody {
     pub feature_saliency_object: Option<bool>,
     /// Directory collage layout style: `"crop"` (default) or `"fit"`.
     pub dir_preview_style: Option<String>,
+    /// Tile hover preview mode: `"sprite"` (default) or `"webm"`.
+    pub tile_preview_mode: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

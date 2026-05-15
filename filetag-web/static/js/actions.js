@@ -275,6 +275,8 @@ function openSettings(tab = 'general') {
     document.getElementById('sprite-max').value = state.settings.sprite_max ?? 16;
     const dpsSel = document.getElementById('dir-preview-style');
     if (dpsSel) dpsSel.value = state.settings.dir_preview_style ?? 'crop';
+    const tpmSel = document.getElementById('tile-preview-mode');
+    if (tpmSel) tpmSel.value = state.settings.tile_preview_mode ?? 'sprite';
     // PDF field is always present — populate regardless of active tab.
     document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
     // Features tab initialisation is deferred until the tab is visible.
@@ -1193,12 +1195,14 @@ async function saveVideoSettings() {
             sprite_min: min,
             sprite_max: Math.max(max, min),
             dir_preview_style: document.getElementById('dir-preview-style')?.value ?? 'crop',
+            tile_preview_mode: document.getElementById('tile-preview-mode')?.value ?? 'sprite',
         };
         try {
             await apiPost('/api/settings', body);
             state.settings.sprite_min = body.sprite_min;
             state.settings.sprite_max = body.sprite_max;
             state.settings.dir_preview_style = body.dir_preview_style;
+            state.settings.tile_preview_mode = body.tile_preview_mode;
         } catch (e) {
             showToast('Failed to save settings: ' + e.message);
             return;

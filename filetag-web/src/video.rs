@@ -1030,3 +1030,120 @@ pub async fn api_vthumbs_pregen(
 
     Json(serde_json::json!({ "queued": queued })).into_response()
 }
+
+// ---------------------------------------------------------------------------
+// WebM tile preview generation
+// ---------------------------------------------------------------------------
+
+/// Query params for `GET /api/vtile`.
+#[derive(Deserialize)]
+pub struct VTileParams {
+    pub path: String,
+    pub dir: Option<String>,
+}
+
+/// Generate (or reuse from cache) a short looping WebM clip for the tile
+/// preview of `abs`.  The clip is encoded with VP8 at 320 px wide, no audio,
+/// ~12 s long starting at 10 % of the video's duration.
+///
+/// Returns the path to the cached WebM on success.
+async fn generate_tile_webm(abs: &Path, root: &Path) -> anyhow::Result<PathBuf> {
+    let cache_path = file_cache_path(abs, root, "vtiles", "tile.webm")
+        .ok_or_else(|| anyhow::anyhow!("cannot compute vtile cache path for {}", abs.display()))?;
+
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let info = video_info(abs)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("cannot read video info for {}", abs.display()))?;
+
+    let dur = info.duration;
+    // Start at 10 % of duration, but at least 3 s in (skip intros / logos).
+    let start = (dur * 0.10_f64).max(3.0_f64).min(dur.max(0.0));
+    // Clip length: 20 % of video, capped at 12 s, but at least 2 s.
+    let length = (dur * 0.20_f64).clamp(2.0_f64, 12.0_f64);
+
+    let ok = tokio::process::Command::new("nice")
+        .args([
+            "-n",
+            "10",
+            "ffmpeg",
+            "-ss",
+            &format!("{start:.2}"),
+            "-t",
+            &format!("{length:.2}"),
+            "-i",
+        ])
+        .arg(abs)
+        .args([
+            "-vf",
+            "scale=320:-2",
+            "-c:v",
+            "libvpx",
+            "-b:v",
+            "300k",
+            "-an",
+            "-y",
+        ])
+        .arg(&cache_path)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !ok || !cache_path.exists() {
+        anyhow::bail!(
+            "ffmpeg could not generate WebM tile preview — is ffmpeg with libvpx installed?"
+        );
+    }
+
+    Ok(cache_path)
+}
+
+/// `GET /api/vtile` — serve (generating on demand) the WebM tile-preview clip.
+pub async fn api_vtile(
+    Query(params): Query<VTileParams>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    };
+
+    if !load_features_for(&state, &db_root.root).video {
+        return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
+    }
+
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    let _permit = match VTHUMB_LIMITER.try_acquire() {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::ACCEPTED, "vtile queue full").into_response(),
+    };
+
+    match generate_tile_webm(&abs, &cache_root).await {
+        Ok(path) => match tokio::fs::read(&path).await {
+            Ok(data) => ([(header::CONTENT_TYPE, "video/webm")], data).into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
+        },
+        Err(_) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "WebM tile preview unavailable — install ffmpeg with libvpx",
+        )
+            .into_response(),
+    }
+}

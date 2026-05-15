@@ -42,7 +42,7 @@ const state = {
     aiAnalysing: new Set(),    // paths currently being analysed by AI
     aiVideoFrames: 12,         // preferred frame count for single-video AI analysis
     aiVideoFramesAuto: false,  // true => let backend choose frame count by duration
-    settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false, dir_preview_style: 'crop' }, // per-root settings (loaded from DB)
+    settings: { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false, dir_preview_style: 'crop', tile_preview_mode: 'sprite' }, // per-root settings (loaded from DB)
     sectionVisibility: _loadSectionVisibility(), // { tags, subjects, people, ai, distribution }
     sectionOrder: _loadSectionOrder(),            // ['tags','subjects','people','ai','distribution']
     sectionHeights: _loadSectionHeights(),        // { tags: px, subjects: px, ... } or null = auto
@@ -205,7 +205,7 @@ async function loadSettings() {
     try {
         state.settings = await api('/api/settings' + dirParam('?'));
     } catch (_) {
-        state.settings = { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false };
+        state.settings = { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false, dir_preview_style: 'crop', tile_preview_mode: 'sprite' };
     }
 }
 
