@@ -553,14 +553,7 @@ function _trickplayAttach(img, path) {
             }) + dirParam('&');
             const img = new Image();
             img.onload = () => {
-                const n = Math.max(1, Math.round(img.naturalWidth / 320));
-                const entry = { src, n, natW: img.naturalWidth, natH: img.naturalHeight };
-                _trickplayCache.set(path, entry);
-                spriteCacheEntry = entry;
-                // Show immediately if the user is still hovering and WebM is not ready.
-                if (card.matches(':hover') && _webmFullStatus.get(path) !== 'ready') {
-                    buildSpriteOverlay();
-                }
+                const n = Math.max(1, Math.round(img.naturalWidth / 480));
             };
             img.onerror = () => _trickplayCache.set(path, 'failed');
             img.src = src;
@@ -726,7 +719,7 @@ function _trickplayAttach(img, path) {
                 + dirParam('&');
             const preload = new Image();
             preload.onload = () => {
-                const n = Math.max(1, Math.round(preload.naturalWidth / 320));
+                const n = Math.max(1, Math.round(preload.naturalWidth / 480));
                 const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
                 _trickplayCache.set(path, entry);
                 _spriteCE = entry;
@@ -913,6 +906,23 @@ function _trickplayAttach(img, path) {
             }
         });
 
+        // Click: collapse floating popup (so the card can be selected normally).
+        card.addEventListener('click', e => {
+            if (e.target.closest('button, a')) return;
+            _apTeardown();
+            if (_isFloating) {
+                _isFloating = false;
+                v.style.position     = '';
+                v.style.inset        = '';
+                v.style.zIndex       = '';
+                v.style.width        = '';
+                v.style.height       = '';
+                v.style.left         = '';
+                v.style.top          = '';
+                v.style.borderRadius = '';
+            }
+        });
+
         // Proactively load the sprite sheet as soon as the thumbnail is ready.
         // Viewport priority is provided automatically: _trickplayAttach() is called
         // from _thumbReplace() which fires in IntersectionObserver-priority order,
@@ -940,9 +950,9 @@ function _trickplayAttach(img, path) {
             + dirParam('&');
         const preload = new Image();
         preload.onload = () => {
-            // Each frame is scaled to 320 px wide by the server; derive n from
+            // Each frame is scaled to 480 px wide by the server; derive n from
             // sprite width so the client doesn't need to pass or receive n.
-            const n = Math.max(1, Math.round(preload.naturalWidth / 320));
+            const n = Math.max(1, Math.round(preload.naturalWidth / 480));
             const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
             _trickplayCache.set(path, entry);
             cacheEntry = entry;

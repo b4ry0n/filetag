@@ -401,6 +401,15 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 // Trickplay sprite generation
 // ---------------------------------------------------------------------------
 
+/// Width in pixels of a single frame in a trickplay sprite sheet.
+/// Increasing this value improves display quality at the cost of larger cache
+/// files.  Must match the divisor used in the JS client (`/ SPRITE_FRAME_W`).
+const SPRITE_FRAME_W: usize = 480;
+
+/// Cache filename suffix used to namespace sprite files by resolution so that
+/// stale low-resolution caches are never accidentally served after an upgrade.
+const SPRITE_CACHE_SUFFIX: &str = "480w";
+
 /// Generate (or reuse from cache) a trickplay sprite sheet for `abs`.
 ///
 /// Returns the path to the cached WebP on success.  The file is guaranteed to
@@ -412,8 +421,13 @@ pub async fn generate_sprite_cached(
     n: usize,
     duration_secs: f64,
 ) -> anyhow::Result<PathBuf> {
-    let cache_path = file_cache_path(abs, root, "vthumbs", &format!("sprite{n}x1.webp"))
-        .ok_or_else(|| anyhow::anyhow!("cannot compute cache path for {}", abs.display()))?;
+    let cache_path = file_cache_path(
+        abs,
+        root,
+        "vthumbs",
+        &format!("sprite{n}x1_{SPRITE_CACHE_SUFFIX}.webp"),
+    )
+    .ok_or_else(|| anyhow::anyhow!("cannot compute cache path for {}", abs.display()))?;
 
     if cache_path.exists() {
         return Ok(cache_path);
@@ -428,7 +442,7 @@ pub async fn generate_sprite_cached(
         .collect();
 
     let scale_parts: Vec<String> = (0..n)
-        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+        .map(|i| format!("[{i}:v]scale={SPRITE_FRAME_W}:-2,setsar=1[f{i}]"))
         .collect();
     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
     let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
@@ -448,7 +462,7 @@ pub async fn generate_sprite_cached(
             "-frames:v",
             "1",
             "-q:v",
-            "4",
+            "80",
             "-y",
         ])
         .arg(&tmp_path)
@@ -556,7 +570,7 @@ fn build_sprite_filter(chunk_n: usize) -> (String, usize, usize) {
     let rows = chunk_n.div_ceil(cols);
 
     let scale_parts: Vec<String> = (0..chunk_n)
-        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+        .map(|i| format!("[{i}:v]scale={SPRITE_FRAME_W}:-2,setsar=1[f{i}]"))
         .collect();
 
     let mut filter_parts = scale_parts;
@@ -573,7 +587,7 @@ fn build_sprite_filter(chunk_n: usize) -> (String, usize, usize) {
             filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
         } else {
             // Partial last row: pad to full row width so vstack heights match.
-            let pad_w = cols * 320;
+            let pad_w = cols * SPRITE_FRAME_W;
             if row_len == 1 {
                 filter_parts.push(format!("[f{start}]pad={pad_w}:ih:0:0[r{row}]"));
             } else {
@@ -875,11 +889,15 @@ pub async fn api_vthumbs(
         (sprites_for_duration(dur, min_n, max_n), info)
     };
 
-    let cache_path =
-        match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.webp")) {
-            Some(p) => p,
-            None => return (StatusCode::INTERNAL_SERVER_ERROR, "Cache path error").into_response(),
-        };
+    let cache_path = match file_cache_path(
+        &abs,
+        &cache_root,
+        "vthumbs",
+        &format!("sprite{n}x1_{SPRITE_CACHE_SUFFIX}.webp"),
+    ) {
+        Some(p) => p,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, "Cache path error").into_response(),
+    };
 
     let cache_path = if !cache_path.exists() {
         // Use the dedicated vthumb semaphore (4 permits) so sprite generation
@@ -1028,15 +1046,19 @@ pub async fn api_vthumbs_pregen(
                 }
             };
             let n = sprites_for_duration(info.duration, min_n, max_n);
-            let cache_path =
-                match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.webp")) {
-                    Some(p) => p,
-                    None => {
-                        done += 1;
-                        jobs_store.lock().unwrap().progress(&job_id2, done, None);
-                        continue;
-                    }
-                };
+            let cache_path = match file_cache_path(
+                &abs,
+                &cache_root,
+                "vthumbs",
+                &format!("sprite{n}x1_{SPRITE_CACHE_SUFFIX}.webp"),
+            ) {
+                Some(p) => p,
+                None => {
+                    done += 1;
+                    jobs_store.lock().unwrap().progress(&job_id2, done, None);
+                    continue;
+                }
+            };
             if !cache_path.exists() {
                 let _permit = VTHUMB_LIMITER.acquire().await;
                 if !cache_path.exists() {
@@ -1052,7 +1074,7 @@ pub async fn api_vthumbs_pregen(
                         cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
                     }
                     let scale_parts: Vec<String> = (0..n)
-                        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+                        .map(|i| format!("[{i}:v]scale={SPRITE_FRAME_W}:-2,setsar=1[f{i}]"))
                         .collect();
                     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
                     let filter =

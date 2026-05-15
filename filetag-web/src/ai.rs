@@ -497,6 +497,33 @@ async fn response_text(resp: reqwest::Response) -> anyhow::Result<String> {
     Ok(text)
 }
 
+/// Detect the MIME type of an image from the magic bytes at the start of its
+/// base64-encoded representation.  Only the first 16 base64 chars (≈12 bytes)
+/// are decoded, so this is effectively free compared to sending the full
+/// payload to the AI API.  Falls back to `image/jpeg` when the format is
+/// unrecognised — most AI providers accept JPEG, PNG, WebP, and GIF.
+fn b64_image_mime(b64: &str) -> &'static str {
+    // Need at least one full 4-char base64 group (decodes to 3 bytes).
+    let prefix_len = (b64.len().min(16) / 4) * 4;
+    if prefix_len == 0 {
+        return "image/jpeg";
+    }
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64[..prefix_len]) else {
+        return "image/jpeg";
+    };
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        "image/webp"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else {
+        "image/jpeg"
+    }
+}
+
 /// Make a single VLM/LLM API call and return the assistant message content.
 async fn vlm_call(
     config: &AiConfig,
@@ -550,7 +577,8 @@ async fn vlm_call_multi(
         );
         let mut content_parts = vec![serde_json::json!({"type": "text", "text": prompt})];
         for b64 in b64_images {
-            let data_uri = format!("data:image/jpeg;base64,{b64}");
+            let mime = b64_image_mime(b64);
+            let data_uri = format!("data:{mime};base64,{b64}");
             content_parts
                 .push(serde_json::json!({"type": "image_url", "image_url": {"url": data_uri}}));
         }
@@ -2214,7 +2242,8 @@ async fn vlm_chat_with_history(
             if Some(i) == first_user_idx && !b64_images.is_empty() {
                 let mut parts = vec![serde_json::json!({"type": "text", "text": m.content})];
                 for b64 in b64_images {
-                    let data_uri = format!("data:image/jpeg;base64,{b64}");
+                    let mime = b64_image_mime(b64);
+                    let data_uri = format!("data:{mime};base64,{b64}");
                     parts.push(serde_json::json!({
                         "type": "image_url",
                         "image_url": { "url": data_uri }
