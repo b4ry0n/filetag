@@ -67,7 +67,7 @@ pub(crate) async fn evict_video_cache(video_dir: PathBuf, max_bytes: u64) {
 // Video info
 // ---------------------------------------------------------------------------
 
-/// Codec and duration information for a video file.
+/// Codec, duration, and geometry information for a video file.
 pub struct VideoInfo {
     /// Total duration in seconds.
     pub duration: f64,
@@ -75,6 +75,10 @@ pub struct VideoInfo {
     pub video_codec: String,
     /// Codec name of the first audio stream as reported by ffprobe (e.g. "aac", "ac3").
     pub audio_codec: String,
+    /// Width of the first video stream in pixels (0 if unknown).
+    pub width: u32,
+    /// Height of the first video stream in pixels (0 if unknown).
+    pub height: u32,
 }
 
 impl VideoInfo {
@@ -108,7 +112,7 @@ pub async fn video_info(path: &Path) -> Option<VideoInfo> {
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=codec_type,codec_name",
+            "format=duration:stream=codec_type,codec_name,width,height",
             "-of",
             "csv=p=0",
         ])
@@ -131,6 +135,8 @@ pub async fn video_info(path: &Path) -> Option<VideoInfo> {
     let mut video_codec = String::new();
     let mut audio_codec = String::new();
     let mut duration = 0f64;
+    let mut video_width: u32 = 0;
+    let mut video_height: u32 = 0;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -140,22 +146,35 @@ pub async fn video_info(path: &Path) -> Option<VideoInfo> {
             if d > 0.0 {
                 duration = d;
             }
-        } else if let Some(comma) = line.find(',') {
-            let left = &line[..comma];
-            let right = &line[comma + 1..];
-            // Identify which field is codec_type and which is codec_name.
-            let (kind, codec) = if left == "video" || left == "audio" {
-                (left, right)
-            } else if right == "video" || right == "audio" {
-                (right, left)
-            } else {
-                continue;
-            };
-            if kind == "video" && video_codec.is_empty() {
+            continue;
+        }
+        // CSV line: codec_type,codec_name[,width,height] (order of first two may vary).
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let (kind, codec) = if parts[0] == "video" || parts[0] == "audio" {
+            (parts[0], parts[1])
+        } else if parts[1] == "video" || parts[1] == "audio" {
+            (parts[1], parts[0])
+        } else {
+            continue;
+        };
+        if kind == "video" {
+            if video_codec.is_empty() {
                 video_codec = codec.to_owned();
-            } else if kind == "audio" && audio_codec.is_empty() {
-                audio_codec = codec.to_owned();
             }
+            if video_width == 0
+                && let (Some(w), Some(h)) = (
+                    parts.get(2).and_then(|s| s.parse::<u32>().ok()),
+                    parts.get(3).and_then(|s| s.parse::<u32>().ok()),
+                )
+            {
+                video_width = w;
+                video_height = h;
+            }
+        } else if kind == "audio" && audio_codec.is_empty() {
+            audio_codec = codec.to_owned();
         }
     }
     if duration <= 0.0 {
@@ -165,6 +184,8 @@ pub async fn video_info(path: &Path) -> Option<VideoInfo> {
         duration,
         video_codec,
         audio_codec,
+        width: video_width,
+        height: video_height,
     })
 }
 
@@ -401,25 +422,43 @@ pub async fn video_thumb_strip(path: &Path, root: &Path) -> Response {
 // Trickplay sprite generation
 // ---------------------------------------------------------------------------
 
-/// Width in pixels of a single frame in a trickplay sprite sheet.
-/// Increasing this value improves display quality at the cost of larger cache
-/// files.  Must match the divisor used in the JS client (`/ SPRITE_FRAME_W`).
-const SPRITE_FRAME_W: usize = 480;
+/// Target size in pixels for the **shortest side** of a single trickplay
+/// sprite frame.  Landscape frames are scaled so their height equals this
+/// value; portrait/square frames are scaled so their width equals it.  Using
+/// the shortest side as the anchor gives consistent pixel density regardless
+/// of the video's orientation.
+const SPRITE_SHORT_SIDE: usize = 320;
 
 /// Cache filename suffix used to namespace sprite files by resolution so that
-/// stale low-resolution caches are never accidentally served after an upgrade.
-const SPRITE_CACHE_SUFFIX: &str = "480w";
+/// stale caches from previous builds are never accidentally served.
+const SPRITE_CACHE_SUFFIX: &str = "320s";
+
+/// Return the ffmpeg `scale` filter string that scales the shortest dimension
+/// of each video frame to [`SPRITE_SHORT_SIDE`].
+fn sprite_scale_filter(video_width: u32, video_height: u32) -> String {
+    if video_width > 0 && video_width > video_height {
+        // Landscape: height is the short side.
+        format!("scale=-2:{SPRITE_SHORT_SIDE}")
+    } else {
+        // Portrait, square, or unknown dimensions: width is the short side.
+        format!("scale={SPRITE_SHORT_SIDE}:-2")
+    }
+}
 
 /// Generate (or reuse from cache) a trickplay sprite sheet for `abs`.
 ///
 /// Returns the path to the cached WebP on success.  The file is guaranteed to
-/// exist when `Ok` is returned.  The frame count `n` and video `duration_secs`
-/// must already be known by the caller (via [`video_info`] + [`sprites_for_duration`]).
+/// exist when `Ok` is returned.  The frame count `n`, video `duration_secs`,
+/// and dimensions must already be known by the caller (via [`video_info`] +
+/// [`sprites_for_duration`]).  Pass `video_width = 0` when dimensions are
+/// unknown; the function will fall back to portrait-style scaling.
 pub async fn generate_sprite_cached(
     abs: &Path,
     root: &Path,
     n: usize,
     duration_secs: f64,
+    video_width: u32,
+    video_height: u32,
 ) -> anyhow::Result<PathBuf> {
     let cache_path = file_cache_path(
         abs,
@@ -441,8 +480,9 @@ pub async fn generate_sprite_cached(
         .map(|i| duration_secs * (i as f64 + 0.5) / n as f64)
         .collect();
 
+    let scale = sprite_scale_filter(video_width, video_height);
     let scale_parts: Vec<String> = (0..n)
-        .map(|i| format!("[{i}:v]scale={SPRITE_FRAME_W}:-2,setsar=1[f{i}]"))
+        .map(|i| format!("[{i}:v]{scale},setsar=1[f{i}]"))
         .collect();
     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
     let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
@@ -566,11 +606,14 @@ fn pick_evenly(items: &[f64], n: usize) -> Vec<f64> {
 }
 
 fn build_sprite_filter(chunk_n: usize) -> (String, usize, usize) {
+    // AI sprites use a fixed 480 px width per frame regardless of orientation;
+    // they are consumed by a VLM, not displayed to the user.
+    const AI_FRAME_W: usize = 480;
     let cols = (chunk_n as f64).sqrt().ceil().max(1.0) as usize;
     let rows = chunk_n.div_ceil(cols);
 
     let scale_parts: Vec<String> = (0..chunk_n)
-        .map(|i| format!("[{i}:v]scale={SPRITE_FRAME_W}:-2,setsar=1[f{i}]"))
+        .map(|i| format!("[{i}:v]scale={AI_FRAME_W}:-2,setsar=1[f{i}]"))
         .collect();
 
     let mut filter_parts = scale_parts;
@@ -587,7 +630,7 @@ fn build_sprite_filter(chunk_n: usize) -> (String, usize, usize) {
             filter_parts.push(format!("{row_inputs}hstack={row_len}[r{row}]"));
         } else {
             // Partial last row: pad to full row width so vstack heights match.
-            let pad_w = cols * SPRITE_FRAME_W;
+            let pad_w = cols * AI_FRAME_W;
             if row_len == 1 {
                 filter_parts.push(format!("[f{start}]pad={pad_w}:ih:0:0[r{row}]"));
             } else {
@@ -889,6 +932,11 @@ pub async fn api_vthumbs(
         (sprites_for_duration(dur, min_n, max_n), info)
     };
 
+    // Helper to extract (width, height) from a VideoInfo option.
+    let dims = |info: &Option<VideoInfo>| -> (u32, u32) {
+        info.as_ref().map(|i| (i.width, i.height)).unwrap_or((0, 0))
+    };
+
     let cache_path = match file_cache_path(
         &abs,
         &cache_root,
@@ -912,22 +960,22 @@ pub async fn api_vthumbs(
         if cache_path.exists() {
             cache_path
         } else {
-            let dur = if let Some(ref i) = prefetched_info {
-                i.duration
+            let info = if prefetched_info.is_some() {
+                prefetched_info
             } else {
-                match video_info(&abs).await {
-                    Some(i) => i.duration,
-                    None => {
-                        return (
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            "Cannot read video metadata",
-                        )
-                            .into_response();
-                    }
-                }
+                video_info(&abs).await
             };
+            let dur = info.as_ref().map(|i| i.duration).unwrap_or(0.0);
+            if dur <= 0.0 {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Cannot read video metadata",
+                )
+                    .into_response();
+            }
+            let (vw, vh) = dims(&info);
 
-            match generate_sprite_cached(&abs, &cache_root, n, dur).await {
+            match generate_sprite_cached(&abs, &cache_root, n, dur, vw, vh).await {
                 Ok(p) => p,
                 Err(_) => {
                     return (
@@ -943,7 +991,18 @@ pub async fn api_vthumbs(
     };
 
     match tokio::fs::read(&cache_path).await {
-        Ok(data) => ([(header::CONTENT_TYPE, "image/webp")], data).into_response(),
+        Ok(data) => {
+            let n_str = n.to_string();
+            let n_val = axum::http::HeaderValue::from_str(&n_str)
+                .unwrap_or_else(|_| axum::http::HeaderValue::from_static("0"));
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("image/webp"),
+            );
+            headers.insert(axum::http::HeaderName::from_static("x-sprite-n"), n_val);
+            (headers, data).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
     }
 }
@@ -1073,8 +1132,9 @@ pub async fn api_vthumbs_pregen(
                     for t in &positions {
                         cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
                     }
+                    let scale = sprite_scale_filter(info.width, info.height);
                     let scale_parts: Vec<String> = (0..n)
-                        .map(|i| format!("[{i}:v]scale={SPRITE_FRAME_W}:-2,setsar=1[f{i}]"))
+                        .map(|i| format!("[{i}:v]{scale},setsar=1[f{i}]"))
                         .collect();
                     let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
                     let filter =

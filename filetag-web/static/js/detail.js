@@ -274,10 +274,36 @@ function _startTranscode(container, transcodeUrl, name) {
 // shifts a CSS background-position over the sprite, showing different frames
 // without any DOM or src changes (same technique as Jellyfin trickplay).
 
-const _trickplayCache  = new Map(); // path → {src, n} | 'loading' | 'failed'
+const _trickplayCache  = new Map(); // path → {src, n, natW, natH} | 'loading' | 'failed'
 // Tracks per-path WebM-full readiness for the webm-seek tile mode.
 // Values: 'pending' (generation triggered) | 'ready' (tile_full.webm exists).
 const _webmFullStatus  = new Map();
+
+/**
+ * Fetch a sprite sheet URL, read the X-Sprite-N response header to get the
+ * frame count, then load the image to obtain its natural dimensions.
+ * On success, calls onEntry({src, n, natW, natH}).
+ * On failure (missing header, network error, decode error), calls onFail().
+ * The caller is responsible for setting _trickplayCache to 'loading' first.
+ */
+function _fetchSpriteEntry(src, onEntry, onFail) {
+    fetch(src, { credentials: 'same-origin' })
+        .then(resp => {
+            const n = parseInt(resp.headers.get('X-Sprite-N') || '0', 10);
+            if (n < 1) { onFail(); return; }
+            return resp.blob().then(blob => {
+                const blobUrl = URL.createObjectURL(blob);
+                const img = new Image();
+                img.onload = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    onEntry({ src, n, natW: img.naturalWidth, natH: img.naturalHeight });
+                };
+                img.onerror = () => { URL.revokeObjectURL(blobUrl); onFail(); };
+                img.src = blobUrl;
+            });
+        })
+        .catch(onFail);
+}
 
 /**
  * Attach trickplay behaviour to the <img> that replaced a .card-thumb-pending
@@ -551,12 +577,21 @@ function _trickplayAttach(img, path) {
                 min_n: state.settings.sprite_min ?? 8,
                 max_n: state.settings.sprite_max ?? 16,
             }) + dirParam('&');
-            const img = new Image();
-            img.onload = () => {
-                const n = Math.max(1, Math.round(img.naturalWidth / 480));
-            };
-            img.onerror = () => _trickplayCache.set(path, 'failed');
-            img.src = src;
+            _fetchSpriteEntry(src,
+                (entry) => {
+                    _trickplayCache.set(path, entry);
+                    spriteCacheEntry = entry;
+                    if (card.matches(':hover') && _webmFullStatus.get(path) !== 'ready') {
+                        buildSpriteOverlay();
+                    }
+                },
+                () => {
+                    _trickplayCache.set(path, 'failed');
+                    setTimeout(() => {
+                        if (_trickplayCache.get(path) === 'failed') _trickplayCache.delete(path);
+                    }, 3000);
+                }
+            );
         }
 
         function buildSpriteOverlay() {
@@ -717,23 +752,21 @@ function _trickplayAttach(img, path) {
             const maxN = state.settings.sprite_max ?? 16;
             const src = '/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN })
                 + dirParam('&');
-            const preload = new Image();
-            preload.onload = () => {
-                const n = Math.max(1, Math.round(preload.naturalWidth / 480));
-                const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
-                _trickplayCache.set(path, entry);
-                _spriteCE = entry;
-                // Build overlay immediately if the user is already hovering and
-                // the video is not yet ready.
-                if (card.matches(':hover') && !_videoReady) _apBuildOverlay();
-            };
-            preload.onerror = () => {
-                _trickplayCache.set(path, 'failed');
-                setTimeout(() => {
-                    if (_trickplayCache.get(path) === 'failed') _trickplayCache.delete(path);
-                }, 3000);
-            };
-            preload.src = src;
+            _fetchSpriteEntry(src,
+                (entry) => {
+                    _trickplayCache.set(path, entry);
+                    _spriteCE = entry;
+                    // Build overlay immediately if the user is already hovering and
+                    // the video is not yet ready.
+                    if (card.matches(':hover') && !_videoReady) _apBuildOverlay();
+                },
+                () => {
+                    _trickplayCache.set(path, 'failed');
+                    setTimeout(() => {
+                        if (_trickplayCache.get(path) === 'failed') _trickplayCache.delete(path);
+                    }, 3000);
+                }
+            );
         }
 
         function _apBuildOverlay() {
@@ -948,28 +981,27 @@ function _trickplayAttach(img, path) {
         const maxN = state.settings.sprite_max ?? 16;
         const src = '/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN })
             + dirParam('&');
-        const preload = new Image();
-        preload.onload = () => {
-            // Each frame is scaled to 480 px wide by the server; derive n from
-            // sprite width so the client doesn't need to pass or receive n.
-            const n = Math.max(1, Math.round(preload.naturalWidth / 480));
-            const entry = { src, n, natW: preload.naturalWidth, natH: preload.naturalHeight };
-            _trickplayCache.set(path, entry);
-            cacheEntry = entry;
-            if (card.matches(':hover') && !pinnedEl) buildOverlay();
-            if (wantPin) buildInline();
-        };
-        preload.onerror = () => {
-            // Mark as failed; schedule a retry after 3 s so the next hover
-            // can try again without hammering a busy server.
-            _trickplayCache.set(path, 'failed');
-            setTimeout(() => {
-                if (_trickplayCache.get(path) === 'failed') {
-                    _trickplayCache.delete(path);
-                }
-            }, 3000);
-        };
-        preload.src = src;
+        // Use fetch() so we can read the X-Sprite-N response header to get the
+        // exact frame count (frame width is no longer constant because we scale
+        // by the shortest side rather than a fixed width).
+        _fetchSpriteEntry(src,
+            (entry) => {
+                _trickplayCache.set(path, entry);
+                cacheEntry = entry;
+                if (card.matches(':hover') && !pinnedEl) buildOverlay();
+                if (wantPin) buildInline();
+            },
+            () => {
+                // Mark as failed; schedule a retry after 3 s so the next hover
+                // can try again without hammering a busy server.
+                _trickplayCache.set(path, 'failed');
+                setTimeout(() => {
+                    if (_trickplayCache.get(path) === 'failed') {
+                        _trickplayCache.delete(path);
+                    }
+                }, 3000);
+            }
+        );
     }
 
     function buildOverlay() {
