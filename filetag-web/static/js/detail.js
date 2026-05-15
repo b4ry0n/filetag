@@ -280,6 +280,18 @@ const _trickplayCache  = new Map(); // path → {src, n, natW, natH} | 'loading'
 const _webmFullStatus  = new Map();
 
 /**
+ * Convert viewport-relative (vpLeft, vpTop) coordinates to absolute
+ * coordinates within the #content scroll container.  All overlay popups are
+ * appended to #content so they move with the grid when the user scrolls.
+ * Returns { sc: HTMLElement, left: number, top: number }.
+ */
+function _overlayAbsolute(vpLeft, vpTop) {
+    const sc = document.getElementById('content');
+    const r  = sc.getBoundingClientRect();
+    return { sc, left: vpLeft - r.left + sc.scrollLeft, top: vpTop - r.top + sc.scrollTop };
+}
+
+/**
  * Fetch a sprite sheet URL, read the X-Sprite-N response header to get the
  * frame count, then load the image to obtain its natural dimensions.
  * On success, calls onEntry({src, n, natW, natH}).
@@ -381,24 +393,25 @@ function _trickplayAttach(img, path) {
 
         function buildWebmOverlay() {
             if (floatVideo || pinnedVideo) return;
-            const cardRect = wrap.getBoundingClientRect();
-            if (!cardRect.width) return;
+            if (!wrap.getBoundingClientRect().width) return;
 
             floatVideo = makeWebmVideo();
             floatVideo.className = 'card-trickplay-sprite';
             // Hide until we know the video's dimensions.
             Object.assign(floatVideo.style, {
-                position: 'fixed', zIndex: '1000',
+                position: 'absolute', zIndex: '1000',
                 display: 'none', objectFit: 'cover', borderRadius: '4px',
             });
 
             const positionOverlay = () => {
                 if (!floatVideo) return;
-                const g = _videoPopupGeometry(floatVideo, cardRect);
+                const freshRect = wrap.getBoundingClientRect();
+                const g = _videoPopupGeometry(floatVideo, freshRect);
+                const abs = _overlayAbsolute(g.left, g.top);
                 Object.assign(floatVideo.style, {
                     width:   g.popupW + 'px', height: g.popupH + 'px',
-                    left:    g.left.toFixed(1) + 'px',
-                    top:     g.top.toFixed(1)  + 'px',
+                    left:    abs.left.toFixed(1) + 'px',
+                    top:     abs.top.toFixed(1)  + 'px',
                     display: '',
                 });
             };
@@ -406,7 +419,8 @@ function _trickplayAttach(img, path) {
             // Fallback if metadata stalls (e.g. server slow to respond).
             setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionOverlay(); }, 800);
 
-            document.body.appendChild(floatVideo);
+            const sc = document.getElementById('content');
+            sc.appendChild(floatVideo);
             floatVideo.play().catch(() => {});
         }
 
@@ -500,29 +514,31 @@ function _trickplayAttach(img, path) {
 
         function buildSeekOverlay() {
             if (floatVideo || pinnedVideo) return;
-            const cardRect = wrap.getBoundingClientRect();
-            if (!cardRect.width) return;
+            if (!wrap.getBoundingClientRect().width) return;
 
             floatVideo = makeSeekVideo(false);
             floatVideo.className = 'card-trickplay-sprite';
             Object.assign(floatVideo.style, {
-                position: 'fixed', zIndex: '1000',
+                position: 'absolute', zIndex: '1000',
                 display: 'none', objectFit: 'cover', borderRadius: '4px',
             });
 
             const positionOverlay = () => {
                 if (!floatVideo) return;
-                const g = _videoPopupGeometry(floatVideo, cardRect);
+                const freshRect = wrap.getBoundingClientRect();
+                const g = _videoPopupGeometry(floatVideo, freshRect);
+                const abs = _overlayAbsolute(g.left, g.top);
                 Object.assign(floatVideo.style, {
                     width:   g.popupW + 'px', height: g.popupH + 'px',
-                    left:    g.left.toFixed(1) + 'px',
-                    top:     g.top.toFixed(1)  + 'px',
+                    left:    abs.left.toFixed(1) + 'px',
+                    top:     abs.top.toFixed(1)  + 'px',
                     display: '',
                 });
             };
             floatVideo.addEventListener('loadedmetadata', positionOverlay, { once: true });
             setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionOverlay(); }, 800);
-            document.body.appendChild(floatVideo);
+            const sc = document.getElementById('content');
+            sc.appendChild(floatVideo);
         }
 
         function buildSeekInline(clientX) {
@@ -617,20 +633,21 @@ function _trickplayAttach(img, path) {
             let top  = cardRect.top  + (cardRect.height - popupH) / 2;
             left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
             top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+            const abs = _overlayAbsolute(left, top);
             spriteEl = document.createElement('div');
             spriteEl.className = 'card-trickplay-sprite';
             Object.assign(spriteEl.style, {
-                position:        'fixed',
+                position:        'absolute',
                 zIndex:          '1000',
                 pointerEvents:   'none',
                 width:           popupW + 'px',
                 height:          popupH + 'px',
-                left:            left.toFixed(1) + 'px',
-                top:             top.toFixed(1)  + 'px',
+                left:            abs.left.toFixed(1) + 'px',
+                top:             abs.top.toFixed(1)  + 'px',
                 backgroundImage: `url(${JSON.stringify(spriteCacheEntry.src)})`,
                 backgroundRepeat: 'no-repeat',
             });
-            document.body.appendChild(spriteEl);
+            abs.sc.appendChild(spriteEl);
             showSpriteFrame(0);
         }
 
@@ -681,7 +698,8 @@ function _trickplayAttach(img, path) {
                         }
                     });
                 }
-            } catch (_) {
+            } catch (err) {
+                console.error('[webm-seek] vtile-full trigger failed:', err);
                 // Allow retry on next hover.
                 _webmFullStatus.delete(path);
             }
@@ -725,6 +743,9 @@ function _trickplayAttach(img, path) {
                     pinnedVideo = null;
                     buildSeekInline(e.clientX);
                 }
+            } else {
+                // Sprite fallback visible — click dismisses it.
+                teardownSpriteOverlay();
             }
         });
 
@@ -794,23 +815,23 @@ function _trickplayAttach(img, path) {
             let top  = cardRect.top  + (cardRect.height - popupH) / 2;
             left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
             top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
+            const abs = _overlayAbsolute(left, top);
 
             _spriteEl = document.createElement('div');
             _spriteEl.className = 'card-trickplay-sprite';
             Object.assign(_spriteEl.style, {
-                position:        'fixed',
+                position:        'absolute',
                 zIndex:          '1000',
                 pointerEvents:   'none',
                 width:           popupW + 'px',
                 height:          popupH + 'px',
-                left:            left.toFixed(1) + 'px',
-                top:             top.toFixed(1)  + 'px',
+                left:            abs.left.toFixed(1) + 'px',
+                top:             abs.top.toFixed(1)  + 'px',
                 backgroundImage: `url(${JSON.stringify(_spriteCE.src)})`,
                 backgroundRepeat:'no-repeat',
                 backgroundSize:  'auto 100%',
             });
-            document.body.appendChild(_spriteEl);
-            window.addEventListener('scroll', _apReposition, { passive: true, capture: true });
+            abs.sc.appendChild(_spriteEl);
             _apShowFrame(0);
         }
 
@@ -835,24 +856,7 @@ function _trickplayAttach(img, path) {
             if (_spriteEl) {
                 _spriteEl.remove();
                 _spriteEl = null;
-                window.removeEventListener('scroll', _apReposition, { capture: true });
             }
-        }
-
-        function _apReposition() {
-            if (!_spriteEl) return;
-            requestAnimationFrame(() => {
-                if (!_spriteEl) return;
-                const cardRect = wrap.getBoundingClientRect();
-                const popupW = parseFloat(_spriteEl.style.width);
-                const popupH = parseFloat(_spriteEl.style.height);
-                let left = cardRect.left + (cardRect.width  - popupW) / 2;
-                let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-                left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-                top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-                _spriteEl.style.left = left.toFixed(1) + 'px';
-                _spriteEl.style.top  = top.toFixed(1)  + 'px';
-            });
         }
 
         // -- Phase 3: WebM video element (background generation + polling) --
@@ -871,7 +875,8 @@ function _trickplayAttach(img, path) {
 
         let _videoReady = false;
         v.addEventListener('canplay', () => {
-            _videoReady = true;
+            _videoReady   = true;
+            _videoVisible = true;
             v.style.opacity = '1';
             // Remove sprite overlay; playing video replaces it.
             _apTeardown();
@@ -887,10 +892,11 @@ function _trickplayAttach(img, path) {
         });
 
         // -- Event handlers: sprite behaviour while video not ready, video popup once ready --
-        let _isFloating = false;
+        let _isFloating  = false;
+        let _videoVisible = false; // toggled by click once video has loaded
 
         card.addEventListener('mouseenter', () => {
-            if (_videoReady) {
+            if (_videoReady && _videoVisible) {
                 if (_isFloating) return;
                 _isFloating = true;
                 const cardRect = wrap.getBoundingClientRect();
@@ -913,7 +919,7 @@ function _trickplayAttach(img, path) {
         }, { passive: true });
 
         card.addEventListener('mousemove', e => {
-            if (_videoReady) return;
+            if (_videoReady && _videoVisible) return;
             if (!_spriteCE) return;
             if (!_spriteEl) _apBuildOverlay();
             const rect = wrap.getBoundingClientRect();
@@ -922,7 +928,7 @@ function _trickplayAttach(img, path) {
         }, { passive: true });
 
         card.addEventListener('mouseleave', () => {
-            if (_videoReady) {
+            if (_videoReady && _videoVisible) {
                 if (!_isFloating) return;
                 _isFloating = false;
                 // Remove all inline overrides; .card-trickplay-pinned CSS takes over.
@@ -939,7 +945,8 @@ function _trickplayAttach(img, path) {
             }
         });
 
-        // Click: collapse floating popup (so the card can be selected normally).
+        // Click: toggle video visibility.  When hidden, hover shows the sprite fallback
+        // instead; clicking again while hidden restores the video.
         card.addEventListener('click', e => {
             if (e.target.closest('button, a')) return;
             _apTeardown();
@@ -954,6 +961,11 @@ function _trickplayAttach(img, path) {
                 v.style.top          = '';
                 v.style.borderRadius = '';
             }
+            if (_videoReady) {
+                _videoVisible = !_videoVisible;
+                v.style.opacity = _videoVisible ? '1' : '0';
+                if (_videoVisible) v.play().catch(() => {});
+            }
         });
 
         // Proactively load the sprite sheet as soon as the thumbnail is ready.
@@ -961,6 +973,11 @@ function _trickplayAttach(img, path) {
         // from _thumbReplace() which fires in IntersectionObserver-priority order,
         // so cards visible in the viewport have their sprites loaded first.
         _apEnsureSprite();
+
+        // Queue vtile pregeneration for this card in viewport-entry order.
+        // _queueVtilePregen (actions.js) batches requests with a short debounce
+        // so that a screenful of cards submits one job instead of N individual jobs.
+        if (typeof _queueVtilePregen === 'function') _queueVtilePregen(path);
 
         return;
     }
@@ -1038,22 +1055,22 @@ function _trickplayAttach(img, path) {
         left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
         top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
 
+        const abs = _overlayAbsolute(left, top);
         spriteEl = document.createElement('div');
         spriteEl.className = 'card-trickplay-sprite';
         Object.assign(spriteEl.style, {
-            position:        'fixed',
+            position:        'absolute',
             zIndex:          '1000',
             pointerEvents:   'none',
             width:           popupW + 'px',
             height:          popupH + 'px',
-            left:            left.toFixed(1) + 'px',
-            top:             top.toFixed(1)  + 'px',
+            left:            abs.left.toFixed(1) + 'px',
+            top:             abs.top.toFixed(1)  + 'px',
             backgroundImage: `url(${JSON.stringify(cacheEntry.src)})`,
             backgroundRepeat:'no-repeat',
             backgroundSize:  'auto 100%',
         });
-        document.body.appendChild(spriteEl);
-        window.addEventListener('scroll', reposition, { passive: true, capture: true });
+        abs.sc.appendChild(spriteEl);
         showFrame(0);
     }
 
@@ -1085,23 +1102,6 @@ function _trickplayAttach(img, path) {
     function teardownInline() {
         wantPin = false;
         if (pinnedEl) { pinnedEl.remove(); pinnedEl = null; }
-    }
-
-    /** Recompute spriteEl position from the card's current viewport rect. */
-    function reposition() {
-        if (!spriteEl) return;
-        requestAnimationFrame(() => {
-            if (!spriteEl) return;
-            const cardRect = wrap.getBoundingClientRect();
-            const popupW = parseFloat(spriteEl.style.width);
-            const popupH = parseFloat(spriteEl.style.height);
-            let left = cardRect.left + (cardRect.width  - popupW) / 2;
-            let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-            left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-            top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-            spriteEl.style.left = left.toFixed(1) + 'px';
-            spriteEl.style.top  = top.toFixed(1)  + 'px';
-        });
     }
 
     /** Jump to a discrete frame in the floating overlay. */
@@ -1159,7 +1159,6 @@ function _trickplayAttach(img, path) {
         if (spriteEl) {
             spriteEl.remove();
             spriteEl = null;
-            window.removeEventListener('scroll', reposition, { capture: true });
         }
     }
 
@@ -1270,46 +1269,29 @@ function _thumbHoverAttach(img, blobUrl) {
         left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
         top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
 
+        const abs = _overlayAbsolute(left, top);
         popupEl = document.createElement('div');
         popupEl.className = 'card-thumb-popup';
         Object.assign(popupEl.style, {
             width:  popupW + 'px',
             height: popupH + 'px',
-            left:   left.toFixed(1) + 'px',
-            top:    top.toFixed(1)  + 'px',
+            left:   abs.left.toFixed(1) + 'px',
+            top:    abs.top.toFixed(1)  + 'px',
         });
         const popupImg = document.createElement('img');
         popupImg.src = blobUrl;
         popupImg.alt = '';
         popupEl.appendChild(popupImg);
-        document.body.appendChild(popupEl);
-        window.addEventListener('scroll', repositionPopup, { passive: true, capture: true });
+        abs.sc.appendChild(popupEl);
         // Register globally so keyboard shortcuts can dismiss the popup even
         // when the card DOM node is replaced (and mouseleave never fires).
         _activeThumbPopupTeardown = teardownPopup;
-    }
-
-    function repositionPopup() {
-        if (!popupEl) return;
-        requestAnimationFrame(() => {
-            if (!popupEl) return;
-            const cardRect = wrap.getBoundingClientRect();
-            const popupW = parseFloat(popupEl.style.width);
-            const popupH = parseFloat(popupEl.style.height);
-            let left = cardRect.left + (cardRect.width  - popupW) / 2;
-            let top  = cardRect.top  + (cardRect.height - popupH) / 2;
-            left = Math.max(4, Math.min(left, window.innerWidth  - popupW - 4));
-            top  = Math.max(4, Math.min(top,  window.innerHeight - popupH - 4));
-            popupEl.style.left = left.toFixed(1) + 'px';
-            popupEl.style.top  = top.toFixed(1)  + 'px';
-        });
     }
 
     function teardownPopup() {
         if (popupEl) {
             popupEl.remove();
             popupEl = null;
-            window.removeEventListener('scroll', repositionPopup, { capture: true });
         }
         if (_activeThumbPopupTeardown === teardownPopup) {
             _activeThumbPopupTeardown = null;

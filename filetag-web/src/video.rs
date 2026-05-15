@@ -1128,7 +1128,7 @@ pub async fn api_vthumbs_pregen(
                         .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
                         .collect();
                     let mut cmd = tokio::process::Command::new("nice");
-                    cmd.args(["-n", "15", "ffmpeg"]);
+                    cmd.args(["-n", "10", "ffmpeg"]);
                     for t in &positions {
                         cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
                     }
@@ -1305,7 +1305,7 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
     let ok = tokio::process::Command::new("nice")
         .args([
             "-n",
-            "10",
+            "15",
             "ffmpeg",
             "-ss",
             &format!("{start:.2}"),
@@ -1458,6 +1458,12 @@ pub async fn api_vtile_full(
     }
 }
 
+/// Query params for `POST /api/vtile-full`.
+#[derive(Deserialize)]
+pub struct VtileFullTriggerQuery {
+    pub dir: Option<String>,
+}
+
 /// Body for `POST /api/vtile-full`.
 #[derive(Deserialize)]
 pub struct VtileFullTriggerBody {
@@ -1481,7 +1487,7 @@ pub struct VtileFullTriggerResponse {
 /// while generation is in progress returns the same `job_id` without
 /// starting a second transcoding process.
 pub async fn api_vtile_full_trigger(
-    Query(params): Query<VTileParams>,
+    Query(params): Query<VtileFullTriggerQuery>,
     State(state): State<Arc<AppState>>,
     Json(body): Json<VtileFullTriggerBody>,
 ) -> Response {

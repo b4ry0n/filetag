@@ -12,6 +12,7 @@
 
 let _pollTimer = null;
 let _panelOpen = false;
+let _lastJobsJson = '';  // last serialised snapshot; avoids redundant DOM updates
 
 // Callbacks to fire when a specific job reaches 'done' status.
 // Map<job_id, Array<Function>>
@@ -51,7 +52,12 @@ async function _pollJobs() {
         state.jobs = data.jobs || [];
     } catch (_) {
         // Silently ignore network errors during polling.
+        return;
     }
+
+    const newJson = JSON.stringify(state.jobs);
+    const changed = newJson !== _lastJobsJson;
+    _lastJobsJson = newJson;
 
     // Fire done callbacks before re-rendering so callbacks can update DOM immediately.
     if (_jobDoneCallbacks.size > 0) {
@@ -63,8 +69,8 @@ async function _pollJobs() {
             }
         });
     }
-    renderJobsBar();
-    if (_panelOpen) renderJobsList();
+    if (changed) renderJobsBar();
+    if (_panelOpen && changed) renderJobsList();
 
     const hasActive = (state.jobs || []).some(j =>
         j.status === 'pending' || j.status === 'running');
@@ -117,6 +123,7 @@ function toggleJobsPanel() {
     const panel = document.getElementById('jobs-panel');
     if (panel) panel.classList.toggle('hidden', !_panelOpen);
     if (_panelOpen) {
+        _lastJobsJson = '';  // force a full render on open
         renderJobsList();
         startJobPolling();
     }

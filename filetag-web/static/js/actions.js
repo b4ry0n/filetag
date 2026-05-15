@@ -1112,8 +1112,16 @@ async function pregenSprites() {
         if (tileMode === 'sprite') {
             // Submit a background job for trickplay sprite-sheet generation.
             res = await apiPost('/api/vthumbs/pregenerate' + dirParam('?'), { paths: videoPaths });
+        } else if (tileMode === 'autoplay') {
+            // autoplay mode: generate sprite sheets first (used as hover fallback),
+            // then generate the WebM tile previews.
+            try {
+                const sr = await apiPost('/api/vthumbs/pregenerate' + dirParam('?'), { paths: videoPaths });
+                if (sr?.job_id) onJobSubmitted(sr.job_id);
+            } catch (_) {}
+            res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
         } else {
-            // webm / autoplay: submit background WebM tile-preview generation job.
+            // webm: submit background WebM tile-preview generation job.
             res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
         }
         if (res?.job_id) onJobSubmitted(res.job_id);
@@ -1132,6 +1140,33 @@ async function pregenSprites() {
 // this session.  Prevents duplicate pregen jobs on repeated navigation.
 const _autoPregenDirs = new Set();
 
+// ---------------------------------------------------------------------------
+// Viewport-priority vtile pregen queue (autoplay mode)
+// ---------------------------------------------------------------------------
+// In autoplay mode, WebM tile previews are NOT batch-submitted for the whole
+// directory.  Instead, each card queues itself here as it enters the viewport
+// (via _trickplayAttach in detail.js), so the currently-visible tiles are
+// always generated first.  A short debounce batches simultaneous entries.
+const _vtilePregenQueue = [];
+let   _vtilePregenTimer = null;
+
+function _queueVtilePregen(path) {
+    if (_vtilePregenQueue.includes(path)) return;
+    _vtilePregenQueue.push(path);
+    if (_vtilePregenTimer) clearTimeout(_vtilePregenTimer);
+    _vtilePregenTimer = setTimeout(_flushVtilePregenQueue, 150);
+}
+
+async function _flushVtilePregenQueue() {
+    _vtilePregenTimer = null;
+    if (_vtilePregenQueue.length === 0) return;
+    const batch = _vtilePregenQueue.splice(0);  // drain current snapshot
+    try {
+        const res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: batch });
+        if (res?.job_id) onJobSubmitted(res.job_id);
+    } catch (_) {}
+}
+
 async function _autoPregenVtiles() {
     const tileMode = state.settings.tile_preview_mode ?? 'sprite';
     if (tileMode !== 'webm' && tileMode !== 'autoplay') return;
@@ -1140,6 +1175,10 @@ async function _autoPregenVtiles() {
     const dirKey = state.currentPath || '';
     if (!dirKey || _autoPregenDirs.has(dirKey)) return;
     _autoPregenDirs.add(dirKey);
+
+    // Reset the viewport-priority queue so a new directory starts fresh.
+    _vtilePregenQueue.length = 0;
+    if (_vtilePregenTimer) { clearTimeout(_vtilePregenTimer); _vtilePregenTimer = null; }
 
     const VIDEO_EXTS = new Set([
         'mp4','webm','mkv','avi','mov','wmv','flv','m4v','3gp','f4v','mpg','mpeg',
@@ -1154,6 +1193,19 @@ async function _autoPregenVtiles() {
 
     if (videoPaths.length === 0) return;
 
+    if (tileMode === 'autoplay') {
+        // autoplay mode: only batch-generate sprite sheets here (fast, used as
+        // hover fallback).  WebM tile previews are queued individually as each
+        // card enters the viewport via _queueVtilePregen(), so visible tiles are
+        // always processed before off-screen ones.
+        try {
+            const sr = await apiPost('/api/vthumbs/pregenerate' + dirParam('?'), { paths: videoPaths });
+            if (sr?.job_id) onJobSubmitted(sr.job_id);
+        } catch (_) {}
+        return;
+    }
+
+    // webm mode: batch-submit the whole directory at once (no viewport concept).
     try {
         const res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
         if (res?.job_id) onJobSubmitted(res.job_id);
@@ -1258,6 +1310,10 @@ async function saveVideoSettings() {
             state.settings.tile_preview_mode = body.tile_preview_mode;
             state.settings.vtile_duration = body.vtile_duration;
             updatePregenBtn();
+            // Clear pregen cache for the current directory so that switching
+            // to webm/autoplay mode immediately triggers vtile pregen.
+            _autoPregenDirs.delete(state.currentPath || '');
+            renderContent();
         } catch (e) {
             showToast('Failed to save settings: ' + e.message);
             return;

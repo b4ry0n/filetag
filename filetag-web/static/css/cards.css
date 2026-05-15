@@ -206,9 +206,9 @@
     pointer-events: all;
 }
 
-/* Thumb hover popup: fixed-position image popup for images / archives */
+/* Thumb hover popup: image popup for images / archives (absolute within #content) */
 .card-thumb-popup {
-    position: fixed;
+    position: absolute;
     z-index: 1000;
     pointer-events: none;
     border-radius: 4px;
