@@ -1066,9 +1066,26 @@ async function clearCache(all = false) {
     }
 }
 
+function updatePregenBtn() {
+    const btn = document.getElementById('pregen-sprites-btn');
+    if (!btn) return;
+    const mode = state.settings.tile_preview_mode ?? 'sprite';
+    if (mode === 'webm-seek') {
+        btn.hidden = true;
+    } else {
+        btn.hidden = false;
+        const key = mode === 'sprite' ? 'toolbar.sprites-gen' : 'toolbar.tiles-gen';
+        btn.textContent = t(key);
+    }
+}
+
 async function pregenSprites() {
     const menu = document.getElementById('more-menu');
     if (menu) menu.hidden = true;
+
+    const tileMode = state.settings.tile_preview_mode ?? 'sprite';
+    // webm-seek serves the original file directly — nothing to pre-generate.
+    if (tileMode === 'webm-seek') return;
 
     const VIDEO_EXTS = new Set([
         'mp4','webm','mkv','avi','mov','wmv','flv','m4v','3gp','f4v','mpg','mpeg',
@@ -1090,23 +1107,39 @@ async function pregenSprites() {
     const btn = document.getElementById('pregen-sprites-btn');
     btn.disabled = true;
 
-    const toast = showToast(`Generating video sprites… (0 / ${videoPaths.length})`, 0);
-    toast.classList.add('toast-progress');
-
-    let done = 0;
-    for (const path of videoPaths) {
-        updateToast(toast, t('toolbar.sprites-gen') + ` (${done} / ${videoPaths.length})`);
-        try {
-            const minN = state.settings.sprite_min ?? 8;
-            const maxN = state.settings.sprite_max ?? 16;
-            await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + dirParam('&'));
-        } catch (_) { /* ignore */ }
-        done++;
-        _trickplayCache.delete(path);
+    if (tileMode === 'sprite') {
+        // Generate trickplay sprite sheets.
+        const toast = showToast(t('toolbar.sprites-gen') + ` (0 / ${videoPaths.length})`, 0);
+        toast.classList.add('toast-progress');
+        let done = 0;
+        for (const path of videoPaths) {
+            updateToast(toast, t('toolbar.sprites-gen') + ` (${done} / ${videoPaths.length})`);
+            try {
+                const minN = state.settings.sprite_min ?? 8;
+                const maxN = state.settings.sprite_max ?? 16;
+                await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + dirParam('&'));
+            } catch (_) { /* ignore */ }
+            done++;
+            _trickplayCache.delete(path);
+        }
+        dismissToast(toast);
+        showToast(t('toast.sprites-done'));
+    } else {
+        // webm / autoplay: generate (and cache) WebM tile preview clips.
+        const toast = showToast(t('toolbar.tiles-gen') + ` (0 / ${videoPaths.length})`, 0);
+        toast.classList.add('toast-progress');
+        let done = 0;
+        for (const path of videoPaths) {
+            updateToast(toast, t('toolbar.tiles-gen') + ` (${done} / ${videoPaths.length})`);
+            try {
+                await fetch('/api/vtile?' + new URLSearchParams({ path }) + dirParam('&'));
+            } catch (_) { /* ignore */ }
+            done++;
+        }
+        dismissToast(toast);
+        showToast(t('toast.tiles-done'));
     }
 
-    dismissToast(toast);
-    showToast(t('toast.sprites-done'));
     btn.disabled = false;
 }
 
@@ -1207,6 +1240,7 @@ async function saveVideoSettings() {
             state.settings.dir_preview_style = body.dir_preview_style;
             state.settings.tile_preview_mode = body.tile_preview_mode;
             state.settings.vtile_duration = body.vtile_duration;
+            updatePregenBtn();
         } catch (e) {
             showToast('Failed to save settings: ' + e.message);
             return;

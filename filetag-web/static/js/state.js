@@ -207,6 +207,7 @@ async function loadSettings() {
     } catch (_) {
         state.settings = { sprite_min: 8, sprite_max: 16, feature_video: false, feature_imagemagick: false, feature_pdf: false, dir_preview_style: 'crop', tile_preview_mode: 'sprite', vtile_duration: 8 };
     }
+    if (typeof updatePregenBtn === 'function') updatePregenBtn();
 }
 
 async function loadAuthStatus() {
