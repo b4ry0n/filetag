@@ -1296,9 +1296,12 @@ pub async fn api_vtile(
     }
 }
 
-/// `GET /api/vtile-full` — serve the original video file with Range support so
-/// the browser can seek to arbitrary positions for the `webm-seek` tile preview
-/// mode.  No transcoding or clip generation; the original file is served as-is.
+/// `GET /api/vtile-full` — serve a full-length WebM re-encode of the video with
+/// Range support so the browser can seek to arbitrary positions for the
+/// `webm-seek` tile preview mode.  The original container/codec is irrelevant
+/// because the file is always transcoded to VP8/WebM (cached as
+/// `tile_full.webm`), ensuring browser compatibility for formats like AVI, FLV,
+/// WMV, etc.
 pub async fn api_vtile_full(
     Query(params): Query<VTileParams>,
     State(state): State<Arc<AppState>>,
@@ -1316,10 +1319,23 @@ pub async fn api_vtile_full(
         return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
     }
 
-    let (abs, _cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
 
-    serve_file_range(&abs, &headers).await
+    let _permit = match VTHUMB_LIMITER.try_acquire() {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::ACCEPTED, "vtile queue full").into_response(),
+    };
+
+    // clip_secs = 0 → full video; cached as tile_full.webm.
+    match generate_tile_webm(&abs, &cache_root, 0).await {
+        Ok(webm_path) => crate::preview::serve_file_range(&webm_path, &headers).await,
+        Err(_) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "WebM full-video preview unavailable — install ffmpeg with libvpx",
+        )
+            .into_response(),
+    }
 }
