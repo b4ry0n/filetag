@@ -15,11 +15,13 @@ let _panelOpen = false;
 
 // Kind → emoji icon
 const KIND_ICONS = {
-    'tag-dir':    '🏷',
-    'ai-batch':   '🤖',
-    'face-scan':  '👤',
-    'similarity': '🔗',
-    'download':   '⬇',
+    'tag-dir':      '🏷',
+    'sprites':      '🎞',
+    'tile-preview': '▶',
+    'ai-batch':     '🤖',
+    'face-scan':    '👤',
+    'similarity':   '🔗',
+    'download':     '⬇',
 };
 
 // ---------------------------------------------------------------------------

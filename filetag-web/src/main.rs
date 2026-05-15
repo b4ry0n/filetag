@@ -398,6 +398,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/thumb/{*path}", get(preview::thumb_handler))
         .route("/api/vthumbs", get(video::api_vthumbs))
         .route("/api/vthumbs/pregenerate", post(video::api_vthumbs_pregen))
+        .route("/api/vtile/pregenerate", post(video::api_vtile_pregen))
         .route("/api/vtile", get(video::api_vtile))
         .route("/api/vtile-full", get(video::api_vtile_full))
         .route("/api/dir-thumbs", get(preview::api_dir_thumbs))

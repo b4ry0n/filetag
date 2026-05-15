@@ -1107,40 +1107,21 @@ async function pregenSprites() {
     const btn = document.getElementById('pregen-sprites-btn');
     btn.disabled = true;
 
-    if (tileMode === 'sprite') {
-        // Generate trickplay sprite sheets.
-        const toast = showToast(t('toolbar.sprites-gen') + ` (0 / ${videoPaths.length})`, 0);
-        toast.classList.add('toast-progress');
-        let done = 0;
-        for (const path of videoPaths) {
-            updateToast(toast, t('toolbar.sprites-gen') + ` (${done} / ${videoPaths.length})`);
-            try {
-                const minN = state.settings.sprite_min ?? 8;
-                const maxN = state.settings.sprite_max ?? 16;
-                await fetch('/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN }) + dirParam('&'));
-            } catch (_) { /* ignore */ }
-            done++;
-            _trickplayCache.delete(path);
+    try {
+        let res;
+        if (tileMode === 'sprite') {
+            // Submit a background job for trickplay sprite-sheet generation.
+            res = await apiPost('/api/vthumbs/pregenerate' + dirParam('?'), { paths: videoPaths });
+        } else {
+            // webm / autoplay: submit background WebM tile-preview generation job.
+            res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
         }
-        dismissToast(toast);
-        showToast(t('toast.sprites-done'));
-    } else {
-        // webm / autoplay: generate (and cache) WebM tile preview clips.
-        const toast = showToast(t('toolbar.tiles-gen') + ` (0 / ${videoPaths.length})`, 0);
-        toast.classList.add('toast-progress');
-        let done = 0;
-        for (const path of videoPaths) {
-            updateToast(toast, t('toolbar.tiles-gen') + ` (${done} / ${videoPaths.length})`);
-            try {
-                await fetch('/api/vtile?' + new URLSearchParams({ path }) + dirParam('&'));
-            } catch (_) { /* ignore */ }
-            done++;
-        }
-        dismissToast(toast);
-        showToast(t('toast.tiles-done'));
+        if (res?.job_id) onJobSubmitted(res.job_id);
+    } catch (e) {
+        showToast(`Fout: ${e.message || e}`);
+    } finally {
+        btn.disabled = false;
     }
-
-    btn.disabled = false;
 }
 
 // ---------------------------------------------------------------------------

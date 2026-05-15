@@ -945,7 +945,7 @@ pub struct PregenBody {
     paths: Vec<String>,
 }
 
-/// Generate trickplay sprites for a list of video paths in the background.
+/// Generate trickplay sprites for a list of video paths as a background job.
 pub async fn api_vthumbs_pregen(
     Query(params): Query<PregenParams>,
     State(state): State<Arc<AppState>>,
@@ -965,70 +965,182 @@ pub async fn api_vthumbs_pregen(
 
     let root = db_root.root.clone();
     let queued = body.paths.len();
+
+    // Read sprite-count settings once before spawning.
+    let (min_n, max_n) = match crate::state::open_conn(db_root) {
+        Ok(conn) => {
+            let min = filetag_lib::db::get_setting(&conn, "sprite_min")
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(8)
+                .max(1);
+            let max = filetag_lib::db::get_setting(&conn, "sprite_max")
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(16)
+                .max(min);
+            (min, max)
+        }
+        Err(_) => (8, 16),
+    };
+
+    let label = format!(
+        "Sprites: {} video{}",
+        queued,
+        if queued == 1 { "" } else { "'s" }
+    );
+    let job_id = state.jobs.lock().unwrap().submit("sprites", label);
+    let job_id2 = job_id.clone();
+    let jobs_store = Arc::clone(&state.jobs);
     let state_clone = state.clone();
 
     tokio::spawn(async move {
+        jobs_store.lock().unwrap().start(&job_id2, queued as u64);
+        let mut done: u64 = 0;
+
         for rel_path in body.paths {
             let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
                 Some(t) => t,
-                None => continue,
+                None => {
+                    done += 1;
+                    jobs_store.lock().unwrap().progress(&job_id2, done, None);
+                    continue;
+                }
             };
             // Determine n from duration before checking the cache, because n
             // determines the cache filename.
             let info = match video_info(&abs).await {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    done += 1;
+                    jobs_store.lock().unwrap().progress(&job_id2, done, None);
+                    continue;
+                }
             };
-            let n = sprites_for_duration(info.duration, 8, 16);
+            let n = sprites_for_duration(info.duration, min_n, max_n);
             let cache_path =
                 match file_cache_path(&abs, &cache_root, "vthumbs", &format!("sprite{n}x1.webp")) {
                     Some(p) => p,
-                    None => continue,
+                    None => {
+                        done += 1;
+                        jobs_store.lock().unwrap().progress(&job_id2, done, None);
+                        continue;
+                    }
                 };
-            if cache_path.exists() {
-                continue;
+            if !cache_path.exists() {
+                let _permit = VTHUMB_LIMITER.acquire().await;
+                if !cache_path.exists() {
+                    if let Some(parent) = cache_path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    let positions: Vec<f64> = (0..n)
+                        .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
+                        .collect();
+                    let mut cmd = tokio::process::Command::new("nice");
+                    cmd.args(["-n", "15", "ffmpeg"]);
+                    for t in &positions {
+                        cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
+                    }
+                    let scale_parts: Vec<String> = (0..n)
+                        .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
+                        .collect();
+                    let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
+                    let filter =
+                        format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
+                    let _ = cmd
+                        .args([
+                            "-filter_complex",
+                            &filter,
+                            "-map",
+                            "[out]",
+                            "-frames:v",
+                            "1",
+                            "-q:v",
+                            "80",
+                            "-y",
+                        ])
+                        .arg(&cache_path)
+                        .stderr(std::process::Stdio::null())
+                        .kill_on_drop(true)
+                        .status()
+                        .await;
+                }
             }
-            let _permit = VTHUMB_LIMITER.acquire().await;
-            if cache_path.exists() {
-                continue;
-            }
-            if let Some(parent) = cache_path.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            let positions: Vec<f64> = (0..n)
-                .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
-                .collect();
-            let mut cmd = tokio::process::Command::new("nice");
-            cmd.args(["-n", "15", "ffmpeg"]);
-            for t in &positions {
-                cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
-            }
-            let scale_parts: Vec<String> = (0..n)
-                .map(|i| format!("[{i}:v]scale=320:-2,setsar=1[f{i}]"))
-                .collect();
-            let hstack_inputs: String = (0..n).map(|i| format!("[f{i}]")).collect();
-            let filter = format!("{};{hstack_inputs}hstack={n}[out]", scale_parts.join(";"));
-            let _ = cmd
-                .args([
-                    "-filter_complex",
-                    &filter,
-                    "-map",
-                    "[out]",
-                    "-frames:v",
-                    "1",
-                    "-q:v",
-                    "80",
-                    "-y",
-                ])
-                .arg(&cache_path)
-                .stderr(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .status()
-                .await;
+            done += 1;
+            jobs_store.lock().unwrap().progress(&job_id2, done, None);
         }
+        jobs_store.lock().unwrap().finish(&job_id2);
     });
 
-    Json(serde_json::json!({ "queued": queued })).into_response()
+    Json(serde_json::json!({ "queued": queued, "job_id": job_id })).into_response()
+}
+
+/// `POST /api/vtile/pregenerate` — generate and cache WebM tile-preview clips
+/// for a batch of video paths as a background job.
+pub async fn api_vtile_pregen(
+    Query(params): Query<PregenParams>,
+    State(state): State<Arc<AppState>>,
+    axum::extract::Json(body): axum::extract::Json<PregenBody>,
+) -> Response {
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    };
+
+    if !load_features_for(&state, &db_root.root).video {
+        return (StatusCode::NOT_IMPLEMENTED, "Video feature not enabled").into_response();
+    }
+
+    let root = db_root.root.clone();
+    let queued = body.paths.len();
+
+    // Read clip duration from settings once before spawning.
+    let clip_secs: u32 = match crate::state::open_conn(db_root) {
+        Ok(conn) => filetag_lib::db::get_setting(&conn, "vtile_duration")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8u32)
+            .clamp(0, 120),
+        Err(_) => 8,
+    };
+
+    let label = format!(
+        "Video-previews: {} video{}",
+        queued,
+        if queued == 1 { "" } else { "'s" }
+    );
+    let job_id = state.jobs.lock().unwrap().submit("tile-preview", label);
+    let job_id2 = job_id.clone();
+    let jobs_store = Arc::clone(&state.jobs);
+    let state_clone = state.clone();
+
+    tokio::spawn(async move {
+        jobs_store.lock().unwrap().start(&job_id2, queued as u64);
+        let mut done: u64 = 0;
+
+        for rel_path in body.paths {
+            let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
+                Some(t) => t,
+                None => {
+                    done += 1;
+                    jobs_store.lock().unwrap().progress(&job_id2, done, None);
+                    continue;
+                }
+            };
+            let _ = generate_tile_webm(&abs, &cache_root, clip_secs).await;
+            done += 1;
+            jobs_store.lock().unwrap().progress(&job_id2, done, None);
+        }
+        jobs_store.lock().unwrap().finish(&job_id2);
+    });
+
+    Json(serde_json::json!({ "queued": queued, "job_id": job_id })).into_response()
 }
 
 // ---------------------------------------------------------------------------
