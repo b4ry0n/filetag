@@ -1297,9 +1297,24 @@ pub async fn api_vtile(
             .clamp(0, 120)
     };
 
+    // Serve from cache immediately — no semaphore needed for a cache hit.
+    let filename = if clip_secs == 0 {
+        "tile_full.webm".to_string()
+    } else {
+        format!("tile_{clip_secs}s.webm")
+    };
+    if let Some(cache_path) = file_cache_path(&abs, &cache_root, "vtiles", &filename)
+        && cache_path.exists()
+        && let Ok(data) = tokio::fs::read(&cache_path).await
+    {
+        return ([(header::CONTENT_TYPE, "video/webm")], data).into_response();
+    }
+
     let _permit = match VTHUMB_LIMITER.try_acquire() {
         Ok(p) => p,
-        Err(_) => return (StatusCode::ACCEPTED, "vtile queue full").into_response(),
+        Err(_) => {
+            return (StatusCode::ACCEPTED, "vtile queue full — retry shortly").into_response();
+        }
     };
 
     match generate_tile_webm(&abs, &cache_root, clip_secs).await {

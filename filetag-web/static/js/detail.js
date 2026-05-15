@@ -700,51 +700,56 @@ function _trickplayAttach(img, path) {
         v.autoplay = true;
         v.playsInline = true;
         v.className = 'card-trickplay-pinned';
-        Object.assign(v.style, { objectFit: 'cover', width: '100%', height: '100%' });
+        v.style.objectFit = 'cover';
         wrap.appendChild(v);
         v.play().catch(() => {});
 
-        // On hover: show the same clip in an aspect-ratio-correct floating popup.
-        let floatVideo = null;
+        // Retry when the tile is not yet cached (backend returns 202 queue-full or
+        // 422 unavailable).  Use capped exponential back-off.
+        let _retries = 0;
+        v.addEventListener('error', function _retry() {
+            if (_retries >= 12) { v.removeEventListener('error', _retry); return; }
+            const delay = Math.min(2000 * (_retries + 1), 15000);
+            _retries++;
+            setTimeout(() => { v.load(); v.play().catch(() => {}); }, delay);
+        });
+
+        // On hover: expand to an aspect-ratio-correct popup by switching the
+        // SAME video element to position:fixed.  No new element is created, so
+        // there is no extra HTTP request, no reload, and no playback restart.
+        let _isFloating = false;
 
         card.addEventListener('mouseenter', () => {
-            if (floatVideo) return;
+            if (_isFloating || v.readyState < 1) return;
+            _isFloating = true;
             const cardRect = wrap.getBoundingClientRect();
-            if (!cardRect.width) return;
-
-            floatVideo = document.createElement('video');
-            floatVideo.src = v.src;
-            floatVideo.muted = true;
-            floatVideo.loop = true;
-            floatVideo.playsInline = true;
-            floatVideo.style.pointerEvents = 'none';
-            floatVideo.className = 'card-trickplay-sprite';
-            Object.assign(floatVideo.style, {
-                position: 'fixed', zIndex: '1000',
-                display: 'none', objectFit: 'cover', borderRadius: '4px',
+            if (!cardRect.width) { _isFloating = false; return; }
+            const g = _videoPopupGeometry(v, cardRect);
+            Object.assign(v.style, {
+                position:     'fixed',
+                inset:        'auto',
+                zIndex:       '1000',
+                width:        g.popupW + 'px',
+                height:       g.popupH + 'px',
+                left:         g.left.toFixed(1) + 'px',
+                top:          g.top.toFixed(1)  + 'px',
+                borderRadius: '4px',
             });
-
-            const positionAndPlay = () => {
-                if (!floatVideo) return;
-                const g = _videoPopupGeometry(floatVideo, cardRect);
-                Object.assign(floatVideo.style, {
-                    width:   g.popupW + 'px', height: g.popupH + 'px',
-                    left:    g.left.toFixed(1) + 'px',
-                    top:     g.top.toFixed(1)  + 'px',
-                    display: '',
-                });
-                // Start from the same position as the inline video.
-                floatVideo.currentTime = v.currentTime;
-                floatVideo.play().catch(() => {});
-            };
-            floatVideo.addEventListener('loadedmetadata', positionAndPlay, { once: true });
-            setTimeout(() => { if (floatVideo && floatVideo.style.display === 'none') positionAndPlay(); }, 800);
-
-            document.body.appendChild(floatVideo);
         }, { passive: true });
 
         card.addEventListener('mouseleave', () => {
-            if (floatVideo) { floatVideo.pause(); floatVideo.remove(); floatVideo = null; }
+            if (!_isFloating) return;
+            _isFloating = false;
+            // Remove all inline overrides; .card-trickplay-pinned CSS takes over
+            // (position:absolute; inset:0; z-index:1; pointer-events:none).
+            v.style.position     = '';
+            v.style.inset        = '';
+            v.style.zIndex       = '';
+            v.style.width        = '';
+            v.style.height       = '';
+            v.style.left         = '';
+            v.style.top          = '';
+            v.style.borderRadius = '';
         });
 
         return;
