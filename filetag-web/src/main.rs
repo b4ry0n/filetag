@@ -407,6 +407,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/preview/{*path}", get(preview::preview_handler))
         .route("/transcode/{*path}", get(video::transcode_handler))
+        .route(
+            "/transcode-webm/{*path}",
+            get(video::transcode_webm_handler),
+        )
         .route("/thumb/{*path}", get(preview::thumb_handler))
         .route("/api/vthumbs", get(video::api_vthumbs))
         .route("/api/vthumbs/pregenerate", post(video::api_vthumbs_pregen))

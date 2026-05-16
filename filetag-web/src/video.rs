@@ -38,7 +38,7 @@ pub(crate) async fn evict_video_cache(video_dir: PathBuf, max_bytes: u64) {
         let p = entry.path();
         // Only count fully written files; skip .tmp and .staging intermediates.
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext != "mp4" {
+        if ext != "mp4" && ext != "webm" {
             continue;
         }
         if let Ok(meta) = tokio::fs::metadata(&p).await {
@@ -100,6 +100,25 @@ impl VideoInfo {
             "copy"
         } else {
             "aac"
+        }
+    }
+
+    /// Returns the ffmpeg `-c:v` argument for WebM output: "copy" for codecs
+    /// that are native to the WebM container (VP8, VP9, AV1); otherwise
+    /// re-encode with libvpx-vp9.
+    pub fn video_arg_webm(&self) -> &'static str {
+        match self.video_codec.as_str() {
+            "vp8" | "vp9" | "av1" => "copy",
+            _ => "libvpx-vp9",
+        }
+    }
+
+    /// Returns the ffmpeg `-c:a` argument for WebM output: "copy" for Opus
+    /// and Vorbis (native WebM audio); otherwise re-encode with libopus.
+    pub fn audio_arg_webm(&self) -> &'static str {
+        match self.audio_codec.as_str() {
+            "opus" | "vorbis" => "copy",
+            _ => "libopus",
         }
     }
 }
@@ -351,6 +370,125 @@ pub async fn transcode_handler(
         return (StatusCode::SERVICE_UNAVAILABLE, "Video feature not enabled").into_response();
     }
     serve_transcoded_mp4(&abs, &cache_root, &headers).await
+}
+
+// ---------------------------------------------------------------------------
+// WebM transcoding
+// ---------------------------------------------------------------------------
+
+/// Transcode (or remux) a video to WebM and serve the cached result.
+///
+/// Fast path (VP8, VP9, or AV1 source): container-only remux to WebM.
+/// Completes in seconds even for large files.
+///
+/// Slow path (other codecs, e.g. H.264, HEVC): re-encode to VP9 with a
+/// realtime deadline so the encode finishes in reasonable time.
+pub async fn serve_transcoded_webm(path: &Path, root: &Path, headers: &HeaderMap) -> Response {
+    let cache_path = match file_cache_path(path, root, "video", "v7.webm") {
+        Some(p) => p,
+        None => return serve_file_range(path, headers).await,
+    };
+
+    if cache_path.exists() {
+        return serve_file_range(&cache_path, headers).await;
+    }
+
+    let permit = match TRANSCODE_LIMITER.acquire().await {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
+    };
+
+    if cache_path.exists() {
+        drop(permit);
+        return serve_file_range(&cache_path, headers).await;
+    }
+
+    let info = video_info(path).await;
+    let c_video = info
+        .as_ref()
+        .map(|i| i.video_arg_webm())
+        .unwrap_or("libvpx-vp9");
+    let c_audio = info
+        .as_ref()
+        .map(|i| i.audio_arg_webm())
+        .unwrap_or("libopus");
+
+    let tmp = cache_path.with_extension("tmp.webm");
+    if let Some(parent) = cache_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    let mut cmd = tokio::process::Command::new("nice");
+    cmd.args(["-n", "10", "ffmpeg", "-y"])
+        .arg("-i")
+        .arg(path)
+        .args(["-map", "0:v:0", "-map", "0:a:0?"])
+        .args(["-c:v", c_video]);
+    if c_video != "copy" {
+        // VP9 encoding: constrained quality with realtime deadline for speed.
+        cmd.args([
+            "-crf",
+            "33",
+            "-b:v",
+            "0",
+            "-cpu-used",
+            "5",
+            "-deadline",
+            "realtime",
+            "-threads",
+            "0",
+        ]);
+    }
+    cmd.args(["-c:a", c_audio]);
+    if c_audio != "copy" {
+        cmd.args(["-b:a", "128k"]);
+    }
+    cmd.args(["-sn", "-f", "webm"])
+        .arg(&tmp)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+
+    let ok = cmd.status().await.map(|s| s.success()).unwrap_or(false);
+
+    drop(permit);
+
+    if ok {
+        let _ = tokio::fs::rename(&tmp, &cache_path).await;
+        if let Some(dir) = cache_path.parent() {
+            let dir = dir.to_path_buf();
+            tokio::spawn(evict_video_cache(dir, VIDEO_CACHE_MAX_BYTES));
+        }
+        serve_file_range(&cache_path, headers).await
+    } else {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        serve_file_range(path, headers).await
+    }
+}
+
+/// Axum handler for `/transcode-webm/{*path}`: always returns a transcoded/remuxed
+/// WebM.  The result is cached in `.filetag/cache/video/`.
+pub async fn transcode_webm_handler(
+    AxumPath(rel_path): AxumPath<String>,
+    Query(rp): Query<DirParam>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let db_root = match root_for_dir(
+        &state,
+        std::path::Path::new(rp.dir.as_deref().unwrap_or("")),
+    ) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    };
+    let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+    let features = load_features_for(&state, &db_root.root);
+    if !features.video {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Video feature not enabled").into_response();
+    }
+    serve_transcoded_webm(&abs, &cache_root, &headers).await
 }
 
 // ---------------------------------------------------------------------------
