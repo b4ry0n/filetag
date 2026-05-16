@@ -125,39 +125,58 @@
 
 /* ----- Individual job row --------------------------------- */
 .job-item {
-    padding: 10px 14px;
+    position: relative;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
+    overflow: hidden;
 }
 
 .job-item:last-child {
     border-bottom: none;
 }
 
+/* Progress fill: translucent colour that grows left-to-right
+   behind the row content, replacing the old separate progress bar. */
+.job-progress-bg {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 0;
+    background: color-mix(in srgb, var(--primary, #3b82f6) 14%, transparent);
+    transition: width 0.4s ease;
+    pointer-events: none;
+}
+
+.job-progress-bg.indeterminate {
+    width: 40% !important;
+    animation: jobs-indeterminate 1.4s ease-in-out infinite;
+}
+
 .job-item-top {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 6px;
 }
 
 .job-kind-icon {
-    font-size: 14px;
+    font-size: 13px;
     flex-shrink: 0;
 }
 
 .job-item-label {
     flex: 1;
-    font-size: 13px;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .job-item-dismiss {
+    position: relative;
+    z-index: 1;
     padding: 1px 5px;
-    font-size: 13px;
+    font-size: 12px;
     border: none;
     background: transparent;
     color: var(--text-muted);
@@ -172,36 +191,47 @@
 }
 
 .job-item-current {
+    position: relative;
+    z-index: 1;
     font-size: 11px;
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-/* Progress bar */
-.job-progress-bar {
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-}
-
-.job-progress-fill {
-    height: 100%;
-    background: var(--primary);
-    border-radius: 2px;
-    transition: width 0.3s ease;
-}
-
-.job-progress-fill.indeterminate {
-    width: 40% !important;
-    animation: jobs-indeterminate 1.4s ease-in-out infinite;
+    padding-bottom: 1px;
 }
 
 @keyframes jobs-indeterminate {
     0%   { transform: translateX(-100%); }
     100% { transform: translateX(350%); }
+}
+
+/* ----- Collapsed "done" section at the bottom of the list ----- */
+.jobs-done-section {
+    border-top: 1px solid var(--border);
+}
+
+.jobs-done-toggle {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 6px 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+    gap: 4px;
+}
+
+.jobs-done-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+}
+
+.jobs-done-list .job-item:last-child {
+    border-bottom: none;
 }
 
 /* Status labels */

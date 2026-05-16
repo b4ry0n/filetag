@@ -13,6 +13,7 @@
 let _pollTimer = null;
 let _panelOpen = false;
 let _lastJobsJson = '';  // last serialised snapshot; avoids redundant DOM updates
+let _doneExpanded = false; // whether the collapsed "done" section is open
 
 // Callbacks to fire when a specific job reaches 'done' status.
 // Map<job_id, Array<Function>>
@@ -22,7 +23,7 @@ const _jobDoneCallbacks = new Map();
 const KIND_ICONS = {
     'tag-dir':      '🏷',
     'sprites':      '🎞',
-    'tile-preview': '▶',
+    'tile-preview': '🎬',
     'ai-batch':     '🤖',
     'face-scan':    '👤',
     'similarity':   '🔗',
@@ -132,59 +133,72 @@ function toggleJobsPanel() {
 function renderJobsList() {
     const list = document.getElementById('jobs-list');
     if (!list) return;
-    const jobs = state.jobs || [];
-    if (jobs.length === 0) {
+    const jobs     = state.jobs || [];
+    const active   = jobs.filter(j => j.status !== 'done' && j.status !== 'failed');
+    const finished = jobs.filter(j => j.status === 'done'  || j.status === 'failed');
+
+    if (active.length === 0 && finished.length === 0) {
         list.innerHTML = '<div class="jobs-empty">Geen actieve jobs</div>';
         return;
     }
-    list.innerHTML = jobs.map(renderJobItem).join('');
+
+    let html = active.map(renderJobItem).join('');
+
+    if (finished.length > 0) {
+        const arrow = _doneExpanded ? '\u25be' : '\u25b8'; // ▾ / ▸
+        const inner = _doneExpanded
+            ? `<div class="jobs-done-list">${finished.map(renderJobItem).join('')}</div>`
+            : '';
+        html += `<div class="jobs-done-section">
+  <button class="jobs-done-toggle" onclick="toggleDoneJobs()">${arrow}\u2002${finished.length} afgerond</button>${inner ? '\n  ' + inner : ''}
+</div>`;
+    }
+
+    list.innerHTML = html;
 }
 
 function renderJobItem(job) {
-    const icon = KIND_ICONS[job.kind] || '⚙';
+    const icon = KIND_ICONS[job.kind] || '\u2699'; // ⚙
     const pct  = (job.total > 0) ? Math.round(100 * job.done / job.total) : 0;
+    const isActive      = job.status === 'running' || job.status === 'pending';
     const indeterminate = job.status === 'running' && job.total === 0;
 
-    const barFill = indeterminate
-        ? `<div class="job-progress-fill indeterminate"></div>`
-        : `<div class="job-progress-fill" style="width:${pct}%"></div>`;
-
-    const currentHtml = (job.current && job.status === 'running')
-        ? `<div class="job-item-current">${escapeHtml(job.current)}</div>`
-        : '';
+    // Progress fill: translucent colour expanding behind row content.
+    let progressBg = '';
+    if (isActive) {
+        const cls   = indeterminate ? ' indeterminate' : '';
+        const style = (!indeterminate) ? ` style="width:${pct}%"` : '';
+        progressBg = `<div class="job-progress-bg${cls}"${style}></div>\n  `;
+    }
 
     let statusHtml = '';
     if (job.status === 'done') {
-        statusHtml = `<span class="job-status-done">✓ Klaar${job.total > 0 ? ' (' + job.total + ')' : ''}</span>`;
+        statusHtml = `<span class="job-status-done">\u2713${job.total > 0 ? '\u202f' + job.total : ''}</span>`;
     } else if (job.status === 'failed') {
-        statusHtml = `<span class="job-status-failed">✗ Mislukt</span>`;
-    } else if (job.status === 'running' && job.total > 0) {
-        statusHtml = `<span class="job-item-count">${job.done} / ${job.total}</span>`;
+        statusHtml = `<span class="job-status-failed">\u2717</span>`;
+    } else if (isActive && job.total > 0) {
+        statusHtml = `<span class="job-item-count">${job.done}/${job.total}</span>`;
     }
-
-    const errorHtml = (job.error && job.status === 'failed')
-        ? `<div class="job-item-error">${escapeHtml(job.error)}</div>`
-        : '';
 
     const canDismiss = job.status === 'done' || job.status === 'failed';
     const dismissBtn = (canDismiss && !job.id.startsWith('__'))
-        ? `<button class="job-item-dismiss" onclick="dismissJob('${escapeHtml(job.id)}')" title="Sluiten">✕</button>`
+        ? `<button class="job-item-dismiss" onclick="dismissJob('${escapeHtml(job.id)}')" title="Sluiten">\u2715</button>`
         : '';
 
-    const progressHtml = (job.status === 'running' || (job.status === 'pending'))
-        ? `<div class="job-progress-bar">${barFill}</div>`
+    const currentHtml = (job.current && job.status === 'running')
+        ? `\n  <div class="job-item-current">${escapeHtml(job.current)}</div>`
+        : '';
+    const errorHtml = (job.error && job.status === 'failed')
+        ? `\n  <div class="job-item-error">${escapeHtml(job.error)}</div>`
         : '';
 
     return `<div class="job-item">
-  <div class="job-item-top">
+  ${progressBg}<div class="job-item-top">
     <span class="job-kind-icon">${icon}</span>
     <span class="job-item-label" title="${escapeHtml(job.label)}">${escapeHtml(job.label)}</span>
     ${statusHtml}
     ${dismissBtn}
-  </div>
-  ${progressHtml}
-  ${currentHtml}
-  ${errorHtml}
+  </div>${currentHtml}${errorHtml}
 </div>`;
 }
 
@@ -209,6 +223,11 @@ async function dismissAllJobs() {
         j => j.status === 'pending' || j.status === 'running');
     renderJobsBar();
     if (_panelOpen) renderJobsList();
+}
+
+function toggleDoneJobs() {
+    _doneExpanded = !_doneExpanded;
+    renderJobsList();
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +273,7 @@ window.stopJobPolling    = stopJobPolling;
 window.toggleJobsPanel   = toggleJobsPanel;
 window.dismissJob        = dismissJob;
 window.dismissAllJobs    = dismissAllJobs;
+window.toggleDoneJobs    = toggleDoneJobs;
 window.onJobSubmitted    = onJobSubmitted;
 window.whenJobDone       = whenJobDone;
 window.renderJobsBar     = renderJobsBar;
