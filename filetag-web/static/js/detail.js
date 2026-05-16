@@ -972,26 +972,46 @@ function _trickplayAttach(img, path) {
         });
 
         // -- Event handlers: sprite behaviour while video not ready, video popup once ready --
-        let _isFloating  = false;
+        let _floatVideo   = null;  // AR-correct overlay in #content (hover), scrolls with grid
         let _videoVisible = false; // toggled by click once video has loaded
+
+        // Creates a separate overlay video in #content using _overlayAbsolute so it scrolls
+        // with the grid — same approach as webm mode, avoids the position:fixed hang on scroll.
+        function _apBuildVideoOverlay() {
+            if (_floatVideo) return;
+            const cardRect = wrap.getBoundingClientRect();
+            if (!cardRect.width) return;
+            const g = _videoPopupGeometry(v, cardRect);
+            const abs = _overlayAbsolute(g.left, g.top);
+            _floatVideo = document.createElement('video');
+            _floatVideo.src = v.src;
+            _floatVideo.muted = true;
+            _floatVideo.loop = true;
+            _floatVideo.autoplay = true;
+            _floatVideo.playsInline = true;
+            _floatVideo.className = 'card-trickplay-sprite';
+            Object.assign(_floatVideo.style, {
+                position:      'absolute',
+                zIndex:        '1000',
+                objectFit:     'cover',
+                borderRadius:  '4px',
+                pointerEvents: 'none',
+                width:         g.popupW + 'px',
+                height:        g.popupH + 'px',
+                left:          abs.left.toFixed(1) + 'px',
+                top:           abs.top.toFixed(1)  + 'px',
+            });
+            abs.sc.appendChild(_floatVideo);
+            _floatVideo.play().catch(() => {});
+        }
+
+        function _apTeardownVideoOverlay() {
+            if (_floatVideo) { _floatVideo.pause(); _floatVideo.remove(); _floatVideo = null; }
+        }
 
         card.addEventListener('mouseenter', () => {
             if (_videoReady && _videoVisible) {
-                if (_isFloating) return;
-                _isFloating = true;
-                const cardRect = wrap.getBoundingClientRect();
-                if (!cardRect.width) { _isFloating = false; return; }
-                const g = _videoPopupGeometry(v, cardRect);
-                Object.assign(v.style, {
-                    position:     'fixed',
-                    inset:        'auto',
-                    zIndex:       '1000',
-                    width:        g.popupW + 'px',
-                    height:       g.popupH + 'px',
-                    left:         g.left.toFixed(1) + 'px',
-                    top:          g.top.toFixed(1)  + 'px',
-                    borderRadius: '4px',
-                });
+                _apBuildVideoOverlay();
             } else {
                 _apEnsureSprite();
                 if (_spriteCE) _apBuildOverlay();
@@ -1008,39 +1028,16 @@ function _trickplayAttach(img, path) {
         }, { passive: true });
 
         card.addEventListener('mouseleave', () => {
-            if (_videoReady && _videoVisible) {
-                if (!_isFloating) return;
-                _isFloating = false;
-                // Remove all inline overrides; .card-trickplay-pinned CSS takes over.
-                v.style.position     = '';
-                v.style.inset        = '';
-                v.style.zIndex       = '';
-                v.style.width        = '';
-                v.style.height       = '';
-                v.style.left         = '';
-                v.style.top          = '';
-                v.style.borderRadius = '';
-            } else {
-                _apTeardown();
-            }
+            _apTeardownVideoOverlay();
+            _apTeardown();
         });
 
         // Click: toggle video visibility.  When hidden, hover shows the sprite fallback
         // instead; clicking again while hidden restores the video.
         card.addEventListener('click', e => {
             if (e.target.closest('button, a')) return;
+            _apTeardownVideoOverlay();
             _apTeardown();
-            if (_isFloating) {
-                _isFloating = false;
-                v.style.position     = '';
-                v.style.inset        = '';
-                v.style.zIndex       = '';
-                v.style.width        = '';
-                v.style.height       = '';
-                v.style.left         = '';
-                v.style.top          = '';
-                v.style.borderRadius = '';
-            }
             if (_videoReady) {
                 _videoVisible = !_videoVisible;
                 v.style.opacity = _videoVisible ? '1' : '0';
