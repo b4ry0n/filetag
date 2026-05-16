@@ -972,26 +972,19 @@ function _trickplayAttach(img, path) {
         });
 
         // -- Event handlers: sprite behaviour while video not ready, video popup once ready --
-        let _floatVideo   = null;  // AR-correct overlay in #content (hover), scrolls with grid
         let _videoVisible = false; // toggled by click once video has loaded
 
-        // Creates a separate overlay video in #content using _overlayAbsolute so it scrolls
-        // with the grid — same approach as webm mode, avoids the position:fixed hang on scroll.
+        // Moves the in-card <video> element into #content as an AR-correct overlay.
+        // Reusing the same node means the clip keeps playing seamlessly (no restart).
         function _apBuildVideoOverlay() {
-            if (_floatVideo) return;
+            if (v.parentNode !== wrap) return; // already floating
             const cardRect = wrap.getBoundingClientRect();
             if (!cardRect.width) return;
             const g = _videoPopupGeometry(v, cardRect);
             const abs = _overlayAbsolute(g.left, g.top);
-            _floatVideo = document.createElement('video');
-            _floatVideo.src = v.src;
-            _floatVideo.muted = true;
-            _floatVideo.loop = true;
-            _floatVideo.autoplay = true;
-            _floatVideo.playsInline = true;
-            _floatVideo.className = 'card-trickplay-sprite';
-            Object.assign(_floatVideo.style, {
+            Object.assign(v.style, {
                 position:      'absolute',
+                inset:         'auto',   // override .card-trickplay-pinned's inset:0
                 zIndex:        '1000',
                 objectFit:     'cover',
                 borderRadius:  '4px',
@@ -1000,13 +993,29 @@ function _trickplayAttach(img, path) {
                 height:        g.popupH + 'px',
                 left:          abs.left.toFixed(1) + 'px',
                 top:           abs.top.toFixed(1)  + 'px',
+                opacity:       '1',
+                transition:    'none',
             });
-            abs.sc.appendChild(_floatVideo);
-            _floatVideo.play().catch(() => {});
+            abs.sc.appendChild(v);
         }
 
         function _apTeardownVideoOverlay() {
-            if (_floatVideo) { _floatVideo.pause(); _floatVideo.remove(); _floatVideo = null; }
+            if (v.parentNode === wrap) return; // not floating
+            Object.assign(v.style, {
+                position:      '',
+                inset:         '',
+                zIndex:        '',
+                objectFit:     '',
+                borderRadius:  '',
+                pointerEvents: '',
+                width:         '',
+                height:        '',
+                left:          '',
+                top:           '',
+                opacity:       _videoVisible ? '1' : '0',
+                transition:    'opacity 0.4s ease',
+            });
+            wrap.appendChild(v);
         }
 
         card.addEventListener('mouseenter', () => {
