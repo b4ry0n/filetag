@@ -660,11 +660,13 @@ function cvToggleFullscreen() {
 document.addEventListener('fullscreenchange', () => {
     const btn = document.getElementById('cv-fs-btn');
     if (!btn) return;
+    const overlay = document.getElementById('media-viewer');
     const inFS = !!document.fullscreenElement;
     btn.innerHTML = inFS ? _cvCompressIcon : _cvExpandIcon;
     btn.title = inFS ? 'Exit full screen (F)' : 'Full screen (F)';
-    const overlay = document.getElementById('media-viewer');
-    overlay.classList.toggle('cv-fs', inFS);
+    // Apply fullscreen layout class only while the viewer is actually open,
+    // so a re-enter on document.documentElement after viewer close is ignored.
+    overlay.classList.toggle('cv-fs', inFS && !overlay.hidden);
     if (!inFS) {
         const toolbar = overlay.querySelector('.cv-toolbar');
         if (toolbar) toolbar.classList.remove('cv-toolbar-peek');
@@ -846,7 +848,17 @@ function _cvKeyHandler(e) {
     else if (e.key === '0') cvResetZoom();
     else if (e.key === 'Escape') {
         if (_cv.zoom > 1 || _cv.scrollWidth !== 100) { cvResetZoom(); }
-        else { closeMediaViewer(); }
+        else {
+            // Capture fullscreen state before closeMediaViewer() exits it.
+            const wasFullscreen = !!document.fullscreenElement;
+            closeMediaViewer();
+            // Re-enter fullscreen so the browser stays fullscreen after the
+            // viewer closes.  requestFullscreen() is allowed here because we
+            // are still inside a user-gesture (keydown) event handler.
+            if (wasFullscreen) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            }
+        }
     }
 }
 
