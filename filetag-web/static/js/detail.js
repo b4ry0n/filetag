@@ -1745,22 +1745,20 @@ function _dirThumbSchedule() {
     }
 }
 
-/** Fetch one dir-thumb, retrying on 202 (generation in progress) or 503.
- *  Uses _dirThumbAbortCtrl.signal so the fetch and its retry waits are
- *  cancelled immediately when the user navigates away. */
+/** Fetch one dir-thumb.  The server now blocks the response until the
+ *  thumbnail is ready, so this is normally a single-shot fetch.  A small
+ *  retry budget is kept as a safety net for the rare case where the backend
+ *  returns 202 (e.g. a generation timeout on very large directories).
+ *  The AbortController signal cancels both the fetch and any retry delay
+ *  immediately when the user navigates away. */
 async function _dirThumbFetch(el) {
     const src = el.dataset.thumbSrc;
     if (!src) return;
     const signal = _dirThumbAbortCtrl.signal;
-    // Backoff schedule: first 10 retries at 500 ms, next 10 at 1 s, rest at 3 s.
-    // Total budget ~120 attempts ≈ ~5 min, well beyond any realistic generation time.
-    const retryDelay = attempt => attempt < 10 ? 500 : attempt < 20 ? 1000 : 3000;
-    for (let attempt = 0; attempt < 120; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
         if (!el.isConnected || signal.aborted) return;
         if (_thumbCache.has(src)) {
             const cached = _thumbCache.get(src);
-            // Remove data-thumb-src immediately so _dirThumbEnqueueRemaining
-            // does not re-queue this element before the async sprite replace fires.
             delete el.dataset.thumbSrc;
             if (cached && el.isConnected) _thumbReplace(el, cached);
             return;
@@ -1772,16 +1770,13 @@ async function _dirThumbFetch(el) {
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
                 _thumbCache.set(src, url);
-                // Remove data-thumb-src before the async sprite replace to
-                // prevent _dirThumbEnqueueRemaining from re-queuing this element.
                 delete el.dataset.thumbSrc;
                 if (el.isConnected) _thumbReplace(el, url);
                 return;
             } else if (resp.status === 202 || resp.status === 503) {
-                // Server still generating; wait and retry (slot stays occupied).
-                // The wait is abortable so navigation cancels it immediately.
+                // Fallback: server not yet ready; wait before retrying.
                 await new Promise(resolve => {
-                    const t = setTimeout(resolve, retryDelay(attempt));
+                    const t = setTimeout(resolve, 3000);
                     signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
                 });
             } else if (resp.status === 204) {
@@ -1792,12 +1787,11 @@ async function _dirThumbFetch(el) {
                 return;
             }
         } catch (err) {
-            if (err.name === 'AbortError') return; // navigation cancelled this fetch
+            if (err.name === 'AbortError') return;
             if (el.isConnected) _thumbShowFailed(el);
             return;
         }
     }
-    // Exhausted retries; give up silently (thumbnail stays as icon placeholder).
     if (el.isConnected) _thumbShowFailed(el);
 }
 

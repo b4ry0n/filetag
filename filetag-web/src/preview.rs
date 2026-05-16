@@ -3053,7 +3053,7 @@ pub async fn api_dir_thumbs(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // Check cache before starting background generation.
+    // Check cache before acquiring a generation slot.
     if let Some(cache_path) =
         dir_thumb_cache_path(&abs_dir, &cache_root, &files, features, &dir_preview_style)
     {
@@ -3061,110 +3061,95 @@ pub async fn api_dir_thumbs(
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
 
-        // Start background generation if not already running.
-        // Use a lock file to avoid duplicate work (best-effort, not perfect).
-        let lock_path = cache_path.with_extension(".lock");
-        let already_running = tokio::fs::try_exists(&lock_path).await.unwrap_or(false);
-        if !already_running {
-            // Create lock file (best-effort, ignore errors)
-            let _ = tokio::fs::write(&lock_path, b"generating").await;
-            let cache_root = cache_root.clone();
-            let files = files.clone();
-            let cache_path2 = cache_path.clone();
-            let features_bg = features;
-            let style_bg = dir_preview_style.clone();
-            let abs_dir_bg = abs_dir.clone();
-            tokio::spawn(async move {
-                const IMAGES_PER_FRAME: usize = 4;
-                const MAX_FRAMES: usize = 6;
-                const MAX_ITEMS: usize = MAX_FRAMES * IMAGES_PER_FRAME;
-                let tmp_dir = cache_root
-                    .join(".filetag")
-                    .join("cache")
-                    .join("tmp")
-                    .join(format!("dpt_{}", rand_hex()));
-                let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+        // Wait for a generation slot.  Additional requests for the same (or other)
+        // directories queue here without blocking a thread.  At most
+        // DIR_THUMB_LIMITER permits can generate concurrently.
+        let _permit = crate::state::DIR_THUMB_LIMITER.acquire().await.unwrap();
 
-                // Detect a cover image and generate a dedicated cover frame.
-                let cover_path = find_cover_image(&abs_dir_bg);
-                let mut frame_paths: Vec<PathBuf> = Vec::new();
-                if let Some(ref cover) = cover_path {
-                    let cover_frame = tmp_dir.join("cover_frame.webp");
-                    if build_cover_frame(cover, &cover_frame).await {
-                        frame_paths.push(cover_frame);
-                    }
-                }
-
-                // Exclude the cover file from content collage so it isn't shown twice.
-                let content_files: Vec<PathBuf> = files
-                    .iter()
-                    .filter(|p| {
-                        cover_path
-                            .as_ref()
-                            .is_none_or(|c| p.as_path() != c.as_path())
-                    })
-                    .cloned()
-                    .collect();
-
-                let mut item_thumb_paths: Vec<PathBuf> = Vec::new();
-                for idx in preview_candidate_order(content_files.len(), MAX_ITEMS) {
-                    if item_thumb_paths.len() >= MAX_ITEMS {
-                        break;
-                    }
-                    let item_path = &content_files[idx];
-                    // For grid style, preserve the source aspect ratio so that
-                    // smart_fill_tile / North-gravity can crop correctly.
-                    // Fit and scattered styles handle aspect themselves.
-                    let preserve_aspect = matches!(style_bg.as_str(), "fit" | "scattered" | "grid");
-                    if let Some(data) =
-                        dir_item_jpeg(item_path, &cache_root, features_bg, preserve_aspect).await
-                    {
-                        // Use the correct extension so ImageMagick gets the right format hint.
-                        let ext = if data.starts_with(b"RIFF") {
-                            "webp"
-                        } else {
-                            "jpg"
-                        };
-                        let tp = tmp_dir.join(format!("item{}.{ext}", item_thumb_paths.len()));
-                        if tokio::fs::write(&tp, &data).await.is_ok() {
-                            item_thumb_paths.push(tp);
-                        }
-                    }
-                }
-                let content_frame_start = frame_paths.len(); // index after cover frame
-                for (frame_idx, group) in item_thumb_paths.chunks(IMAGES_PER_FRAME).enumerate() {
-                    if group.is_empty() {
-                        continue;
-                    }
-                    let frame_path = tmp_dir.join(format!("frame{frame_idx}.webp"));
-                    if build_collage(group, &frame_path, &style_bg, features_bg).await {
-                        frame_paths.push(frame_path);
-                    }
-                }
-                // If we only got a cover frame and nothing else, that's fine.
-                // If we got no frames at all, bail.
-                let _ = content_frame_start; // used above for clarity
-                let result = if frame_paths.is_empty() {
-                    None
-                } else {
-                    stitch_dir_frames(&frame_paths).await
-                };
-                let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
-                if let Some(data) = result {
-                    if let Some(parent) = cache_path2.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
-                    let _ = tokio::fs::write(&cache_path2, &data).await;
-                }
-                // Remove lock file
-                let _ = tokio::fs::remove_file(&lock_path).await;
-            });
+        // Re-check cache: another request may have populated it while we waited.
+        if let Ok(data) = tokio::fs::read(&cache_path).await {
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
-        // Geef aan dat de preview in de maak is
-        return (StatusCode::ACCEPTED, "directory preview wordt gegenereerd").into_response();
+
+        // Generate inline (no background spawn, no lock file).
+        const IMAGES_PER_FRAME: usize = 4;
+        const MAX_FRAMES: usize = 6;
+        const MAX_ITEMS: usize = MAX_FRAMES * IMAGES_PER_FRAME;
+        let tmp_dir = cache_root
+            .join(".filetag")
+            .join("cache")
+            .join("tmp")
+            .join(format!("dpt_{}", rand_hex()));
+        let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+
+        // Detect a cover image and generate a dedicated cover frame.
+        let cover_path = find_cover_image(&abs_dir);
+        let mut frame_paths: Vec<PathBuf> = Vec::new();
+        if let Some(ref cover) = cover_path {
+            let cover_frame = tmp_dir.join("cover_frame.webp");
+            if build_cover_frame(cover, &cover_frame).await {
+                frame_paths.push(cover_frame);
+            }
+        }
+
+        // Exclude the cover file from content collage so it isn't shown twice.
+        let content_files: Vec<PathBuf> = files
+            .iter()
+            .filter(|p| {
+                cover_path
+                    .as_ref()
+                    .is_none_or(|c| p.as_path() != c.as_path())
+            })
+            .cloned()
+            .collect();
+
+        let mut item_thumb_paths: Vec<PathBuf> = Vec::new();
+        for idx in preview_candidate_order(content_files.len(), MAX_ITEMS) {
+            if item_thumb_paths.len() >= MAX_ITEMS {
+                break;
+            }
+            let item_path = &content_files[idx];
+            let preserve_aspect =
+                matches!(dir_preview_style.as_str(), "fit" | "scattered" | "grid");
+            if let Some(data) =
+                dir_item_jpeg(item_path, &cache_root, features, preserve_aspect).await
+            {
+                let ext = if data.starts_with(b"RIFF") {
+                    "webp"
+                } else {
+                    "jpg"
+                };
+                let tp = tmp_dir.join(format!("item{}.{ext}", item_thumb_paths.len()));
+                if tokio::fs::write(&tp, &data).await.is_ok() {
+                    item_thumb_paths.push(tp);
+                }
+            }
+        }
+        for (frame_idx, group) in item_thumb_paths.chunks(IMAGES_PER_FRAME).enumerate() {
+            if group.is_empty() {
+                continue;
+            }
+            let frame_path = tmp_dir.join(format!("frame{frame_idx}.webp"));
+            if build_collage(group, &frame_path, &dir_preview_style, features).await {
+                frame_paths.push(frame_path);
+            }
+        }
+        let result = if frame_paths.is_empty() {
+            None
+        } else {
+            stitch_dir_frames(&frame_paths).await
+        };
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        if let Some(data) = result {
+            if let Some(parent) = cache_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let _ = tokio::fs::write(&cache_path, &data).await;
+            return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
+        }
     }
 
-    (StatusCode::INTERNAL_SERVER_ERROR, "cache path unavailable").into_response()
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Return a short hex string based on the current time, used to make temp
