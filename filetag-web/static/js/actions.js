@@ -1139,10 +1139,6 @@ async function pregenSprites() {
 // Auto-pregen vtiles on directory navigation (webm/autoplay mode)
 // ---------------------------------------------------------------------------
 
-// Set of directory paths for which vtile pregen was already triggered
-// this session.  Prevents duplicate pregen jobs on repeated navigation.
-const _autoPregenDirs = new Set();
-
 // IDs of currently running background pregen jobs (sprites + vtile).
 // Cancelled when the user navigates to a different directory so they do not
 // keep consuming resources on the new page.
@@ -1191,53 +1187,18 @@ async function _autoPregenVtiles() {
     if (tileMode !== 'webm' && tileMode !== 'autoplay') return;
     if (state.mode !== 'browse') return;
 
-    const dirKey = state.currentPath || '';
-    if (!dirKey || _autoPregenDirs.has(dirKey)) return;
-    _autoPregenDirs.add(dirKey);
-
-    // Cancel any pregen jobs still running for the previous directory.
+    // Cancel batch pregen jobs left over from the previous directory.
     _cancelActivePregenJobs();
 
-    // Reset the viewport-priority queue so a new directory starts fresh.
+    // Reset the viewport-priority vtile queue so a new directory starts fresh.
     _vtilePregenQueue.length = 0;
     if (_vtilePregenTimer) { clearTimeout(_vtilePregenTimer); _vtilePregenTimer = null; }
 
-    const VIDEO_EXTS = new Set([
-        'mp4','webm','mkv','avi','mov','wmv','flv','m4v','3gp','f4v','mpg','mpeg',
-        'm2v','m2ts','mts','mxf','rm','rmvb','divx','vob','ogv','ogg','dv','asf','amv',
-        'mpe','m1v','mpv','qt',
-    ]);
-
-    const videoPaths = (state.entries || [])
-        .filter(e => !e.is_dir)
-        .map(e => fullPath(e))
-        .filter(p => p && VIDEO_EXTS.has(p.split('.').pop().toLowerCase()));
-
-    if (videoPaths.length === 0) return;
-
-    if (tileMode === 'autoplay') {
-        // autoplay mode: only batch-generate sprite sheets here (fast, used as
-        // hover fallback).  WebM tile previews are queued individually as each
-        // card enters the viewport via _queueVtilePregen(), so visible tiles are
-        // always processed before off-screen ones.
-        try {
-            const sr = await apiPost('/api/vthumbs/pregenerate' + dirParam('?'), { paths: videoPaths });
-            if (sr?.job_id) {
-                onJobSubmitted(sr.job_id);
-                _activePregenJobIds.push(sr.job_id);
-            }
-        } catch (_) {}
-        return;
-    }
-
-    // webm mode: batch-submit the whole directory at once (no viewport concept).
-    try {
-        const res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
-        if (res?.job_id) {
-            onJobSubmitted(res.job_id);
-            _activePregenJobIds.push(res.job_id);
-        }
-    } catch (_) {}
+    // Pregen is now entirely viewport-priority: each card queues itself via
+    // _queueVtilePregen (webm + autoplay) as its thumbnail loads through the
+    // IntersectionObserver pipeline, and _apEnsureSprite (autoplay) fetches
+    // sprites on-demand for visible tiles.  No bulk job is submitted here to
+    // avoid queueing hundreds of files the user may never reach.
 }
 
 // ---------------------------------------------------------------------------
@@ -1353,9 +1314,6 @@ async function saveVideoSettings() {
             state.settings.vtile_duration = body.vtile_duration;
             state.settings.vtile_use_longest = body.vtile_use_longest;
             updatePregenBtn();
-            // Clear pregen cache for the current directory so that switching
-            // to webm/autoplay mode immediately triggers vtile pregen.
-            _autoPregenDirs.delete(state.currentPath || '');
             renderContent();
         } catch (e) {
             showToast('Failed to save settings: ' + e.message);

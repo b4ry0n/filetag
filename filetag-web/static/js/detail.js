@@ -532,6 +532,10 @@ function _trickplayAttach(img, path) {
             }
         });
 
+        // Queue vtile pregeneration as the card's thumbnail loads (viewport-priority
+        // order — _thumbReplace fires from _thumbObserver IntersectionObserver).
+        if (typeof _queueVtilePregen === 'function') _queueVtilePregen(path);
+
         return;
     }
     // ---- end mode: "webm" ----
@@ -1053,6 +1057,22 @@ function _trickplayAttach(img, path) {
                 if (_videoVisible) v.play().catch(() => {});
             }
         });
+
+        // Pause the inline video when the card leaves the viewport to avoid
+        // wasting CPU and GPU on off-screen tiles; resume when it returns.
+        // The threshold of 0.1 means we pause when less than 10% of the card
+        // is visible, and resume once it is at least 10% visible again.
+        const _apVisObs = new IntersectionObserver(entries => {
+            for (const e of entries) {
+                if (!card.isConnected) { _apVisObs.disconnect(); return; }
+                if (e.isIntersecting) {
+                    if (v.src && v.paused && _videoVisible) v.play().catch(() => {});
+                } else {
+                    v.pause();
+                }
+            }
+        }, { threshold: 0.1 });
+        _apVisObs.observe(card);
 
         // Proactively load the sprite sheet as soon as the thumbnail is ready.
         // Viewport priority is provided automatically: _trickplayAttach() is called
