@@ -14,6 +14,7 @@ let _pollTimer = null;
 let _panelOpen = false;
 let _lastJobsJson = '';  // last serialised snapshot; avoids redundant DOM updates
 let _doneExpanded = false; // whether the collapsed "done" section is open
+let _evtSource = null;   // EventSource for SSE job updates
 
 // Callbacks to fire when a specific job reaches 'done' status.
 // Map<job_id, Array<Function>>
@@ -31,30 +32,32 @@ const KIND_ICONS = {
 };
 
 // ---------------------------------------------------------------------------
-// Polling
+// SSE connection + data handling
 // ---------------------------------------------------------------------------
 
 function startJobPolling() {
-    if (_pollTimer !== null) return;
-    _pollTimer = setInterval(_pollJobs, 1000);
-    _pollJobs(); // immediate first fetch
+    if (_evtSource !== null) return;  // already open
+    _evtSource = new EventSource('/api/jobs/stream');
+    _evtSource.onmessage = (evt) => {
+        let data;
+        try { data = JSON.parse(evt.data); } catch (_) { return; }
+        _applyJobsData(data);
+    };
+    // Browser auto-reconnects on transient errors.  If the source permanently
+    // closes (page going offline), null it so the next call can reopen it.
+    _evtSource.onerror = () => {
+        if (_evtSource && _evtSource.readyState === EventSource.CLOSED) {
+            _evtSource = null;
+        }
+    };
 }
 
 function stopJobPolling() {
-    if (_pollTimer !== null) {
-        clearInterval(_pollTimer);
-        _pollTimer = null;
-    }
+    // Kept for backward compatibility; the SSE connection stays open.
 }
 
-async function _pollJobs() {
-    try {
-        const data = await api('/api/jobs');
-        state.jobs = data.jobs || [];
-    } catch (_) {
-        // Silently ignore network errors during polling.
-        return;
-    }
+function _applyJobsData(data) {
+    state.jobs = data.jobs || [];
 
     const newJson = JSON.stringify(state.jobs);
     const changed = newJson !== _lastJobsJson;
@@ -72,12 +75,6 @@ async function _pollJobs() {
     }
     if (changed) renderJobsBar();
     if (_panelOpen && changed) renderJobsList();
-
-    const hasActive = (state.jobs || []).some(j =>
-        j.status === 'pending' || j.status === 'running');
-    if (!hasActive && !_panelOpen) {
-        stopJobPolling();
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,5 +275,9 @@ window.onJobSubmitted    = onJobSubmitted;
 window.whenJobDone       = whenJobDone;
 window.renderJobsBar     = renderJobsBar;
 window.renderStatusBar   = renderStatusBar;
+
+// Open the SSE connection immediately so pre-existing jobs are visible
+// as soon as the page loads, without waiting for a user interaction.
+startJobPolling();
 
 })();

@@ -369,6 +369,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/jobs",
             get(api::api_jobs).delete(api::api_jobs_dismiss_all),
         )
+        .route("/api/jobs/stream", get(api::api_jobs_stream))
         .route("/api/jobs/{id}", delete(api::api_jobs_dismiss))
         .route("/api/jobs/{id}/cancel", post(api::api_jobs_cancel))
         .route("/api/tag-color", post(api::api_tag_color))

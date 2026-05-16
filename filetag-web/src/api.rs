@@ -1853,7 +1853,11 @@ pub async fn api_untag_bulk(
 
 /// `GET /api/jobs` — list all background jobs plus synthetic entries for the
 /// existing AI, face-scan, and pHash progress mechanisms.
-pub async fn api_jobs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+/// Collect all job entries — native store jobs plus synthetic progress entries
+/// for AI analysis, face scanning, similarity indexing, and model downloads —
+/// and return them as a JSON object `{"jobs": [...]}`.  Used by both the
+/// regular polling endpoint and the SSE stream.
+fn build_jobs_json(state: &AppState) -> serde_json::Value {
     let mut jobs: Vec<serde_json::Value> = Vec::new();
 
     // 1. Native jobs registered in the job store.
@@ -1948,7 +1952,63 @@ pub async fn api_jobs(State(state): State<Arc<AppState>>) -> Json<serde_json::Va
         }
     }
 
-    Json(serde_json::json!({ "jobs": jobs }))
+    serde_json::json!({ "jobs": jobs })
+}
+
+pub async fn api_jobs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(build_jobs_json(&state))
+}
+
+/// `GET /api/jobs/stream` — Server-Sent Events stream for live job updates.
+///
+/// Sends an initial snapshot immediately, then pushes a fresh snapshot
+/// whenever a native job changes *or* every 2 seconds (heartbeat for
+/// synthetic jobs such as AI-analysis progress that update outside the
+/// `JobStore`).
+pub async fn api_jobs_stream(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use std::convert::Infallible;
+    use tokio_stream::{
+        StreamExt as _,
+        wrappers::{BroadcastStream, IntervalStream},
+    };
+
+    // Subscribe BEFORE taking the snapshot so no update is lost between the
+    // snapshot and the subscription.
+    let rx = state.jobs.lock().unwrap().subscribe();
+
+    // Native-job change notifications.
+    let native = BroadcastStream::new(rx)
+        .filter_map(|r: Result<(), _>| r.ok()) // drop Lagged errors silently
+        .map(|_: ()| ());
+
+    // Heartbeat: fires every 2 s to propagate synthetic-job updates
+    // (AI progress, face-scan, pHash, model download) that bypass the store.
+    // Use interval_at to skip the immediate first tick — the initial snapshot
+    // already covers the current state.
+    let tick = IntervalStream::new(tokio::time::interval_at(
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(2),
+    ))
+    .map(|_: tokio::time::Instant| ());
+
+    // Merge: any native change or 2-second heartbeat triggers a push.
+    let trigger = native.merge(tick);
+
+    // Initial snapshot delivered without waiting for a trigger.
+    let initial_json = serde_json::to_string(&build_jobs_json(&state)).unwrap_or_default();
+    let initial = tokio_stream::iter(std::iter::once(Ok::<Event, Infallible>(
+        Event::default().data(initial_json),
+    )));
+
+    let state_s = state;
+    let updates = trigger.map(move |_| {
+        let json = serde_json::to_string(&build_jobs_json(&state_s)).unwrap_or_default();
+        Ok::<Event, Infallible>(Event::default().data(json))
+    });
+
+    Sse::new(initial.chain(updates))
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
 }
 
 /// `DELETE /api/jobs/:id` — dismiss a specific completed or failed job.

@@ -70,16 +70,45 @@ fn now_ms() -> i64 {
 // ---------------------------------------------------------------------------
 
 /// Thread-safe store of all active and recently completed background jobs.
-#[derive(Default)]
 pub struct JobStore {
     jobs: HashMap<String, Job>,
     /// Insertion-ordered list of IDs so the panel keeps a stable order.
     order: Vec<String>,
     /// Monotonic counter for simple collision-free ID generation.
     counter: u64,
+    /// Broadcast channel notified on every state change so SSE clients can
+    /// push updates immediately instead of relying on periodic polling.
+    notify_tx: tokio::sync::broadcast::Sender<()>,
+}
+
+impl Default for JobStore {
+    fn default() -> Self {
+        let (notify_tx, _) = tokio::sync::broadcast::channel(64);
+        Self {
+            jobs: HashMap::new(),
+            order: Vec::new(),
+            counter: 0,
+            notify_tx,
+        }
+    }
 }
 
 impl JobStore {
+    /// Subscribe to receive a notification whenever any job state changes.
+    ///
+    /// Subscribe *before* taking a snapshot so no update is missed between
+    /// the snapshot and the subscription.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<()> {
+        self.notify_tx.subscribe()
+    }
+
+    /// Broadcast a change notification to all SSE subscribers.
+    fn notify(&self) {
+        // Ignoring the error is intentional: `Err` means no receivers are
+        // currently subscribed, which is fine.
+        let _ = self.notify_tx.send(());
+    }
+
     /// Register a new job and return its ID.  Starts in [`JobStatus::Pending`].
     pub fn submit(&mut self, kind: impl Into<String>, label: impl Into<String>) -> String {
         self.counter += 1;
@@ -102,6 +131,7 @@ impl JobStore {
                 cancelled: false,
             },
         );
+        self.notify();
         id
     }
 
@@ -112,6 +142,7 @@ impl JobStore {
             j.total = total;
             j.updated_ms = now_ms();
         }
+        self.notify();
     }
 
     /// Update `done` counter and optionally the currently-processing item name.
@@ -122,6 +153,7 @@ impl JobStore {
             j.current = current.map(|s| s.to_string());
             j.updated_ms = now_ms();
         }
+        self.notify();
     }
 
     /// Mark a job as successfully completed.
@@ -134,6 +166,7 @@ impl JobStore {
             }
             j.updated_ms = now_ms();
         }
+        self.notify();
     }
 
     /// Mark a job as failed with an error message.
@@ -144,12 +177,14 @@ impl JobStore {
             j.current = None;
             j.updated_ms = now_ms();
         }
+        self.notify();
     }
 
     /// Remove a specific job entry (dismiss from the panel).
     pub fn dismiss(&mut self, id: &str) {
         self.jobs.remove(id);
         self.order.retain(|i| i != id);
+        self.notify();
     }
 
     /// Remove all jobs that are neither `Pending` nor `Running`.
@@ -164,6 +199,7 @@ impl JobStore {
             }
             active
         });
+        self.notify();
     }
 
     /// Return all jobs in creation order (oldest first).
@@ -189,6 +225,7 @@ impl JobStore {
             j.cancelled = true;
             j.updated_ms = now_ms();
         }
+        self.notify();
     }
 
     /// Returns `true` when the job has been cancelled.
