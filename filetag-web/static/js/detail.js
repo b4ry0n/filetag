@@ -1459,7 +1459,9 @@ const _thumbObserver = new IntersectionObserver((entries) => {
                 _dirThumbQueue.unshift(el);
             }
         } else {
-            // Regular thumb: move to the front of the parallel pool queue.
+            // Regular thumb: add to the front of the queue (lazy-gate).
+            // Items are not pre-queued, so indexOf will be -1; the else-if
+            // branch handles the normal first-entry case.
             const i = _thumbQueue.indexOf(el);
             if (i !== -1) {
                 _thumbQueue.splice(i, 1);
@@ -1546,7 +1548,7 @@ function _thumbInit() {
             }
         } else {
             if (_thumbQueue.includes(el) || _thumbActive.has(el)) return;
-            _thumbQueue.push(el);
+            // Only observe; the card is queued when it enters the viewport.
             _thumbObserver.observe(el);
         }
     });
