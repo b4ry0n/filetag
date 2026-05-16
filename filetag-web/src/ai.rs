@@ -750,6 +750,7 @@ async fn analyse_video_sprite(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
+    priority: bool,
 ) -> anyhow::Result<(String, Vec<AiTagEntry>)> {
     let info = video_info(abs)
         .await
@@ -768,6 +769,7 @@ async fn analyse_video_sprite(
         info.duration,
         config.video_sheet_max_frames,
         use_scene_select,
+        priority,
     )
     .await?;
     let mut sprite_b64 = Vec::with_capacity(sprite_paths.len());
@@ -840,6 +842,7 @@ async fn analyse_video(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
+    priority: bool,
 ) -> anyhow::Result<(String, Vec<AiTagEntry>, Option<String>)> {
     if config.video_mode == "full" {
         let max_bytes = config.video_max_mb.saturating_mul(1024 * 1024);
@@ -852,8 +855,16 @@ async fn analyse_video(
                 config.video_max_mb
             );
             eprintln!("[filetag-web] {warning}");
-            let (raw, tags) =
-                analyse_video_sprite(config, abs, root, existing_tags, kv_keys, n_frames).await?;
+            let (raw, tags) = analyse_video_sprite(
+                config,
+                abs,
+                root,
+                existing_tags,
+                kv_keys,
+                n_frames,
+                priority,
+            )
+            .await?;
             return Ok((raw, tags, Some(warning)));
         }
         match analyse_video_full(config, abs, existing_tags, kv_keys, n_frames).await {
@@ -864,15 +875,30 @@ async fn analyse_video(
                     e
                 );
                 eprintln!("[filetag-web] {warning}");
-                let (raw, tags) =
-                    analyse_video_sprite(config, abs, root, existing_tags, kv_keys, n_frames)
-                        .await?;
+                let (raw, tags) = analyse_video_sprite(
+                    config,
+                    abs,
+                    root,
+                    existing_tags,
+                    kv_keys,
+                    n_frames,
+                    priority,
+                )
+                .await?;
                 return Ok((raw, tags, Some(warning)));
             }
         }
     }
-    let (raw, tags) =
-        analyse_video_sprite(config, abs, root, existing_tags, kv_keys, n_frames).await?;
+    let (raw, tags) = analyse_video_sprite(
+        config,
+        abs,
+        root,
+        existing_tags,
+        kv_keys,
+        n_frames,
+        priority,
+    )
+    .await?;
     Ok((raw, tags, None))
 }
 
@@ -1343,6 +1369,7 @@ async fn analyse_one_path(
     existing_tags: &[String],
     kv_keys: &[String],
     n_frames: Option<u32>,
+    priority: bool,
 ) -> anyhow::Result<(String, Vec<AiTagEntry>, Option<String>)> {
     let ext = rel.rsplit('.').next().unwrap_or("").to_lowercase();
     let is_archive = ARCHIVE_EXTS.contains(&ext.as_str());
@@ -1361,6 +1388,7 @@ async fn analyse_one_path(
             existing_tags,
             kv_keys,
             n_frames,
+            priority,
         )
         .await
     } else {
@@ -1472,6 +1500,7 @@ pub async fn api_ai_analyse(
         &existing_tags,
         &kv_keys,
         body.n_frames,
+        true, // on-demand: give sprite generation priority over background pregen
     )
     .await
     .map_err(AppError)?;
@@ -1582,6 +1611,7 @@ pub async fn api_ai_analyse_batch(
                 &existing_tags,
                 &kv_keys,
                 None,
+                false, // batch: no priority over background pregen
             )
             .await
             {
@@ -2413,6 +2443,7 @@ pub async fn api_ai_chat(
                                 info.duration,
                                 config.video_sheet_max_frames,
                                 use_scene,
+                                true, // interactive chat: priority over background pregen
                             )
                             .await
                             {
@@ -2445,6 +2476,7 @@ pub async fn api_ai_chat(
                         info.duration,
                         config.video_sheet_max_frames,
                         use_scene,
+                        true, // interactive chat: priority over background pregen
                     )
                     .await
                     {

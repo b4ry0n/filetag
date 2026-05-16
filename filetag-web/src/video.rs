@@ -656,9 +656,10 @@ async fn run_sprite_sheet_ffmpeg(
     times: &[f64],
     cache_path: &Path,
     filter: &str,
+    nice_level: i32,
 ) -> anyhow::Result<std::process::Output> {
     let mut cmd = tokio::process::Command::new("nice");
-    cmd.args(["-n", "10", "ffmpeg"]);
+    cmd.args(["-n", &nice_level.to_string(), "ffmpeg"]);
     for t in times {
         cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(abs);
     }
@@ -765,6 +766,10 @@ async fn scene_positions(abs: &Path, n: usize, duration_secs: f64) -> anyhow::Re
 /// Frames are sampled evenly across the full duration, then split into chunks
 /// (`max_frames_per_sheet`) so each output image stays compact for VLM input.
 /// Each sheet uses a near-square tile grid.
+///
+/// When `priority` is `true` (interactive AI chat / single-file analysis) an
+/// [`OnDemandGuard`] is held for the entire call so background pregen jobs
+/// yield, and ffmpeg is run at `nice -n 5` instead of the default `nice -n 10`.
 pub async fn generate_ai_sprites(
     abs: &Path,
     root: &Path,
@@ -772,6 +777,7 @@ pub async fn generate_ai_sprites(
     duration_secs: f64,
     max_frames_per_sheet: usize,
     use_scene_select: bool,
+    priority: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
     if n == 0 {
         anyhow::bail!("cannot generate AI sprites with zero frames");
@@ -793,6 +799,11 @@ pub async fn generate_ai_sprites(
     };
 
     let mut out_paths = Vec::new();
+
+    // Hold an OnDemandGuard for the whole call when priority is set so that
+    // background pregen jobs yield during sprite-sheet generation.
+    let _od = priority.then(OnDemandGuard::new);
+    let nice_level = if priority { 5 } else { 10 };
 
     for (sheet_idx, chunk) in positions.chunks(max_per_sheet).enumerate() {
         let chunk_n = chunk.len();
@@ -821,7 +832,7 @@ pub async fn generate_ai_sprites(
         }
 
         let tmp_path = cache_path.with_extension("tmp.webp");
-        let out = run_sprite_sheet_ffmpeg(abs, chunk, &tmp_path, &filter).await?;
+        let out = run_sprite_sheet_ffmpeg(abs, chunk, &tmp_path, &filter, nice_level).await?;
 
         if !out.status.success() || !tmp_path.exists() {
             let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -839,9 +850,14 @@ pub async fn generate_ai_sprites(
 
                 if !valid_times.is_empty() && valid_times.len() < chunk.len() {
                     let (retry_filter, _, _) = build_sprite_filter(valid_times.len());
-                    let retry =
-                        run_sprite_sheet_ffmpeg(abs, &valid_times, &tmp_path, &retry_filter)
-                            .await?;
+                    let retry = run_sprite_sheet_ffmpeg(
+                        abs,
+                        &valid_times,
+                        &tmp_path,
+                        &retry_filter,
+                        nice_level,
+                    )
+                    .await?;
                     if retry.status.success() && tmp_path.exists() {
                         tokio::fs::rename(&tmp_path, &cache_path).await?;
                         out_paths.push(cache_path);
