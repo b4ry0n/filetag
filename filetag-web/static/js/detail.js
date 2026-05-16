@@ -1688,8 +1688,9 @@ async function _thumbFetchOne(el) {
             }
             if (el.isConnected) _thumbReplace(el, url);
         } else if (resp.status === 202 || resp.status === 503) {
-            // Server busy (queue full) or still generating: re-queue after a short delay.
-            await new Promise(resolve => setTimeout(resolve, 250));
+            // Fallback: server indicated not yet ready (should rarely fire since
+            // thumb_handler now waits asynchronously for a generation slot).
+            await new Promise(resolve => setTimeout(resolve, 500));
             if (el.isConnected) {
                 _thumbQueue.push(el);
                 _thumbObserver.observe(el);

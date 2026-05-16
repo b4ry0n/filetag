@@ -1124,12 +1124,7 @@ async fn thumb_archive_entry(
         return attach_salient_headers(resp, salient);
     }
 
-    let _permit = match THUMB_LIMITER.try_acquire() {
-        Ok(p) => p,
-        Err(_) => {
-            return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
-        }
-    };
+    let _permit = THUMB_LIMITER.acquire().await.unwrap();
 
     let zip_abs = zip_abs.to_path_buf();
     let entry_name = entry_name.to_string();
@@ -1247,12 +1242,7 @@ pub async fn thumb_handler(
                     let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
                     return attach_salient_headers(resp, salient);
                 }
-                let _permit = match THUMB_LIMITER.try_acquire() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
-                    }
-                };
+                let _permit = THUMB_LIMITER.acquire().await.unwrap();
                 let abs2 = abs.clone();
                 let root = cache_root.clone();
                 let use_saliency = features.saliency_pose && crate::saliency::pose_model_ready();
@@ -1386,12 +1376,7 @@ pub async fn thumb_handler(
                     let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
                     return attach_salient_headers(resp, salient);
                 }
-                let _permit = match THUMB_LIMITER.try_acquire() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
-                    }
-                };
+                let _permit = THUMB_LIMITER.acquire().await.unwrap();
                 if let Some(data) = image_thumb_jpeg(&abs, features).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     // Compute salient point in the same request so the first
@@ -1451,12 +1436,7 @@ where
         if let Ok(data) = tokio::fs::read(&cache).await {
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
-        let _permit = match THUMB_LIMITER.try_acquire() {
-            Ok(p) => p,
-            Err(_) => {
-                return (StatusCode::ACCEPTED, "thumbnail queue full").into_response();
-            }
-        };
+        let _permit = THUMB_LIMITER.acquire().await.unwrap();
         if let Some(data) = generate(abs).await {
             let _ = tokio::fs::write(&cache, &data).await;
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
