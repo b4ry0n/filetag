@@ -1143,6 +1143,19 @@ async function pregenSprites() {
 // this session.  Prevents duplicate pregen jobs on repeated navigation.
 const _autoPregenDirs = new Set();
 
+// IDs of currently running background pregen jobs (sprites + vtile).
+// Cancelled when the user navigates to a different directory so they do not
+// keep consuming resources on the new page.
+let _activePregenJobIds = [];
+
+function _cancelActivePregenJobs() {
+    if (_activePregenJobIds.length === 0) return;
+    const ids = _activePregenJobIds.splice(0);
+    for (const id of ids) {
+        fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }).catch(() => {});
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Viewport-priority vtile pregen queue (autoplay mode)
 // ---------------------------------------------------------------------------
@@ -1166,7 +1179,10 @@ async function _flushVtilePregenQueue() {
     const batch = _vtilePregenQueue.splice(0);  // drain current snapshot
     try {
         const res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: batch });
-        if (res?.job_id) onJobSubmitted(res.job_id);
+        if (res?.job_id) {
+            onJobSubmitted(res.job_id);
+            _activePregenJobIds.push(res.job_id);
+        }
     } catch (_) {}
 }
 
@@ -1178,6 +1194,9 @@ async function _autoPregenVtiles() {
     const dirKey = state.currentPath || '';
     if (!dirKey || _autoPregenDirs.has(dirKey)) return;
     _autoPregenDirs.add(dirKey);
+
+    // Cancel any pregen jobs still running for the previous directory.
+    _cancelActivePregenJobs();
 
     // Reset the viewport-priority queue so a new directory starts fresh.
     _vtilePregenQueue.length = 0;
@@ -1203,7 +1222,10 @@ async function _autoPregenVtiles() {
         // always processed before off-screen ones.
         try {
             const sr = await apiPost('/api/vthumbs/pregenerate' + dirParam('?'), { paths: videoPaths });
-            if (sr?.job_id) onJobSubmitted(sr.job_id);
+            if (sr?.job_id) {
+                onJobSubmitted(sr.job_id);
+                _activePregenJobIds.push(sr.job_id);
+            }
         } catch (_) {}
         return;
     }
@@ -1211,7 +1233,10 @@ async function _autoPregenVtiles() {
     // webm mode: batch-submit the whole directory at once (no viewport concept).
     try {
         const res = await apiPost('/api/vtile/pregenerate' + dirParam('?'), { paths: videoPaths });
-        if (res?.job_id) onJobSubmitted(res.job_id);
+        if (res?.job_id) {
+            onJobSubmitted(res.job_id);
+            _activePregenJobIds.push(res.job_id);
+        }
     } catch (_) {}
 }
 

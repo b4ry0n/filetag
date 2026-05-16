@@ -1970,6 +1970,21 @@ pub async fn api_jobs_dismiss_all(State(state): State<Arc<AppState>>) -> Json<se
     Json(serde_json::json!({ "ok": true }))
 }
 
+/// `POST /api/jobs/:id/cancel` — request cancellation of a running job.
+///
+/// The background task polls `JobStore::is_cancelled` between work items and
+/// stops voluntarily.  The job remains in the store (as `Running`) until the
+/// task naturally exits and calls `finish` or `fail`.
+pub async fn api_jobs_cancel(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    if !id.starts_with("__") {
+        state.jobs.lock().unwrap().cancel(&id);
+    }
+    Json(serde_json::json!({ "ok": true }))
+}
+
 // ---------------------------------------------------------------------------
 // Recursive directory tagging
 // ---------------------------------------------------------------------------

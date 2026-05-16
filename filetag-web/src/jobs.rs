@@ -52,6 +52,10 @@ pub struct Job {
     pub created_ms: i64,
     /// Unix timestamp (ms) of the last update.
     pub updated_ms: i64,
+    /// Set to `true` by `JobStore::cancel`; background tasks check this
+    /// between items and stop early when it is `true`.
+    #[serde(skip)]
+    pub cancelled: bool,
 }
 
 fn now_ms() -> i64 {
@@ -95,6 +99,7 @@ impl JobStore {
                 error: None,
                 created_ms: now,
                 updated_ms: now,
+                cancelled: false,
             },
         );
         id
@@ -175,6 +180,20 @@ impl JobStore {
         self.jobs
             .values()
             .any(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
+    }
+
+    /// Request cancellation of a job.  The background task must poll
+    /// `is_cancelled` between work items and stop voluntarily.
+    pub fn cancel(&mut self, id: &str) {
+        if let Some(j) = self.jobs.get_mut(id) {
+            j.cancelled = true;
+            j.updated_ms = now_ms();
+        }
+    }
+
+    /// Returns `true` when the job has been cancelled.
+    pub fn is_cancelled(&self, id: &str) -> bool {
+        self.jobs.get(id).is_some_and(|j| j.cancelled)
     }
 }
 

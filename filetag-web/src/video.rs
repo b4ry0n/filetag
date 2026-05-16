@@ -1086,6 +1086,9 @@ pub async fn api_vthumbs_pregen(
         let mut done: u64 = 0;
 
         for rel_path in body.paths {
+            if jobs_store.lock().unwrap().is_cancelled(&job_id2) {
+                break;
+            }
             let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
                 Some(t) => t,
                 None => {
@@ -1223,6 +1226,9 @@ pub async fn api_vtile_pregen(
         let mut done: u64 = 0;
 
         for rel_path in body.paths {
+            if jobs_store.lock().unwrap().is_cancelled(&job_id2) {
+                break;
+            }
             let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
                 Some(t) => t,
                 None => {
