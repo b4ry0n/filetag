@@ -1252,6 +1252,50 @@ pub struct VTileParams {
     pub dir: Option<String>,
 }
 
+/// Scan the vtile cache directory for `abs` and return the longest cached
+/// WebM clip whose duration is at least `min_secs`.
+///
+/// Precedence: `tile_full.webm` (always the longest) > `tile_Xs.webm` with
+/// the highest X >= min_secs.  Returns `None` when no such clip is cached.
+fn find_longest_cached_vtile(abs: &Path, root: &Path, min_secs: u32) -> Option<PathBuf> {
+    let meta = std::fs::metadata(abs).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let size = meta.len();
+    let stem = abs.file_name()?.to_string_lossy().into_owned();
+    let vtile_dir = root.join(".filetag").join("cache").join("vtiles");
+
+    // tile_full.webm is always the longest possible clip.
+    let full_path = vtile_dir.join(format!("{mtime}_{size}_{stem}.tile_full.webm"));
+    if full_path.exists() {
+        return Some(full_path);
+    }
+
+    // Scan for tile_Xs.webm entries with X >= min_secs; keep the longest.
+    let prefix = format!("{mtime}_{size}_{stem}.tile_");
+    let mut best: Option<(u32, PathBuf)> = None;
+    for entry in std::fs::read_dir(&vtile_dir).ok()?.flatten() {
+        let fname = entry.file_name().to_string_lossy().into_owned();
+        if !fname.starts_with(&prefix) {
+            continue;
+        }
+        // Remaining part after prefix: "8s.webm", "16s.webm", etc.
+        let rest = &fname[prefix.len()..];
+        if let Some(s_pos) = rest.find('s')
+            && let Ok(dur) = rest[..s_pos].parse::<u32>()
+            && dur >= min_secs
+            && best.as_ref().is_none_or(|(b, _)| dur > *b)
+        {
+            best = Some((dur, entry.path()));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 /// Generate (or reuse from cache) a short looping WebM clip for the tile
 /// preview of `abs`.
 ///
@@ -1365,19 +1409,34 @@ pub async fn api_vtile(
         None => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
     };
 
-    // Read the configured clip duration (default 8 s).
-    let clip_secs: u32 = {
+    // Read the configured clip duration and "use longest" flag.
+    let (clip_secs, use_longest): (u32, bool) = {
         let conn = match crate::state::open_conn(db_root) {
             Ok(c) => c,
             Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB open failed").into_response(),
         };
-        filetag_lib::db::get_setting(&conn, "vtile_duration")
+        let dur = filetag_lib::db::get_setting(&conn, "vtile_duration")
             .ok()
             .flatten()
             .and_then(|v| v.parse().ok())
             .unwrap_or(8u32)
-            .clamp(0, 120)
+            .clamp(0, 120);
+        let longest = filetag_lib::db::get_setting(&conn, "vtile_use_longest")
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        (dur, longest)
     };
+
+    // If "use longest" is enabled, serve the longest already-cached clip that
+    // is >= clip_secs instead of transcoding a new exact-duration clip.
+    if use_longest
+        && let Some(longer) = find_longest_cached_vtile(&abs, &cache_root, clip_secs)
+        && let Ok(data) = tokio::fs::read(&longer).await
+    {
+        return ([(header::CONTENT_TYPE, "video/webm")], data).into_response();
+    }
 
     // Serve from cache immediately — no semaphore needed for a cache hit.
     let filename = if clip_secs == 0 {

@@ -2511,6 +2511,10 @@ pub async fn api_settings_get(
         .and_then(|v| v.parse().ok())
         .unwrap_or(8u32)
         .clamp(0, 120);
+    let vtile_use_longest: bool = db::get_setting(&conn, "vtile_use_longest")
+        .map_err(AppError)?
+        .map(|v| v == "1")
+        .unwrap_or(false);
     Ok(Json(serde_json::json!({
         "sprite_min": sprite_min,
         "sprite_max": sprite_max,
@@ -2524,6 +2528,7 @@ pub async fn api_settings_get(
         "dir_preview_style": dir_preview_style,
         "tile_preview_mode": tile_preview_mode,
         "vtile_duration": vtile_duration,
+        "vtile_use_longest": vtile_use_longest,
         "imagemagick_installed": imagemagick_installed,
         "ffmpeg_installed": ffmpeg_installed
     })))
@@ -2572,6 +2577,9 @@ pub async fn api_settings_set(
     if let Some(v) = body.vtile_duration {
         let clamped = v.clamp(0, 120);
         db::set_setting(&conn, "vtile_duration", &clamped.to_string()).map_err(AppError)?;
+    }
+    if let Some(v) = body.vtile_use_longest {
+        db::set_setting(&conn, "vtile_use_longest", if v { "1" } else { "0" }).map_err(AppError)?;
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }

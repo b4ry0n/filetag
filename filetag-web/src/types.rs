@@ -426,6 +426,9 @@ pub struct SettingsBody {
     pub tile_preview_mode: Option<String>,
     /// WebM tile preview clip length in seconds (default 8, range 2–120).
     pub vtile_duration: Option<u32>,
+    /// When true, serve the longest already-cached clip (>= vtile_duration) instead
+    /// of transcoding a new clip at the exact configured duration.
+    pub vtile_use_longest: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

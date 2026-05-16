@@ -456,6 +456,14 @@
                         <input type="number" id="vtile-duration" value="8" min="0" max="120">
                         <small>Length of the WebM preview clip. Use <strong>0</strong> to encode the entire video. Videos shorter than the configured length are shown in full. The clip starts at ~15 % of the video to skip intros.</small>
                     </label>
+                    <label class="toggle-row">
+                        <input type="checkbox" id="vtile-use-longest">
+                        <div class="toggle-text">
+                            <span class="toggle-title">Use longest available clip</span>
+                            <small>If a longer clip already exists in cache (e.g. from a previous setting), serve that instead of transcoding a new one. The duration above becomes the minimum length.</small>
+                        </div>
+                        <span class="toggle-knob" aria-hidden="true"></span>
+                    </label>
                     <div class="modal-actions">
                         <button onclick="saveVideoSettings()">Save</button>
                         <button onclick="closeSettings()">Cancel</button>

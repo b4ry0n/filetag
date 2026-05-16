@@ -280,6 +280,8 @@ function openSettings(tab = 'general') {
     _updateTilePreviewHint();
     const vtdEl = document.getElementById('vtile-duration');
     if (vtdEl) vtdEl.value = state.settings.vtile_duration ?? 8;
+    const vtulEl = document.getElementById('vtile-use-longest');
+    if (vtulEl) vtulEl.checked = state.settings.vtile_use_longest ?? false;
     // PDF field is always present — populate regardless of active tab.
     document.getElementById('feat-pdf').checked = state.settings.feature_pdf ?? false;
     // Features tab initialisation is deferred until the tab is visible.
@@ -1315,6 +1317,7 @@ async function saveVideoSettings() {
             dir_preview_style: document.getElementById('dir-preview-style')?.value ?? 'crop',
             tile_preview_mode: document.getElementById('tile-preview-mode')?.value ?? 'sprite',
             vtile_duration: Math.min(120, Math.max(0, parseInt(document.getElementById('vtile-duration')?.value ?? '8', 10))),
+            vtile_use_longest: document.getElementById('vtile-use-longest')?.checked ?? false,
         };
         try {
             await apiPost('/api/settings', body);
@@ -1323,6 +1326,7 @@ async function saveVideoSettings() {
             state.settings.dir_preview_style = body.dir_preview_style;
             state.settings.tile_preview_mode = body.tile_preview_mode;
             state.settings.vtile_duration = body.vtile_duration;
+            state.settings.vtile_use_longest = body.vtile_use_longest;
             updatePregenBtn();
             // Clear pregen cache for the current directory so that switching
             // to webm/autoplay mode immediately triggers vtile pregen.
