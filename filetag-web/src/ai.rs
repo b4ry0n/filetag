@@ -524,6 +524,26 @@ fn b64_image_mime(b64: &str) -> &'static str {
     }
 }
 
+/// Convert image bytes (typically a cached WebP sprite sheet) to JPEG for AI
+/// API consumption.  Many AI providers — including Ollama with LLaVA-based
+/// models — only accept JPEG or PNG.  Falls back to the original bytes if the
+/// `image` crate cannot decode the input or JPEG encoding fails.
+async fn image_bytes_to_jpeg(bytes: Vec<u8>) -> Vec<u8> {
+    tokio::task::spawn_blocking(move || {
+        let Ok(img) = image::load_from_memory(&bytes) else {
+            return bytes;
+        };
+        let mut buf = std::io::Cursor::new(Vec::new());
+        if img.write_to(&mut buf, image::ImageFormat::Jpeg).is_ok() {
+            buf.into_inner()
+        } else {
+            bytes
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Make a single VLM/LLM API call and return the assistant message content.
 async fn vlm_call(
     config: &AiConfig,
@@ -775,7 +795,8 @@ async fn analyse_video_sprite(
     let mut sprite_b64 = Vec::with_capacity(sprite_paths.len());
     for sprite_path in &sprite_paths {
         let sprite_bytes = tokio::fs::read(sprite_path).await?;
-        sprite_b64.push(base64::engine::general_purpose::STANDARD.encode(&sprite_bytes));
+        let jpeg_bytes = image_bytes_to_jpeg(sprite_bytes).await;
+        sprite_b64.push(base64::engine::general_purpose::STANDARD.encode(&jpeg_bytes));
     }
     let b64_refs: Vec<&str> = sprite_b64.iter().map(|s| s.as_str()).collect();
 
@@ -2451,9 +2472,10 @@ pub async fn api_ai_chat(
                                     let mut enc = Vec::new();
                                     for p in &paths {
                                         if let Ok(b) = tokio::fs::read(p).await {
+                                            let jpeg = image_bytes_to_jpeg(b).await;
                                             enc.push(
                                                 base64::engine::general_purpose::STANDARD
-                                                    .encode(&b),
+                                                    .encode(&jpeg),
                                             );
                                         }
                                     }
@@ -2484,7 +2506,10 @@ pub async fn api_ai_chat(
                             let mut enc = Vec::new();
                             for p in &paths {
                                 if let Ok(b) = tokio::fs::read(p).await {
-                                    enc.push(base64::engine::general_purpose::STANDARD.encode(&b));
+                                    let jpeg = image_bytes_to_jpeg(b).await;
+                                    enc.push(
+                                        base64::engine::general_purpose::STANDARD.encode(&jpeg),
+                                    );
                                 }
                             }
                             if enc.is_empty() { None } else { Some(enc) }
