@@ -1,0 +1,1513 @@
+openapi: 3.1.0
+info:
+  title: filetag-web API
+  version: "1"
+  description: |
+    REST API for the filetag-web server.
+
+    ## Root resolution
+
+    Every endpoint that touches a specific database root accepts two mutually
+    exclusive root-selection parameters:
+
+    | Parameter | Type | Description |
+    |-----------|------|-------------|
+    | `root_id` | `integer` | Index from `GET /api/roots` (preferred for native clients) |
+    | `dir` | `string` | Absolute filesystem path of any directory inside the root |
+
+    `root_id` takes priority when both are present.  The web frontend always
+    sends `dir`; native clients should use `root_id` instead.
+
+servers:
+  - url: http://localhost:3000
+    description: Default local server
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: ft_session
+      description: |
+        Session token obtained by posting credentials to `POST /login`.
+        Required only when the server was started with a password.
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # Common
+    # -----------------------------------------------------------------------
+    RootId:
+      type: integer
+      description: Index from `GET /api/roots`. Identifies the database root.
+      example: 0
+
+    Dir:
+      type: string
+      description: Absolute filesystem path of any directory within a database root.
+      example: /Users/alice/Photos
+
+    # -----------------------------------------------------------------------
+    # Responses
+    # -----------------------------------------------------------------------
+    ApiRoot:
+      type: object
+      required: [id, name, path, sort_order, entry_point]
+      properties:
+        id:
+          type: integer
+          description: Index into the server's roots array. Use as `root_id` in requests.
+        name:
+          type: string
+        path:
+          type: string
+          description: Absolute filesystem path to the root directory.
+        sort_order:
+          type: integer
+        entry_point:
+          type: boolean
+          description: False when this root is a subdirectory of another loaded root.
+
+    ApiInfo:
+      type: object
+      required: [root_id, root, files, tags, assignments, total_size]
+      properties:
+        root_id:
+          $ref: '#/components/schemas/RootId'
+        root:
+          type: string
+          description: Absolute path to the database root directory.
+        files:
+          type: integer
+        tags:
+          type: integer
+        assignments:
+          type: integer
+          description: Total number of file-tag assignments.
+        total_size:
+          type: integer
+          description: Sum of all indexed file sizes in bytes.
+
+    ApiTag:
+      type: object
+      required: [name, count]
+      properties:
+        name:
+          type: string
+          example: genre/rock
+        count:
+          type: integer
+        color:
+          type: string
+          nullable: true
+          example: '#ff0000'
+        synonyms:
+          type: array
+          items:
+            type: string
+        has_values:
+          type: boolean
+
+    ApiTagValue:
+      type: object
+      required: [value, count]
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+
+    ApiSubject:
+      type: object
+      required: [name, count]
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+
+    ApiFileTag:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+          nullable: true
+        subject:
+          type: string
+          nullable: true
+        implicit:
+          type: boolean
+
+    ApiDirEntry:
+      type: object
+      required: [name, is_dir]
+      properties:
+        name:
+          type: string
+        is_dir:
+          type: boolean
+        size:
+          type: integer
+          nullable: true
+        mtime:
+          type: integer
+          nullable: true
+          description: Modification time as Unix timestamp in nanoseconds.
+        file_count:
+          type: integer
+          nullable: true
+          description: Number of files inside (directories only).
+        tag_count:
+          type: integer
+          nullable: true
+        root_path:
+          type: string
+          nullable: true
+          description: Set for virtual-root tile entries only.
+        root_id:
+          type: integer
+          nullable: true
+          description: Set for virtual-root tile entries only.
+        covered:
+          type: boolean
+          nullable: true
+          description: False when the file is on a different filesystem than the root.
+        is_symlink:
+          type: boolean
+          nullable: true
+
+    ApiDirListing:
+      type: object
+      required: [path, root_path, entries]
+      properties:
+        path:
+          type: string
+          description: Listed path relative to the database root.
+        root_id:
+          type: integer
+          nullable: true
+        root_path:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiDirEntry'
+
+    ApiFileDetail:
+      type: object
+      required: [path, size, mtime, indexed_at, tags, covered, root_id, root_path]
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+        file_id:
+          type: string
+          nullable: true
+        mtime:
+          type: integer
+        indexed_at:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiFileTag'
+        covered:
+          type: boolean
+        root_id:
+          $ref: '#/components/schemas/RootId'
+        root_path:
+          type: string
+        duration:
+          type: number
+          nullable: true
+          description: Video duration in seconds.
+
+    ApiSearchEntry:
+      type: object
+      required: [path, tags, root_id, root_path]
+      properties:
+        path:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiFileTag'
+        root_id:
+          $ref: '#/components/schemas/RootId'
+        root_path:
+          type: string
+
+    ApiSearchResult:
+      type: object
+      required: [query, results]
+      properties:
+        query:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiSearchEntry'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+security:
+  - cookieAuth: []
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+
+  # -------------------------------------------------------------------------
+  # Authentication
+  # -------------------------------------------------------------------------
+  /api/auth/status:
+    get:
+      summary: Authentication status
+      description: Returns whether the server requires a password.
+      operationId: getAuthStatus
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth:
+                    type: boolean
+                    description: True when the server is password-protected.
+
+  /login:
+    get:
+      summary: Login page
+      operationId: getLoginPage
+      security: []
+      responses:
+        '200':
+          description: HTML login form
+
+    post:
+      summary: Submit credentials
+      operationId: postLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        '303':
+          description: Redirect to / on success or /login on failure
+
+  /logout:
+    post:
+      summary: Log out (invalidate session cookie)
+      operationId: postLogout
+      responses:
+        '303':
+          description: Redirect to /login
+
+  # -------------------------------------------------------------------------
+  # Roots & database info
+  # -------------------------------------------------------------------------
+  /api/roots:
+    get:
+      summary: List all loaded database roots
+      description: |
+        Returns an ordered array of all database roots loaded at startup.
+        The array index is the `root_id` to use in other requests.
+      operationId: getRoots
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiRoot'
+
+  /api/info:
+    get:
+      summary: Database statistics
+      operationId: getInfo
+      parameters:
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiInfo'
+        '500':
+          description: Root not found or database error
+
+  /api/roots/reorder:
+    post:
+      summary: Reorder database roots
+      operationId: reorderRoots
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order]
+              properties:
+                order:
+                  type: array
+                  items:
+                    type: string
+                  description: Ordered list of root filesystem paths.
+      responses:
+        '200':
+          description: OK
+
+  /api/db/rename:
+    post:
+      summary: Rename a database (set display name)
+      operationId: renameDb
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, dir]
+              properties:
+                name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  # -------------------------------------------------------------------------
+  # File browsing
+  # -------------------------------------------------------------------------
+  /api/files:
+    get:
+      summary: List directory contents
+      description: |
+        When `dir` and `root_id` are both absent, returns virtual-root tiles
+        (one per entry-point root).  Otherwise returns the contents of the
+        given directory.
+      operationId: listFiles
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+        - name: show_hidden
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiDirListing'
+
+  /api/file:
+    get:
+      summary: File details and tags
+      operationId: getFile
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Relative path from the database root.
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiFileDetail'
+        '404':
+          description: File not found
+
+  /api/search:
+    get:
+      summary: Search files using the tag query language
+      description: |
+        Supports the full tag query language: `AND`, `OR`, `NOT`, glob patterns
+        (`genre/*`), value comparisons (`year=2024`, `year>2020`), and
+        `type:image` / `type:video` / `type:audio` / `type:document` / `type:archive`
+        filters.
+      operationId: searchFiles
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          example: 'genre/rock and not compilation'
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiSearchResult'
+
+  # -------------------------------------------------------------------------
+  # Tags
+  # -------------------------------------------------------------------------
+  /api/tags:
+    get:
+      summary: List all tags
+      operationId: listTags
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiTag'
+
+  /api/tag-values:
+    get:
+      summary: List all values for a specific tag
+      operationId: listTagValues
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiTagValue'
+
+  /api/tag:
+    post:
+      summary: Tag a single file
+      operationId: tagFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, tags]
+              properties:
+                path:
+                  type: string
+                  description: Relative path from the database root.
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: Tag names, optionally with `key=value` syntax.
+                  example: ['genre/rock', 'year=2024']
+                subject:
+                  type: string
+                  nullable: true
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/untag:
+    post:
+      summary: Remove tags from a single file
+      operationId: untagFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, tags]
+              properties:
+                path:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+                subject:
+                  type: string
+                  nullable: true
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/tag-bulk:
+    post:
+      summary: Tag multiple files in one transaction
+      operationId: tagBulk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths, tags]
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+                subject:
+                  type: string
+                  nullable: true
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/untag-bulk:
+    post:
+      summary: Remove tags from multiple files in one transaction
+      operationId: untagBulk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths, tags]
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+                subject:
+                  type: string
+                  nullable: true
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/files-tags:
+    post:
+      summary: Fetch tags for multiple files
+      operationId: getFilesTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths]
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Map of path → tag list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ApiFileTag'
+
+  /api/tag-dir-recursive:
+    post:
+      summary: Tag all files in a directory tree (background job)
+      operationId: tagDirRecursive
+      description: |
+        Dispatches a background job and returns a `job_id` immediately.
+        Poll `GET /api/jobs` to track progress.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, tags]
+              properties:
+                path:
+                  type: string
+                  description: Relative path of the directory from the database root.
+                tags:
+                  type: array
+                  items:
+                    type: string
+                subject:
+                  type: string
+                  nullable: true
+                include_archives:
+                  type: boolean
+                  default: false
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+
+  # -------------------------------------------------------------------------
+  # Tag metadata
+  # -------------------------------------------------------------------------
+  /api/tag-color:
+    post:
+      summary: Set or clear tag colour
+      operationId: setTagColor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                color:
+                  type: string
+                  nullable: true
+                  example: '#ff0000'
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/rename-tag:
+    post:
+      summary: Rename a tag across all files
+      operationId: renameTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, new_name]
+              properties:
+                name:
+                  type: string
+                new_name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/delete-tag:
+    post:
+      summary: Delete a tag and all its assignments
+      operationId: deleteTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/prune-tags:
+    post:
+      summary: Remove tags with zero assignments
+      operationId: pruneTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  # -------------------------------------------------------------------------
+  # Subjects
+  # -------------------------------------------------------------------------
+  /api/subjects:
+    get:
+      summary: List all subjects
+      operationId: listSubjects
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiSubject'
+
+  /api/create-subject:
+    post:
+      summary: Create a subject
+      operationId: createSubject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/rename-subject:
+    post:
+      summary: Rename a subject
+      operationId: renameSubject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, new_name]
+              properties:
+                name:
+                  type: string
+                new_name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/delete-subject:
+    post:
+      summary: Delete a subject and its tag assignments
+      operationId: deleteSubject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/assign-subject:
+    post:
+      summary: Assign tags from one subject to another entity
+      operationId: assignSubject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from:
+                  type: string
+                to:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  # -------------------------------------------------------------------------
+  # Settings
+  # -------------------------------------------------------------------------
+  /api/settings:
+    get:
+      summary: Get database settings
+      operationId: getSettings
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Key-value map of settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+
+    post:
+      summary: Set a database setting
+      operationId: setSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, value]
+              properties:
+                key:
+                  type: string
+                value:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  # -------------------------------------------------------------------------
+  # Cache
+  # -------------------------------------------------------------------------
+  /api/cache/clear:
+    post:
+      summary: Clear all cached thumbnails and previews
+      operationId: clearCache
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/cache/info:
+    get:
+      summary: Cache statistics (size, file count)
+      operationId: getCacheInfo
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  # -------------------------------------------------------------------------
+  # Background jobs
+  # -------------------------------------------------------------------------
+  /api/jobs:
+    get:
+      summary: List background jobs
+      operationId: listJobs
+      responses:
+        '200':
+          description: Array of job objects
+
+    delete:
+      summary: Dismiss all completed jobs
+      operationId: dismissAllJobs
+      responses:
+        '200':
+          description: OK
+
+  /api/jobs/{id}:
+    delete:
+      summary: Dismiss a single job
+      operationId: dismissJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+
+  /api/jobs/{id}/cancel:
+    post:
+      summary: Cancel a running job
+      operationId: cancelJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+
+  /api/jobs/stream:
+    get:
+      summary: Server-sent events stream for job progress
+      operationId: jobsStream
+      responses:
+        '200':
+          description: SSE stream
+
+  # -------------------------------------------------------------------------
+  # AI / VLM
+  # -------------------------------------------------------------------------
+  /api/ai/config:
+    get:
+      summary: Get AI configuration
+      operationId: getAiConfig
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: AI configuration object
+
+    post:
+      summary: Update AI configuration
+      operationId: setAiConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                model:
+                  type: string
+                api_key:
+                  type: string
+                tag_prefix:
+                  type: string
+                max_tokens:
+                  type: integer
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/ai/analyse:
+    post:
+      summary: Analyse a file with the configured VLM and apply tags
+      operationId: aiAnalyse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Relative path from the database root.
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Applied tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      type: string
+
+  /api/ai/analyse-batch:
+    post:
+      summary: Analyse multiple files (background job)
+      operationId: aiAnalyseBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths]
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/ai/clear-tags:
+    post:
+      summary: Remove AI-applied tags from one or more files
+      operationId: aiClearTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths]
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/ai/status:
+    get:
+      summary: AI analysis progress
+      operationId: getAiStatus
+      responses:
+        '200':
+          description: Progress object
+
+  /api/ai/chat:
+    post:
+      summary: Send a chat message to the VLM (with optional file context)
+      operationId: aiChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                files:
+                  type: array
+                  items:
+                    type: string
+                  description: Relative paths of files to include as visual context.
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: VLM response message
+
+  # -------------------------------------------------------------------------
+  # Preview & thumbnails
+  # -------------------------------------------------------------------------
+  /preview/{path}:
+    get:
+      summary: Serve a file for inline preview (with range support)
+      operationId: previewFile
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Root-relative file path.
+      responses:
+        '200':
+          description: File content
+        '206':
+          description: Partial content
+
+  /thumb/{path}:
+    get:
+      summary: Serve a thumbnail JPEG for a file
+      operationId: thumbFile
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: JPEG thumbnail
+
+  # -------------------------------------------------------------------------
+  # Archive (ZIP / RAR / 7z / CBZ)
+  # -------------------------------------------------------------------------
+  /api/zip/pages:
+    get:
+      summary: List image pages in an archive
+      operationId: listZipPages
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Array of entry names
+
+  /api/zip/page:
+    get:
+      summary: Serve a specific page from an archive
+      operationId: getZipPage
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: entry
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Image content
+
+  /api/zip/thumb:
+    get:
+      summary: Cover thumbnail for an archive
+      operationId: getZipThumb
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: JPEG thumbnail
+
+  # -------------------------------------------------------------------------
+  # Face detection
+  # -------------------------------------------------------------------------
+  /api/face/analyse:
+    post:
+      summary: Run face detection on a single file
+      operationId: faceAnalyse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Detection results
+
+  /api/face/detections:
+    get:
+      summary: List face detections for a file
+      operationId: listFaceDetections
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Detection list
+
+  /api/face/assign:
+    post:
+      summary: Assign a name to a face detection
+      operationId: faceAssign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [detection_id, name]
+              properties:
+                detection_id:
+                  type: integer
+                name:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/face/config:
+    get:
+      summary: Get face detection configuration
+      operationId: getFaceConfig
+      parameters:
+        - name: dir
+          in: query
+          schema:
+            $ref: '#/components/schemas/Dir'
+        - name: root_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: Configuration object
+
+    post:
+      summary: Update face detection configuration
+      operationId: setFaceConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                confidence:
+                  type: number
+                cluster_distance:
+                  type: number
+                tag_prefix:
+                  type: string
+                dir:
+                  $ref: '#/components/schemas/Dir'
+                root_id:
+                  $ref: '#/components/schemas/RootId'
+      responses:
+        '200':
+          description: OK
+
+  /api/face/status:
+    get:
+      summary: Face detection progress
+      operationId: getFaceStatus
+      responses:
+        '200':
+          description: Progress object
+
+  # -------------------------------------------------------------------------
+  # OpenAPI spec
+  # -------------------------------------------------------------------------
+  /api/openapi.yaml:
+    get:
+      summary: This OpenAPI specification
+      operationId: getOpenApiSpec
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.1 YAML document
+          content:
+            application/yaml:
+              schema:
+                type: string
