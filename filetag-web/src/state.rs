@@ -109,6 +109,31 @@ pub static DIR_THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::c
 /// generation for the rest of the session.
 pub static TRANSCODE_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
+/// Counter of currently-active on-demand ffmpeg/image operations (thumbnails,
+/// on-demand sprites, on-demand vtiles).  Background pregen tasks poll this
+/// counter and pause while it is non-zero so that user-facing thumbnail
+/// generation is never starved by batch background work.
+pub static ONDEMAND_PENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// RAII guard that increments [`ONDEMAND_PENDING`] on creation and decrements
+/// it on drop.  Create one at the start of every on-demand heavy-media
+/// operation (before acquiring the per-type semaphore) so that pregen loops
+/// see the signal immediately.
+pub struct OnDemandGuard;
+
+impl OnDemandGuard {
+    pub fn new() -> Self {
+        ONDEMAND_PENDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for OnDemandGuard {
+    fn drop(&mut self) {
+        ONDEMAND_PENDING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------

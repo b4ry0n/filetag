@@ -17,7 +17,9 @@ use serde::Deserialize;
 use crate::extract::{heic_extract_jpeg_thumbnail, raw_embedded_jpeg, raw_tiff_orientation};
 use crate::saliency::SalientPoint;
 use crate::state::Features;
-use crate::state::{AppState, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir};
+use crate::state::{
+    AppState, OnDemandGuard, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir,
+};
 use crate::types::DirParam;
 use crate::video::{orient_to_vf_prefix, video_thumb_strip};
 
@@ -1124,6 +1126,7 @@ async fn thumb_archive_entry(
         return attach_salient_headers(resp, salient);
     }
 
+    let _od = OnDemandGuard::new();
     let _permit = THUMB_LIMITER.acquire().await.unwrap();
 
     let zip_abs = zip_abs.to_path_buf();
@@ -1242,6 +1245,7 @@ pub async fn thumb_handler(
                     let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
                     return attach_salient_headers(resp, salient);
                 }
+                let _od = OnDemandGuard::new();
                 let _permit = THUMB_LIMITER.acquire().await.unwrap();
                 let abs2 = abs.clone();
                 let root = cache_root.clone();
@@ -1376,6 +1380,7 @@ pub async fn thumb_handler(
                     let resp = ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
                     return attach_salient_headers(resp, salient);
                 }
+                let _od = OnDemandGuard::new();
                 let _permit = THUMB_LIMITER.acquire().await.unwrap();
                 if let Some(data) = image_thumb_jpeg(&abs, features).await {
                     let _ = tokio::fs::write(&cache, &data).await;
@@ -1436,6 +1441,7 @@ where
         if let Ok(data) = tokio::fs::read(&cache).await {
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
+        let _od = OnDemandGuard::new();
         let _permit = THUMB_LIMITER.acquire().await.unwrap();
         if let Some(data) = generate(abs).await {
             let _ = tokio::fs::write(&cache, &data).await;
@@ -3064,6 +3070,7 @@ pub async fn api_dir_thumbs(
         // Wait for a generation slot.  Additional requests for the same (or other)
         // directories queue here without blocking a thread.  At most
         // DIR_THUMB_LIMITER permits can generate concurrently.
+        let _od = OnDemandGuard::new();
         let _permit = crate::state::DIR_THUMB_LIMITER.acquire().await.unwrap();
 
         // Re-check cache: another request may have populated it while we waited.

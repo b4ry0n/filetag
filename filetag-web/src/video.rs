@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
-    AppState, THUMB_LIMITER, TRANSCODE_LIMITER, VTHUMB_LIMITER, load_features_for, resolve_preview,
-    root_for_dir,
+    AppState, ONDEMAND_PENDING, OnDemandGuard, THUMB_LIMITER, TRANSCODE_LIMITER, VTHUMB_LIMITER,
+    load_features_for, resolve_preview, root_for_dir,
 };
 use crate::types::DirParam;
 
@@ -950,6 +950,7 @@ pub async fn api_vthumbs(
     let cache_path = if !cache_path.exists() {
         // Use the dedicated vthumb semaphore (4 permits) so sprite generation
         // does not block the shared thumbnail queue (1 permit).
+        let _od = OnDemandGuard::new();
         let _permit = match VTHUMB_LIMITER.try_acquire() {
             Ok(p) => p,
             Err(_) => {
@@ -1089,6 +1090,11 @@ pub async fn api_vthumbs_pregen(
             if jobs_store.lock().unwrap().is_cancelled(&job_id2) {
                 break;
             }
+            // Yield to on-demand thumbnail and sprite requests so user-facing
+            // generation is never starved by background pregen work.
+            while ONDEMAND_PENDING.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
             let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
                 Some(t) => t,
                 None => {
@@ -1131,7 +1137,7 @@ pub async fn api_vthumbs_pregen(
                         .map(|i| info.duration * (i as f64 + 0.5) / n as f64)
                         .collect();
                     let mut cmd = tokio::process::Command::new("nice");
-                    cmd.args(["-n", "10", "ffmpeg"]);
+                    cmd.args(["-n", "15", "ffmpeg"]);
                     for t in &positions {
                         cmd.args(["-ss", &format!("{t:.2}"), "-i"]).arg(&abs);
                     }
@@ -1229,6 +1235,11 @@ pub async fn api_vtile_pregen(
             if jobs_store.lock().unwrap().is_cancelled(&job_id2) {
                 break;
             }
+            // Yield to on-demand thumbnail and sprite requests so user-facing
+            // generation is never starved by background pregen work.
+            while ONDEMAND_PENDING.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
             let (abs, cache_root) = match resolve_preview(&state_clone, &root, &rel_path) {
                 Some(t) => t,
                 None => {
@@ -1237,7 +1248,7 @@ pub async fn api_vtile_pregen(
                     continue;
                 }
             };
-            let _ = generate_tile_webm(&abs, &cache_root, clip_secs).await;
+            let _ = generate_tile_webm(&abs, &cache_root, clip_secs, 19).await;
             done += 1;
             jobs_store.lock().unwrap().progress(&job_id2, done, None);
         }
@@ -1317,7 +1328,12 @@ fn find_longest_cached_vtile(abs: &Path, root: &Path, min_secs: u32) -> Option<P
 /// automatically triggers regeneration.
 ///
 /// Returns the path to the cached WebM on success.
-async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::Result<PathBuf> {
+async fn generate_tile_webm(
+    abs: &Path,
+    root: &Path,
+    clip_secs: u32,
+    nice_level: i32,
+) -> anyhow::Result<PathBuf> {
     // clip_secs == 0 means "full video".
     let cache_name = if clip_secs == 0 {
         "tile_full.webm".to_string()
@@ -1355,7 +1371,7 @@ async fn generate_tile_webm(abs: &Path, root: &Path, clip_secs: u32) -> anyhow::
     let ok = tokio::process::Command::new("nice")
         .args([
             "-n",
-            "15",
+            &nice_level.to_string(),
             "ffmpeg",
             "-ss",
             &format!("{start:.2}"),
@@ -1457,6 +1473,7 @@ pub async fn api_vtile(
         return ([(header::CONTENT_TYPE, "video/webm")], data).into_response();
     }
 
+    let _od = OnDemandGuard::new();
     let _permit = match VTHUMB_LIMITER.try_acquire() {
         Ok(p) => p,
         Err(_) => {
@@ -1464,7 +1481,7 @@ pub async fn api_vtile(
         }
     };
 
-    match generate_tile_webm(&abs, &cache_root, clip_secs).await {
+    match generate_tile_webm(&abs, &cache_root, clip_secs, 15).await {
         Ok(path) => match tokio::fs::read(&path).await {
             Ok(data) => ([(header::CONTENT_TYPE, "video/webm")], data).into_response(),
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response(),
@@ -1629,7 +1646,7 @@ pub async fn api_vtile_full_trigger(
     let job_id2 = job_id.clone();
     tokio::spawn(async move {
         state2.jobs.lock().unwrap().start(&job_id2, 1);
-        match generate_tile_webm(&abs2, &cache_root2, 0).await {
+        match generate_tile_webm(&abs2, &cache_root2, 0, 15).await {
             Ok(_) => state2.jobs.lock().unwrap().finish(&job_id2),
             Err(e) => state2.jobs.lock().unwrap().fail(&job_id2, e.to_string()),
         }
