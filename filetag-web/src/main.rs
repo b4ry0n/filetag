@@ -18,7 +18,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::{
     Router,
-    http::{HeaderValue, header},
+    http::{HeaderName, HeaderValue, header},
     middleware,
     routing::{delete, get, post},
 };
@@ -295,6 +295,15 @@ async fn main() -> anyhow::Result<()> {
         vtile_full_jobs: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
+    // Random token that changes every server restart — lets the frontend detect
+    // stale JS and reload automatically.
+    let build_id_hv: HeaderValue = {
+        use rand::RngExt;
+        let bytes: [u8; 8] = rand::rng().random();
+        let s: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        HeaderValue::from_str(&s).expect("hex string is a valid header value")
+    };
+
     let app = Router::new()
         .route("/", get(api::index_html))
         .route("/css/base.css", get(api::css_base))
@@ -514,6 +523,11 @@ async fn main() -> anyhow::Result<()> {
         .layer(SetResponseHeaderLayer::if_not_present(
             header::REFERRER_POLICY,
             HeaderValue::from_static("same-origin"),
+        ))
+        // Identify this server process so the frontend can detect restarts.
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-build-id"),
+            build_id_hv,
         ))
         // Limit JSON/form request bodies to 32 MiB (prevents OOM from huge uploads).
         .layer(RequestBodyLimitLayer::new(32 * 1024 * 1024));

@@ -1,4 +1,41 @@
 // ---------------------------------------------------------------------------
+// Global fetch interceptor
+// Handles two cases transparently for all API calls:
+//   401 Unauthorised  — session expired or server restarted; redirect to /login.
+//   X-Build-Id change — server restarted with new code; reload to pick up new JS.
+// ---------------------------------------------------------------------------
+{
+    const _origFetch = window.fetch.bind(window);
+    let _knownBuildId = null;
+    let _navigating   = false;
+
+    window.fetch = async function(input, init) {
+        const resp = await _origFetch(input, init);
+        if (_navigating) return resp;
+
+        // Auth expired or server restarted and wiped the in-memory session store.
+        if (resp.status === 401) {
+            _navigating = true;
+            window.location.href = '/login';
+            return resp;
+        }
+
+        // Server was restarted with a new build — reload so stale JS is replaced.
+        const bid = resp.headers.get('x-build-id');
+        if (bid) {
+            if (_knownBuildId === null) {
+                _knownBuildId = bid;
+            } else if (_knownBuildId !== bid) {
+                _navigating = true;
+                window.location.reload();
+            }
+        }
+
+        return resp;
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Icons (inline SVG)
 // ---------------------------------------------------------------------------
 
