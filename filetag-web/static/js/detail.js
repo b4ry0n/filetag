@@ -291,6 +291,62 @@ function _overlayAbsolute(vpLeft, vpTop) {
     return { sc, left: vpLeft - r.left + sc.scrollLeft, top: vpTop - r.top + sc.scrollTop };
 }
 
+// ---------------------------------------------------------------------------
+// Autoplay vtile download pool — limits concurrent vtile video downloads.
+// Without this, every video card fires its own /api/vtile request immediately
+// after the thumbnail loads, causing dozens of parallel video streams.
+// ---------------------------------------------------------------------------
+const VTILE_AP_CONCURRENCY = 3;
+let   _vtileApActive = 0;
+const _vtileApQueue  = []; // { v: HTMLVideoElement, startFn: Function }
+
+/** Request a vtile download slot; startFn is called when a slot is free. */
+function _vtileApAcquire(v, startFn) {
+    if (_vtileApActive < VTILE_AP_CONCURRENCY) {
+        _vtileApActive++;
+        startFn();
+    } else {
+        _vtileApQueue.push({ v, startFn });
+    }
+}
+
+/** Release a vtile slot and start the next queued download if any. */
+function _vtileApRelease() {
+    while (_vtileApQueue.length > 0) {
+        const { v: qv, startFn } = _vtileApQueue.shift();
+        if (!qv.isConnected) continue; // card removed from DOM — skip
+        startFn();                      // slot count unchanged (transferred)
+        return;
+    }
+    _vtileApActive--;                   // queue empty or all entries disconnected
+}
+
+// ---------------------------------------------------------------------------
+// Autoplay sprite fetch pool — limits concurrent /api/vthumbs requests.
+// ---------------------------------------------------------------------------
+const SPRITE_AP_CONCURRENCY = 6;
+let   _spriteApActive = 0;
+const _spriteApQueue  = []; // pending sprite fetch functions
+
+/** Wrap a sprite fetch call with pool concurrency control. */
+function _spriteApRun(fetchFn) {
+    if (_spriteApActive < SPRITE_AP_CONCURRENCY) {
+        _spriteApActive++;
+        fetchFn();
+    } else {
+        _spriteApQueue.push(fetchFn);
+    }
+}
+
+/** Call when a pooled sprite fetch completes (success or failure). */
+function _spriteApDone() {
+    if (_spriteApQueue.length > 0) {
+        _spriteApQueue.shift()(); // count unchanged (transferred)
+    } else {
+        _spriteApActive--;
+    }
+}
+
 /**
  * Fetch a sprite sheet URL, read the X-Sprite-N response header to get the
  * frame count, then load the image to obtain its natural dimensions.
@@ -773,8 +829,9 @@ function _trickplayAttach(img, path) {
             const maxN = state.settings.sprite_max ?? 16;
             const src = '/api/vthumbs?' + new URLSearchParams({ path, min_n: minN, max_n: maxN })
                 + dirParam('&');
-            _fetchSpriteEntry(src,
+            _spriteApRun(() => _fetchSpriteEntry(src,
                 (entry) => {
+                    _spriteApDone();
                     _trickplayCache.set(path, entry);
                     _spriteCE = entry;
                     // Build overlay immediately if the user is already hovering and
@@ -782,12 +839,13 @@ function _trickplayAttach(img, path) {
                     if (card.matches(':hover') && !_videoReady) _apBuildOverlay();
                 },
                 () => {
+                    _spriteApDone();
                     _trickplayCache.set(path, 'failed');
                     setTimeout(() => {
                         if (_trickplayCache.get(path) === 'failed') _trickplayCache.delete(path);
                     }, 3000);
                 }
-            );
+            ));
         }
 
         function _apBuildOverlay() {
@@ -861,7 +919,7 @@ function _trickplayAttach(img, path) {
 
         // -- Phase 3: WebM video element (background generation + polling) --
         const v = document.createElement('video');
-        v.src = '/api/vtile?' + new URLSearchParams({ path }) + dirParam('&');
+        // v.src is set lazily via _vtileApAcquire to cap concurrent downloads.
         v.muted = true;
         v.loop = true;
         v.autoplay = true;
@@ -871,24 +929,46 @@ function _trickplayAttach(img, path) {
         v.style.opacity    = '0';
         v.style.transition = 'opacity 0.4s ease';
         wrap.appendChild(v);
-        v.play().catch(() => {});
 
         let _videoReady = false;
+        let _slotHeld   = false;
+
+        function _releaseVtileSlot() {
+            if (!_slotHeld) return;
+            _slotHeld = false;
+            _vtileApRelease();
+        }
+
         v.addEventListener('canplay', () => {
             _videoReady   = true;
             _videoVisible = true;
             v.style.opacity = '1';
             // Remove sprite overlay; playing video replaces it.
             _apTeardown();
+            _releaseVtileSlot(); // free pool slot for the next card
         }, { once: true });
 
         // Retry when the tile is not yet cached (backend returns 202 or 422).
         let _retries = 0;
         v.addEventListener('error', function _retry() {
-            if (_retries >= 12) { v.removeEventListener('error', _retry); return; }
+            if (_retries >= 12 || !v.isConnected) {
+                v.removeEventListener('error', _retry);
+                _releaseVtileSlot(); // give up; free the pool slot
+                return;
+            }
             const delay = Math.min(2000 * (_retries + 1), 15000);
             _retries++;
-            setTimeout(() => { v.load(); v.play().catch(() => {}); }, delay);
+            setTimeout(() => {
+                if (!v.isConnected) { _releaseVtileSlot(); return; }
+                v.load(); v.play().catch(() => {});
+            }, delay);
+        });
+
+        // Acquire a pool slot; starts immediately if under the cap, otherwise queues.
+        _vtileApAcquire(v, () => {
+            _slotHeld = true;
+            v.src = '/api/vtile?' + new URLSearchParams({ path }) + dirParam('&');
+            v.play().catch(() => {});
         });
 
         // -- Event handlers: sprite behaviour while video not ready, video popup once ready --
