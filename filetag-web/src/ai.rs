@@ -20,7 +20,7 @@ use crate::archive::{archive_image_entries, archive_list_entries_raw, archive_re
 use crate::preview::{raw_cache_path, raw_extract_jpeg};
 use crate::state::Features;
 use crate::state::{
-    AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_for_dir,
+    AppError, AppState, open_conn, open_for_file_op, open_for_file_op_under, root_from_dir_or_id,
 };
 use crate::video::{extract_video_frames, generate_ai_sprites, sprites_for_duration, video_info};
 
@@ -1451,6 +1451,7 @@ async fn prepare_jpeg_for_analysis(effective_root: &Path, rel: &str) -> Option<V
 pub(crate) struct AiClearTagsRequest {
     paths: Vec<String>,
     dir: Option<String>,
+    root_id: Option<usize>,
     #[serde(default)]
     prefix: Option<String>,
 }
@@ -1461,11 +1462,7 @@ pub async fn api_ai_clear_tags(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiClearTagsRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_for_dir(
-        &state,
-        std::path::Path::new(body.dir.as_deref().unwrap_or("")),
-    )
-    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let prefix = body.prefix.as_deref().unwrap_or("ai/");
     let mut cleared = 0usize;
     for path in &body.paths {
@@ -1480,6 +1477,7 @@ pub async fn api_ai_clear_tags(
 pub(crate) struct AiAnalyseRequest {
     path: String,
     dir: Option<String>,
+    root_id: Option<usize>,
     #[serde(default)]
     dry_run: bool,
     /// Number of frames to sample from a video for AI analysis.
@@ -1492,10 +1490,7 @@ pub async fn api_ai_analyse(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiAnalyseRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = match root_for_dir(&state, Path::new(body.dir.as_deref().unwrap_or(""))) {
-        Some(r) => r,
-        None => return Err(AppError(anyhow::anyhow!("no database found for this path"))),
-    };
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let config = {
         let root_conn = open_conn(db_root).map_err(AppError)?;
         load_ai_config(&root_conn).ok_or_else(|| {
@@ -1545,6 +1540,7 @@ pub async fn api_ai_analyse(
 pub(crate) struct AiBatchRequest {
     paths: Vec<String>,
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// Queue AI analysis for a batch of images (background task).
@@ -1552,11 +1548,7 @@ pub async fn api_ai_analyse_batch(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_for_dir(
-        &state,
-        std::path::Path::new(body.dir.as_deref().unwrap_or("")),
-    )
-    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let root = db_root.root.clone();
     let batch_config = {
         let root_conn = open_conn(db_root).map_err(AppError)?;
@@ -1715,6 +1707,7 @@ pub(crate) struct AiConfigRequest {
     video_frame_selection: Option<String>,
     enabled: Option<bool>,
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// Save AI configuration to the database settings table.
@@ -1722,11 +1715,7 @@ pub async fn api_ai_config_set(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AiConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_for_dir(
-        &state,
-        std::path::Path::new(body.dir.as_deref().unwrap_or("")),
-    )
-    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root).map_err(AppError)?;
 
     if let Some(v) = &body.endpoint {
@@ -1812,6 +1801,7 @@ pub async fn api_ai_config_set(
 #[derive(Deserialize)]
 pub(crate) struct AiConfigQuery {
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// Read AI configuration from the database settings table.
@@ -1820,11 +1810,7 @@ pub async fn api_ai_config_get(
     Query(params): Query<AiConfigQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    )
-    .ok_or_else(|| AppError(anyhow::anyhow!("dir is required")))?;
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let conn = open_conn(db_root).map_err(AppError)?;
 
     let g = |key: &str| -> String {
@@ -1916,8 +1902,10 @@ pub(crate) struct AiModelsQuery {
     format: Option<String>,
     /// Optional bearer token.
     api_key: Option<String>,
-    /// Fallback: read config from this database root.
+    /// Fallback: read config from this database root (absolute path).
     dir: Option<String>,
+    /// Fallback: root ID from `GET /api/roots` (native client alternative to `dir`).
+    root_id: Option<usize>,
 }
 
 /// Fetch the list of available models from the configured AI endpoint.
@@ -1942,10 +1930,7 @@ pub async fn api_ai_models(
             (from_query, from_query_fmt, from_query_key)
         } else {
             // Load from DB settings.
-            let maybe = root_for_dir(
-                &state,
-                std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-            );
+            let maybe = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id).ok();
             if let Some(db_root) = maybe {
                 if let Ok(conn) = open_conn(db_root) {
                     let g = |key: &str| -> String {
@@ -2070,6 +2055,7 @@ const COMMON_TRAITS_MAX_IMAGES: usize = 8;
 pub(crate) struct AiAnalyseCommonRequest {
     paths: Vec<String>,
     dir: Option<String>,
+    root_id: Option<usize>,
     #[serde(default)]
     dry_run: bool,
 }
@@ -2088,8 +2074,7 @@ pub async fn api_ai_analyse_common(
         return Ok(Json(serde_json::json!({ "tags": [], "applied_count": 0 })));
     }
 
-    let db_root = root_for_dir(&state, Path::new(body.dir.as_deref().unwrap_or("")))
-        .ok_or_else(|| AppError(anyhow::anyhow!("no database found for this path")))?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
 
     let config = {
         let root_conn = open_conn(db_root).map_err(AppError)?;
@@ -2207,6 +2192,8 @@ pub struct AiChatMessage {
 pub struct AiChatRequest {
     /// Absolute path of the current directory (used to resolve the correct DB root).
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
     /// Absolute paths of the files being discussed.  Images are encoded and
     /// sent with the first user message; other file types are skipped.
     pub files: Vec<String>,
@@ -2352,9 +2339,7 @@ pub async fn api_ai_chat(
         }
     }
 
-    let dir = req.dir.as_deref().unwrap_or("");
-    let root = root_for_dir(&state, std::path::Path::new(dir))
-        .ok_or_else(|| AppError(anyhow::anyhow!("no database found for directory")))?;
+    let root = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root)?;
     let config =
         load_ai_config(&conn).ok_or_else(|| AppError(anyhow::anyhow!("AI is not configured")))?;
@@ -2869,6 +2854,8 @@ pub async fn api_ai_chat(
 #[derive(serde::Deserialize)]
 pub struct PromptWizardRequest {
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
     /// The user's collection description and tagging goals (from settings).
     pub goals: String,
     /// Pass 2 only: draft prompts to review and improve.
@@ -3025,9 +3012,7 @@ pub async fn api_ai_prompt_wizard(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PromptWizardRequest>,
 ) -> Result<Json<PromptWizardResponse>, AppError> {
-    let dir = req.dir.as_deref().unwrap_or("");
-    let root = root_for_dir(&state, std::path::Path::new(dir))
-        .ok_or_else(|| AppError(anyhow::anyhow!("no database found for directory")))?;
+    let root = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root)?;
     let mut config =
         load_ai_config(&conn).ok_or_else(|| AppError(anyhow::anyhow!("AI is not configured")))?;

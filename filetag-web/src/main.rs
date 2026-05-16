@@ -333,6 +333,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/css/jobs.css", get(api::css_jobs))
         .route("/js/jobs.js", get(api::js_jobs))
         .route("/favicon.svg", get(api::favicon))
+        .route("/api/openapi.yaml", get(api::openapi_yaml))
         .route("/api/roots", get(api::api_roots))
         .route("/api/auth/status", get(api::api_auth_status))
         .route("/api/roots/reorder", post(api::api_reorder_roots))

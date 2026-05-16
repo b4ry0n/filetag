@@ -12,7 +12,7 @@ use filetag_lib::{db, query};
 use crate::archive::ensure_zip_entry_record;
 use crate::state::{
     AppError, AppState, file_is_covered, load_features_for, open_conn, open_for_file_op, parse_tag,
-    preview_safe_path, resolve_preview, root_for_dir, safe_path,
+    preview_safe_path, resolve_preview, root_from_dir_or_id, safe_path,
 };
 use crate::types::*;
 use crate::video::video_info;
@@ -22,24 +22,9 @@ use filetag_lib::db::TagRoot;
 // Root resolution from `dir` parameter
 // ---------------------------------------------------------------------------
 
-/// Resolve the active database root from an absolute filesystem path.
-///
-/// Returns the deepest `TagRoot` whose root directory contains `dir`. This is
-/// the one canonical root-resolution function used by all API handlers.
-///
-/// Returns `AppError` (HTTP 400) when `dir` is absent or not within any loaded root.
+/// Convenience wrapper: resolve root from `dir` only (no root_id).
 fn root_from_dir<'a>(state: &'a AppState, dir: Option<&str>) -> Result<&'a TagRoot, AppError> {
-    let d = dir.ok_or_else(|| {
-        AppError(anyhow::anyhow!(
-            "dir parameter is required — navigate into a database first"
-        ))
-    })?;
-    root_for_dir(state, Path::new(d)).ok_or_else(|| {
-        AppError(anyhow::anyhow!(
-            "path '{}' is not within any loaded database root",
-            d
-        ))
-    })
+    root_from_dir_or_id(state, dir, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +109,17 @@ pub async fn favicon() -> impl IntoResponse {
     )
 }
 
+/// Serve the embedded OpenAPI specification.
+pub async fn openapi_yaml() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "application/yaml; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        include_str!("../static/openapi.yaml"),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Roots
 // ---------------------------------------------------------------------------
@@ -178,7 +174,7 @@ pub async fn api_rename_db(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameDbRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, Some(body.dir.as_str()))?;
+    let db_root = root_from_dir_or_id(&state, Some(body.dir.as_str()), body.root_id)?;
     let conn = open_conn(db_root)?;
     db::set_setting(&conn, "name", &body.name)?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -193,7 +189,7 @@ pub async fn api_info(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<ApiInfo>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let conn = open_conn(db_root)?;
     let files: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
     let tags: i64 = conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))?;
@@ -202,6 +198,11 @@ pub async fn api_info(
         conn.query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |r| r.get(0))?;
 
     Ok(Json(ApiInfo {
+        root_id: state
+            .roots
+            .iter()
+            .position(|r| r.root == db_root.root)
+            .unwrap_or(0),
         root: db_root.root.display().to_string(),
         files,
         tags,
@@ -288,7 +289,7 @@ pub async fn api_cache_clear(
     Query(rp): Query<DirParam>,
     body: Option<axum::extract::Json<CacheClearBody>>,
 ) -> Response {
-    let db_root = match root_from_dir(&state, rp.dir.as_deref()) {
+    let db_root = match root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id) {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, e.0.to_string()).into_response(),
     };
@@ -377,7 +378,7 @@ pub async fn api_cache_info(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let cache_dir = db_root.root.join(".filetag").join("cache");
 
     let mut subdirs = vec![];
@@ -412,7 +413,7 @@ pub async fn api_cache_prune(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let root = &db_root.root;
     let cache_dir = root.join(".filetag").join("cache");
 
@@ -526,7 +527,7 @@ pub async fn api_cache_clear_subdir(
             body.subdir
         )));
     }
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let subdir = db_root
         .root
         .join(".filetag")
@@ -557,7 +558,7 @@ pub async fn api_db_purge_missing(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let root = db_root.root.clone();
     let db_path = db_root.db_path.clone();
 
@@ -610,7 +611,7 @@ pub async fn api_db_purge_unused_tags(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let conn = open_conn(db_root).map_err(AppError)?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")
         .map_err(|e| AppError(e.into()))?;
@@ -634,7 +635,7 @@ pub async fn api_db_purge_orphan_file_tags(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let conn = open_conn(db_root).map_err(AppError)?;
     let removed = conn
         .execute(
@@ -654,7 +655,7 @@ pub async fn api_db_vacuum(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let conn = open_conn(db_root).map_err(AppError)?;
     conn.execute_batch("VACUUM;")
         .map_err(|e| AppError(e.into()))?;
@@ -768,7 +769,7 @@ pub async fn api_add_synonym(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AddSynonymRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     db::link_synonyms(&conn, &[body.name.as_str(), body.other.as_str()]).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -779,7 +780,7 @@ pub async fn api_remove_synonym(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RemoveSynonymRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let removed = db::remove_synonym(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": removed })))
@@ -790,7 +791,7 @@ pub async fn api_set_tag_attr(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SetTagAttrRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     db::set_tag_attr(&conn, &body.name, &body.key, &body.value).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -801,7 +802,7 @@ pub async fn api_remove_tag_attr(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RemoveTagAttrRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let removed = db::remove_tag_attr(&conn, &body.name, &body.key).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": removed })))
@@ -812,7 +813,7 @@ pub async fn api_get_display_context(
     State(state): State<Arc<AppState>>,
     Query(rp): Query<DirParam>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, rp.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
     let conn = open_conn(db_root)?;
     let ctx = db::get_display_context(&conn).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "context": ctx })))
@@ -823,7 +824,7 @@ pub async fn api_set_display_context(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SetDisplayContextRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     db::set_display_context(&conn, &body.context).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -846,7 +847,7 @@ pub async fn api_files(
         .enumerate()
         .filter(|(_, r)| r.entry_point)
         .collect();
-    if params.dir.is_none() {
+    if params.dir.is_none() && params.root_id.is_none() {
         let mut ordered: Vec<(usize, &TagRoot, i64)> = entry_point_roots
             .iter()
             .map(|&(id, r)| {
@@ -861,7 +862,7 @@ pub async fn api_files(
         ordered.sort_by_key(|&(_, _, o)| o);
         let entries = ordered
             .iter()
-            .map(|&(_id, r, _)| ApiDirEntry {
+            .map(|&(id, r, _)| ApiDirEntry {
                 name: r.name.clone(),
                 is_dir: true,
                 size: None,
@@ -869,19 +870,31 @@ pub async fn api_files(
                 file_count: None,
                 tag_count: None,
                 root_path: Some(r.root.display().to_string()),
+                root_id: Some(id),
                 covered: None,
                 is_symlink: None,
             })
             .collect();
         return Ok(Json(ApiDirListing {
             path: String::new(),
+            root_id: None,
             root_path: String::new(),
             entries,
         }));
     }
 
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
-    let abs_dir = std::path::Path::new(params.dir.as_deref().unwrap_or(""));
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
+    // When root_id is provided without a dir, browse the root directory itself.
+    let root_owned = db_root.root.clone();
+    let abs_dir: &std::path::Path = match params.dir.as_deref() {
+        Some(d) => std::path::Path::new(d),
+        None => &root_owned,
+    };
+    let root_id_val = state
+        .roots
+        .iter()
+        .position(|r| r.root == db_root.root)
+        .unwrap_or(0);
 
     // Path relative to the deepest root — used for breadcrumb in JS and for
     // tag-count queries; this matches how paths are stored in the DB.
@@ -1052,6 +1065,7 @@ pub async fn api_files(
                 file_count,
                 tag_count: if tc > 0 { Some(tc) } else { None },
                 root_path: None,
+                root_id: None,
                 covered: None,
                 is_symlink: if d.is_symlink { Some(true) } else { None },
             }
@@ -1080,6 +1094,7 @@ pub async fn api_files(
                 file_count: None,
                 tag_count: Some(tc),
                 root_path: None,
+                root_id: None,
                 covered: Some(covered),
                 is_symlink: if f.is_symlink { Some(true) } else { None },
             }
@@ -1094,6 +1109,7 @@ pub async fn api_files(
 
     Ok(Json(ApiDirListing {
         path: db_rel,
+        root_id: Some(root_id_val),
         root_path: db_root.root.display().to_string(),
         entries,
     }))
@@ -1138,7 +1154,7 @@ pub async fn api_search(
 ) -> Result<Json<ApiSearchResult>, AppError> {
     let expr = query::parse(&params.q).map_err(AppError)?;
     let mut all_results: Vec<ApiSearchEntry> = Vec::new();
-    for root in &state.roots {
+    for (idx, root) in state.roots.iter().enumerate() {
         let Ok(conn) = open_conn(root) else { continue };
         let Ok(results) = query::execute_with_tags(&conn, &expr) else {
             continue;
@@ -1147,6 +1163,7 @@ pub async fn api_search(
         for (path, tags) in results {
             all_results.push(ApiSearchEntry {
                 path,
+                root_id: idx,
                 root_path: root_str.clone(),
                 tags: tags
                     .into_iter()
@@ -1182,7 +1199,7 @@ pub async fn api_fs_search(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<ApiSearchResult>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let root = db_root.root.clone();
     let pattern = params.q.to_lowercase();
     let is_glob = pattern.contains('*') || pattern.contains('?');
@@ -1219,8 +1236,10 @@ pub async fn api_fs_search(
         .take(MAX_RESULTS)
         .filter_map(|e| {
             let root_str = root.display().to_string();
+            let root_id = state.roots.iter().position(|r| r.root == root).unwrap_or(0);
             e.path().strip_prefix(&root).ok().map(|rel| ApiSearchEntry {
                 path: rel.to_string_lossy().into_owned(),
+                root_id,
                 root_path: root_str,
                 tags: vec![],
             })
@@ -1280,7 +1299,7 @@ pub async fn api_file_detail(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileDetailParams>,
 ) -> Result<Json<ApiFileDetail>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
 
     let is_zip = params.path.contains("::");
     let fs_path = if is_zip {
@@ -1386,6 +1405,11 @@ pub async fn api_file_detail(
             mtime: record.mtime_ns,
             indexed_at,
             covered: true,
+            root_id: state
+                .roots
+                .iter()
+                .position(|r| r.root == eff_root)
+                .unwrap_or(0),
             root_path: eff_root.display().to_string(),
             tags: all_tags,
             duration,
@@ -1400,6 +1424,11 @@ pub async fn api_file_detail(
             mtime: 0,
             indexed_at: String::new(),
             covered: true,
+            root_id: state
+                .roots
+                .iter()
+                .position(|r| r.root == db_root.root)
+                .unwrap_or(0),
             root_path: db_root.root.display().to_string(),
             tags: vec![],
             duration: None,
@@ -1423,6 +1452,11 @@ pub async fn api_file_detail(
         mtime,
         indexed_at: String::new(),
         covered: file_is_covered(&state, &fs_path),
+        root_id: state
+            .roots
+            .iter()
+            .position(|r| r.root == db_root.root)
+            .unwrap_or(0),
         root_path: db_root.root.display().to_string(),
         tags: vec![],
         duration,
@@ -1447,7 +1481,7 @@ pub async fn api_files_tags(
         return Ok(Json(serde_json::json!({ "files": {} })));
     }
 
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
 
     // Group paths by their effective database root.
     let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
@@ -1593,7 +1627,7 @@ pub async fn api_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let (conn, effective_root, effective_rel) =
         open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
@@ -1635,7 +1669,7 @@ pub async fn api_untag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let (conn, _effective_root, effective_rel) =
         open_for_file_op(db_root, &body.path).map_err(AppError)?;
 
@@ -1687,7 +1721,7 @@ pub async fn api_tag_bulk(
         return Ok(Json(serde_json::json!({ "added": 0 })));
     }
 
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
 
     // Group paths by their effective database root (handles child-DB routing).
     // Use find_root — a pure path-walk — to avoid opening N connections.
@@ -1777,7 +1811,7 @@ pub async fn api_untag_bulk(
         return Ok(Json(serde_json::json!({ "removed": 0 })));
     }
 
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
 
     let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
     for path in &body.paths {
@@ -2057,7 +2091,7 @@ pub async fn api_tag_dir_recursive(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagDirRecursiveRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     // Validate the requested directory exists and is inside the root.
     let _ = safe_path(&db_root.root, &body.path).map_err(AppError)?;
 
@@ -2100,8 +2134,8 @@ async fn do_tag_dir_recursive(
 ) -> anyhow::Result<()> {
     // Extract root info before any await points (avoids holding a non-Send ref).
     let (root_path, dir_abs) = {
-        let db_root =
-            root_from_dir(&state, body.dir.as_deref()).map_err(|e| anyhow::anyhow!("{:?}", e.0))?;
+        let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)
+            .map_err(|e| anyhow::anyhow!("{:?}", e.0))?;
         let dir_abs = safe_path(&db_root.root, &body.path).map_err(|e| anyhow::anyhow!("{e}"))?;
         (db_root.root.clone(), dir_abs)
     };
@@ -2261,7 +2295,7 @@ pub async fn api_rename_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     // Apply to all linked databases (the primary is included in the result).
     let all_dbs =
@@ -2300,7 +2334,7 @@ pub async fn api_comic_import_metadata(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ComicImportRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, req.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let (conn, effective_root, effective_rel) =
         open_for_file_op(db_root, &req.path).map_err(AppError)?;
 
@@ -2345,7 +2379,7 @@ pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let ok = db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "ok": ok })))
@@ -2356,7 +2390,7 @@ pub async fn api_delete_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let deleted = db::delete_tag(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
@@ -2369,7 +2403,7 @@ pub async fn api_prune_tags(
     let mut removed: usize = 0;
     if body.dir.is_some() {
         // Single root: prune only the root that owns this path.
-        let db_root = root_from_dir(&state, body.dir.as_deref())?;
+        let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
         let conn = open_conn(db_root)?;
         removed += db::prune_unused_tags(&conn).map_err(AppError)?;
     } else {
@@ -2388,7 +2422,7 @@ pub async fn api_create_subject(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let created = db::create_subject(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "created": created })))
@@ -2399,7 +2433,7 @@ pub async fn api_rename_subject(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let updated = db::rename_subject(&conn, &body.name, &body.new_name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "updated": updated })))
@@ -2410,7 +2444,7 @@ pub async fn api_delete_subject(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let updated = db::delete_subject(&conn, &body.name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "updated": updated })))
@@ -2423,7 +2457,7 @@ pub async fn api_assign_subject(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AssignSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let (conn, effective_root, effective_rel) =
         open_for_file_op(db_root, &body.path).map_err(AppError)?;
     let file_id = if body.path.contains("::") {
@@ -2448,7 +2482,7 @@ pub async fn api_clone_subject(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CloneSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let inserted = db::clone_subject(&conn, &body.name, &body.new_name).map_err(AppError)?;
     Ok(Json(serde_json::json!({ "inserted": inserted })))
@@ -2459,7 +2493,7 @@ pub async fn api_subject_props(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubjectPropsParams>,
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let conn = open_conn(db_root)?;
     let rows = db::get_subject_props(&conn, &params.name).map_err(AppError)?;
     Ok(Json(
@@ -2474,7 +2508,7 @@ pub async fn api_subject_tags(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubjectPropsParams>,
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let conn = open_conn(db_root)?;
     let rows = db::subject_file_tags(&conn, &params.name).map_err(AppError)?;
     Ok(Json(
@@ -2489,7 +2523,7 @@ pub async fn api_subject_add_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SubjectPropRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let inserted =
         db::add_tag_to_subject_files(&conn, &body.subject, &body.tag).map_err(AppError)?;
@@ -2501,7 +2535,7 @@ pub async fn api_subject_remove_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SubjectPropRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let removed =
         db::remove_tag_from_subject_files(&conn, &body.subject, &body.tag).map_err(AppError)?;
@@ -2513,7 +2547,7 @@ pub async fn api_subject_set_prop(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SubjectPropRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let inserted =
         db::set_subject_prop(&conn, &body.subject, &body.tag, &body.value).map_err(AppError)?;
@@ -2525,7 +2559,7 @@ pub async fn api_subject_remove_prop(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SubjectPropRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     let value_opt = if body.value.is_empty() {
         None
@@ -2542,7 +2576,7 @@ pub async fn api_settings_get(
     Query(params): Query<SettingsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, params.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let conn = open_conn(db_root)?;
     let sprite_min: u32 = db::get_setting(&conn, "sprite_min")
         .map_err(AppError)?
@@ -2614,7 +2648,7 @@ pub async fn api_settings_set(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SettingsBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir(&state, body.dir.as_deref())?;
+    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
     let conn = open_conn(db_root)?;
     if let Some(v) = body.sprite_min {
         db::set_setting(&conn, "sprite_min", &v.to_string()).map_err(AppError)?;

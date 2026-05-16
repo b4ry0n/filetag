@@ -1,9 +1,11 @@
 //! Request and response types for the `filetag-web` HTTP API.
 //!
 //! All response types derive [`serde::Serialize`]; all request types derive
-//! [`serde::Deserialize`].  No numeric root IDs are exchanged between the
-//! frontend and backend — all requests carry `dir: Option<String>` (absolute
-//! filesystem path) and the backend resolves the root via `root_for_dir`.
+//! [`serde::Deserialize`].  Requests may carry either `dir: Option<String>`
+//! (absolute filesystem path, used by the web frontend) or `root_id: Option<usize>`
+//! (index returned by `GET /api/roots`, preferred by native clients).  The
+//! backend resolves the root via `root_from_dir_or_id`, which checks `root_id`
+//! first and falls back to `dir`.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +16,8 @@ use serde::{Deserialize, Serialize};
 /// Database statistics returned by `GET /api/info`.
 #[derive(Serialize)]
 pub struct ApiInfo {
+    /// Numeric root ID (index from `GET /api/roots`).
+    pub root_id: usize,
     /// Absolute path to the database root directory.
     pub root: String,
     /// Total number of indexed files.
@@ -75,6 +79,8 @@ pub struct ApiSubject {
 pub struct ApiDirListing {
     /// The path that was listed (relative to the database root).
     pub path: String,
+    /// Numeric root ID (index from `GET /api/roots`).
+    pub root_id: Option<usize>,
     /// Absolute filesystem path of the deepest database root for this directory.
     pub root_path: String,
     pub entries: Vec<ApiDirEntry>,
@@ -96,6 +102,9 @@ pub struct ApiDirEntry {
     /// Set for virtual-root tile entries; absolute filesystem path of the database root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_path: Option<String>,
+    /// Numeric root ID for virtual-root tile entries (index from `GET /api/roots`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_id: Option<usize>,
     /// False when the file is on a different filesystem than the database root.
     /// Tagging is not allowed in that case.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,6 +126,8 @@ pub struct ApiFileDetail {
     pub tags: Vec<ApiFileTag>,
     /// False when the file is on a different filesystem than the database root.
     pub covered: bool,
+    /// Numeric root ID (index from `GET /api/roots`).
+    pub root_id: usize,
     /// Absolute path of the database root that owns this file.
     pub root_path: String,
     /// Video duration in seconds (only set for video files).
@@ -150,6 +161,8 @@ pub struct ApiSearchResult {
 pub struct ApiSearchEntry {
     pub path: String,
     pub tags: Vec<ApiFileTag>,
+    /// Numeric root ID (index from `GET /api/roots`).
+    pub root_id: usize,
     /// Absolute path of the database root that owns this file.
     pub root_path: String,
 }
@@ -180,6 +193,8 @@ pub struct ApiRoot {
 pub struct FileListParams {
     /// Absolute filesystem path of the directory to list.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
     #[serde(default)]
     pub show_hidden: bool,
 }
@@ -191,6 +206,8 @@ pub struct SearchParams {
     /// Absolute filesystem path of the currently browsed directory.
     /// The backend resolves the active root from this path.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Query params for `GET /api/file`.
@@ -199,6 +216,8 @@ pub struct FileDetailParams {
     pub path: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/comic/import-metadata`.
@@ -208,6 +227,8 @@ pub struct ComicImportRequest {
     pub path: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/tag` and `POST /api/untag`.
@@ -220,6 +241,8 @@ pub struct TagRequest {
     /// Absolute filesystem path of the currently browsed directory.
     /// The backend resolves the entry-point root from this path.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/tag-bulk` and `POST /api/untag-bulk`.
@@ -237,6 +260,8 @@ pub struct BulkTagRequest {
     /// Absolute filesystem path of the currently browsed directory.
     /// Used to resolve the entry-point database root.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Generic query param carrying the current browsing directory.
@@ -245,6 +270,8 @@ pub struct BulkTagRequest {
 pub struct DirParam {
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/files-tags` — fetch tags for multiple paths in one
@@ -255,6 +282,8 @@ pub struct FilesTagsRequest {
     /// Absolute filesystem path of the currently browsed directory.
     /// Used to resolve the entry-point database root.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/rename-db`.
@@ -262,6 +291,8 @@ pub struct FilesTagsRequest {
 pub struct RenameDbRequest {
     /// Absolute filesystem path of the database root directory to rename.
     pub dir: String,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
     pub name: String,
 }
 
@@ -280,6 +311,8 @@ pub struct TagColorRequest {
     pub color: Option<String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/rename-tag`.
@@ -289,6 +322,8 @@ pub struct RenameTagRequest {
     pub new_name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/delete-tag`.
@@ -297,6 +332,8 @@ pub struct DeleteTagRequest {
     pub name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/rename-subject`.
@@ -306,6 +343,8 @@ pub struct RenameSubjectRequest {
     pub new_name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/create-subject`.
@@ -314,6 +353,8 @@ pub struct CreateSubjectRequest {
     pub name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/delete-subject`.
@@ -322,6 +363,8 @@ pub struct DeleteSubjectRequest {
     pub name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/assign-subject` — assign a file to a subject.
@@ -336,6 +379,8 @@ pub struct AssignSubjectRequest {
     pub mode: Option<String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/clone-subject`.
@@ -345,6 +390,8 @@ pub struct CloneSubjectRequest {
     pub new_name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Query parameters for `GET /api/subject/props`.
@@ -354,6 +401,8 @@ pub struct SubjectPropsParams {
     pub name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/subject/set-prop` and `POST /api/subject/remove-prop`.
@@ -365,6 +414,8 @@ pub struct SubjectPropRequest {
     pub value: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Minimal request body carrying only a directory.
@@ -372,6 +423,8 @@ pub struct SubjectPropRequest {
 pub struct DirBody {
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/cache/clear`.
@@ -399,6 +452,8 @@ pub struct CacheClearSubdirBody {
 pub struct SettingsParams {
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/settings`.
@@ -406,6 +461,8 @@ pub struct SettingsParams {
 pub struct SettingsBody {
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
     /// Minimum number of trickplay sprites for a video.
     pub sprite_min: Option<u32>,
     /// Maximum number of trickplay sprites for a video.
@@ -445,6 +502,8 @@ pub struct AddSynonymRequest {
     pub other: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/synonym/remove` — remove a tag from its synonym group.
@@ -454,6 +513,8 @@ pub struct RemoveSynonymRequest {
     pub name: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/synonym/attr` — set an attribute on a tag name.
@@ -467,6 +528,8 @@ pub struct SetTagAttrRequest {
     pub value: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/synonym/attr-remove` — remove an attribute from a tag name.
@@ -478,6 +541,8 @@ pub struct RemoveTagAttrRequest {
     pub key: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/display-context` — set the global display context.
@@ -487,6 +552,8 @@ pub struct SetDisplayContextRequest {
     pub context: std::collections::HashMap<String, String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +598,8 @@ pub struct FaceAnalyseRequest {
     pub path: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/face/analyse-batch`.
@@ -555,6 +624,8 @@ pub struct FaceAssignRequest {
     pub subject_name: Option<String>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/face/cluster`.
@@ -562,6 +633,8 @@ pub struct FaceAssignRequest {
 pub struct FaceClusterRequest {
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/face/delete`.
@@ -571,6 +644,8 @@ pub struct FaceDeleteRequest {
     pub detection_ids: Vec<i64>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
 }
 
 /// Query params for `GET /api/face/suggest`.
@@ -578,6 +653,7 @@ pub struct FaceDeleteRequest {
 pub struct FaceSuggestParams {
     pub detection_id: i64,
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 /// Current face-analysis batch progress, returned by `GET /api/face/status`.
@@ -626,6 +702,9 @@ pub struct TagDirRecursiveRequest {
     /// Absolute filesystem path of the currently browsed directory (root
     /// resolution — same semantics as `dir` in other tag requests).
     pub dir: Option<String>,
+    /// Index into the roots list returned by `GET /api/roots`. Takes priority
+    /// over `dir` when provided.
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/face/config`.
@@ -640,4 +719,6 @@ pub struct FaceConfigRequest {
     pub tiling_enabled: Option<bool>,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Index into the roots list returned by `GET /api/roots`.
+    pub root_id: Option<usize>,
 }

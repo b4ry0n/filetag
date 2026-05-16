@@ -336,6 +336,41 @@ pub fn root_for_dir<'a>(state: &'a AppState, abs: &Path) -> Option<&'a TagRoot> 
         .max_by_key(|r| r.root.as_os_str().len())
 }
 
+/// Resolve the active database root by numeric ID or absolute filesystem path.
+///
+/// This is the canonical entry point for all API handlers that need to
+/// identify a database root.  Native clients pass `root_id` (the `id` field
+/// from `GET /api/roots`); the web frontend keeps passing `dir` as before.
+///
+/// Resolution order:
+/// 1. If `root_id` is `Some(n)`, return `state.roots[n]` directly.
+/// 2. Otherwise fall back to `root_for_dir(state, dir)`.
+///
+/// Returns `AppError` (HTTP 400) when neither resolves to a loaded root.
+pub fn root_from_dir_or_id<'a>(
+    state: &'a AppState,
+    dir: Option<&str>,
+    root_id: Option<usize>,
+) -> Result<&'a filetag_lib::db::TagRoot, AppError> {
+    if let Some(id) = root_id {
+        return state
+            .roots
+            .get(id)
+            .ok_or_else(|| AppError(anyhow::anyhow!("unknown root_id {}", id)));
+    }
+    let d = dir.ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "dir parameter is required — navigate into a database first"
+        ))
+    })?;
+    root_for_dir(state, Path::new(d)).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "path '{}' is not within any loaded database root",
+            d
+        ))
+    })
+}
+
 /// Resolve a relative path under `root`, rejecting directory traversal.
 pub fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
     preview_safe_path(root, rel)

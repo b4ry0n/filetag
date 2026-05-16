@@ -41,7 +41,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::state::{AppError, AppState, open_conn, open_for_file_op, root_for_dir};
+use crate::state::{AppError, AppState, open_conn, open_for_file_op, root_from_dir_or_id};
 use crate::types::{
     ApiFaceDetection, ApiFaceResult, FaceAnalyseBatchRequest, FaceAnalyseRequest,
     FaceAssignRequest, FaceClusterRequest, FaceConfigRequest, FaceConfigResponse,
@@ -1548,24 +1548,14 @@ fn collect_images(dir: &Path, recursive: bool) -> Vec<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Root resolution helper (mirrors api.rs `root_from_dir`)
+// Root resolution helper
 // ---------------------------------------------------------------------------
 
 fn root_from_dir<'a>(
     state: &'a AppState,
     dir: Option<&str>,
 ) -> Result<&'a filetag_lib::db::TagRoot, AppError> {
-    let d = dir.ok_or_else(|| {
-        AppError(anyhow::anyhow!(
-            "dir parameter is required — navigate into a database first"
-        ))
-    })?;
-    root_for_dir(state, Path::new(d)).ok_or_else(|| {
-        AppError(anyhow::anyhow!(
-            "path '{}' is not within any loaded database root",
-            d
-        ))
-    })
+    root_from_dir_or_id(state, dir, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -1584,7 +1574,7 @@ pub async fn api_face_analyse(
         )));
     }
 
-    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let (conn, eff_root, rel) = open_for_file_op(root_entry, &req.path)?;
     let cfg = load_face_config(&conn);
 
@@ -1898,19 +1888,22 @@ pub struct FaceDetectionsParams {
     pub path: String,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
 }
 
 /// Query params for endpoints that only need an optional `dir` (no `path` required).
 #[derive(Debug, serde::Deserialize, Default)]
 pub struct FaceDirParams {
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 pub async fn api_face_detections(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FaceDetectionsParams>,
 ) -> Result<Json<ApiFaceResult>, AppError> {
-    let root_entry = root_from_dir(&state, params.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let (conn, _, rel) = open_for_file_op(root_entry, &params.path)?;
 
     let file_rec = db::file_by_path(&conn, &rel)?;
@@ -1940,13 +1933,15 @@ pub struct FaceThumbnailParams {
     pub id: i64,
     /// Absolute filesystem path of the currently browsed directory.
     pub dir: Option<String>,
+    /// Root ID from `GET /api/roots` (native client alternative to `dir`).
+    pub root_id: Option<usize>,
 }
 
 pub async fn api_face_thumbnail(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FaceThumbnailParams>,
 ) -> Result<Response, AppError> {
-    let root_entry = root_from_dir(&state, params.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
     let conn = open_conn(root_entry)?;
 
     let row: Option<(i32, i32, i32, i32, String)> = conn
@@ -2057,7 +2052,7 @@ pub async fn api_face_assign(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FaceAssignRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root_entry)?;
 
     db::set_face_subject(&conn, req.detection_id, req.subject_name.as_deref())?;
@@ -2098,16 +2093,12 @@ pub async fn api_face_assign(
 fn resolve_conn_for_detection(
     state: &AppState,
     dir: Option<&str>,
+    root_id: Option<usize>,
     detection_id: i64,
 ) -> Result<Connection, AppError> {
-    // Fast path: dir is provided and non-empty.
-    if let Some(d) = dir.filter(|s| !s.is_empty()) {
-        let root_entry = root_for_dir(state, Path::new(d)).ok_or_else(|| {
-            AppError(anyhow::anyhow!(
-                "path '{}' is not within any loaded database root",
-                d
-            ))
-        })?;
+    // Fast path: dir or root_id is provided.
+    if dir.is_some() || root_id.is_some() {
+        let root_entry = root_from_dir_or_id(state, dir, root_id)?;
         return open_conn(root_entry).map_err(AppError);
     }
 
@@ -2141,7 +2132,12 @@ pub async fn api_face_suggest(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Resolve root: prefer the `dir` parameter, but if it is absent or empty
     // fall back to scanning all loaded roots for the requested detection_id.
-    let conn = resolve_conn_for_detection(&state, params.dir.as_deref(), params.detection_id)?;
+    let conn = resolve_conn_for_detection(
+        &state,
+        params.dir.as_deref(),
+        params.root_id,
+        params.detection_id,
+    )?;
     let cfg = load_face_config(&conn);
     let auto_prefix = format!("{}/unknown-", cfg.tag_prefix);
 
@@ -2194,7 +2190,7 @@ pub async fn api_face_delete(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FaceDeleteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root_entry)?;
 
     let mut deleted = 0usize;
@@ -2219,13 +2215,14 @@ pub struct FaceRenameSubjectRequest {
     pub old_name: String,
     pub new_name: String,
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 pub async fn api_face_rename_subject(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FaceRenameSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root_entry)?;
     let new_name: Option<&str> = if req.new_name.is_empty() {
         None
@@ -2248,13 +2245,14 @@ pub async fn api_face_rename_subject(
 pub struct FaceDeleteSubjectRequest {
     pub name: String,
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 pub async fn api_face_delete_subject(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FaceDeleteSubjectRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root_entry)?;
     let deleted: usize = if req.name.is_empty() {
         conn.execute("DELETE FROM face_detections WHERE subject_name IS NULL", [])
@@ -2276,7 +2274,7 @@ pub async fn api_face_cluster(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FaceClusterRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let root_entry = root_from_dir(&state, req.dir.as_deref())?;
+    let root_entry = root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?;
     let conn = open_conn(root_entry)?;
     let cfg = load_face_config(&conn);
 
@@ -2296,8 +2294,8 @@ pub async fn api_face_config_get(
     // When no dir is provided (e.g. at page load before any directory is entered),
     // fall back to the first loaded root.  If there are no roots at all, return a
     // default config so the frontend always gets a valid response.
-    let root_entry = if params.dir.is_some() {
-        root_from_dir(&state, params.dir.as_deref()).ok()
+    let root_entry = if params.dir.is_some() || params.root_id.is_some() {
+        root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id).ok()
     } else {
         state.roots.first()
     };
@@ -2332,8 +2330,8 @@ pub async fn api_face_config_set(
     Json(req): Json<FaceConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Mirror api_face_config_get: fall back to first root when no dir is provided.
-    let root_entry = if req.dir.is_some() {
-        root_from_dir(&state, req.dir.as_deref())?
+    let root_entry = if req.dir.is_some() || req.root_id.is_some() {
+        root_from_dir_or_id(&state, req.dir.as_deref(), req.root_id)?
     } else {
         state
             .roots

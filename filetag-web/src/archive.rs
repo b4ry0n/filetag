@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::preview::mime_for_ext;
 use crate::state::{
-    AppState, THUMB_LIMITER, open_conn, preview_safe_path, resolve_preview, root_for_dir,
+    AppState, THUMB_LIMITER, open_conn, preview_safe_path, resolve_preview, root_from_dir_or_id,
 };
 
 // ---------------------------------------------------------------------------
@@ -569,6 +569,7 @@ fn is_dir_image(name: &str) -> bool {
 pub struct DirImagesParams {
     path: String,
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -581,12 +582,9 @@ pub async fn api_dir_images(
     State(state): State<Arc<AppState>>,
     Query(params): Query<DirImagesParams>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let dir_abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
@@ -639,6 +637,7 @@ pub async fn api_dir_images(
 pub struct ZipListParams {
     pub path: String,
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -652,12 +651,9 @@ pub async fn api_zip_pages(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipListParams>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
@@ -678,6 +674,7 @@ pub struct ZipPageParams {
     path: String,
     page: usize,
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// `GET /api/zip/page` — serve a single page from an archive by index.
@@ -685,12 +682,9 @@ pub async fn api_zip_page(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipPageParams>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
@@ -753,6 +747,7 @@ pub struct ZipThumbParams {
     path: String,
     page: usize,
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// `GET /api/zip/thumb` — return a JPEG thumbnail for an archive page.
@@ -760,12 +755,9 @@ pub async fn api_zip_thumb(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipThumbParams>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let features = crate::state::load_features_for(&state, &db_root.root);
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &params.path) {
@@ -921,12 +913,9 @@ pub async fn api_zip_entries(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ZipListParams>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let abs = match preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,
