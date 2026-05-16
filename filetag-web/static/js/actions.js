@@ -277,6 +277,7 @@ function openSettings(tab = 'general') {
     if (dpsSel) dpsSel.value = state.settings.dir_preview_style ?? 'crop';
     const tpmSel = document.getElementById('tile-preview-mode');
     if (tpmSel) tpmSel.value = state.settings.tile_preview_mode ?? 'sprite';
+    _updateTilePreviewHint();
     const vtdEl = document.getElementById('vtile-duration');
     if (vtdEl) vtdEl.value = state.settings.vtile_duration ?? 8;
     // PDF field is always present — populate regardless of active tab.
@@ -1288,6 +1289,19 @@ function updateFeaturesTab() {
 
 function closeSettings() {
     document.getElementById('settings-modal').hidden = true;
+}
+
+function _updateTilePreviewHint() {
+    const sel = document.getElementById('tile-preview-mode');
+    const hint = document.getElementById('tile-preview-hint');
+    if (!sel || !hint) return;
+    const hints = {
+        sprite:    'Lightest option. Scrubs through a pre-generated sprite sheet on hover — no extra processing while browsing. Requires trickplay sprites to be generated in advance.',
+        webm:      'Requires ffmpeg with libvpx. A short clip is transcoded once per video and cached; plays as a looping clip on hover only. Moderate one-time CPU cost per video.',
+        'webm-seek': 'Requires ffmpeg with libvpx. Heaviest backend mode — the <em>full video</em> is always transcoded (regardless of clip duration), using the most CPU and storage. Mouse position seeks the timeline.',
+        autoplay:  'Same backend cost as WebM clip (short clip per video, cached). Heaviest for frontend and network: all visible tiles are requested and start playing simultaneously on page load — may trigger a burst of encode jobs on first visit and significant ongoing GPU/CPU usage.',
+    };
+    hint.innerHTML = hints[sel.value] ?? '';
 }
 
 async function saveVideoSettings() {

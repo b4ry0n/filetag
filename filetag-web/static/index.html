@@ -190,9 +190,6 @@
                             </svg>
                         </button>
                         <div class="toolbar-dropdown" id="more-menu" hidden>
-                            <div class="toolbar-dropdown-section" data-i18n="toolbar.section-cache">Cache</div>
-                            <button onclick="clearCache(false)" data-i18n="toolbar.cache-page">Clear cache for this page</button>
-                            <hr>
                             <div class="toolbar-dropdown-section" data-i18n="toolbar.section-video">Video</div>
                             <button id="pregen-sprites-btn" onclick="pregenSprites()" data-i18n="toolbar.sprites-gen">Generate video sprites</button>
                             <hr>
@@ -447,13 +444,13 @@
                         <small>Maximum preview frames per video (lower = faster generation).</small>
                     </label>
                     <label>Tile hover preview
-                        <select id="tile-preview-mode">
+                        <select id="tile-preview-mode" onchange="_updateTilePreviewHint()">
                             <option value="sprite">Sprite sheet (scrub on hover)</option>
                             <option value="webm">WebM clip (autoplay loop on hover)</option>
                             <option value="webm-seek">WebM scrub (mouse position = timeline seek)</option>
                             <option value="autoplay">Autoplay (always playing in tile)</option>
                         </select>
-                        <small>WebM modes require ffmpeg with libvpx. <em>Autoplay</em> plays all visible video tiles continuously — may use significant GPU/CPU.</small>
+                        <small id="tile-preview-hint"></small>
                     </label>
                     <label>WebM clip duration (seconds)
                         <input type="number" id="vtile-duration" value="8" min="0" max="120">
