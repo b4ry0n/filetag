@@ -353,11 +353,8 @@ function cvApplyScrollZoom(newSize, event) {
             const anchorY = stage.scrollHeight > stage.clientHeight
                 ? { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy }
                 : null;
-            if (_cv.scrollHeight >= 100) {
-                stage.style.removeProperty('--cv-scroll-height'); // let CSS default (100%) fill the stage
-            } else {
-                stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
-            }
+            // Always set the property (using % of stage height) so zoom-in above 100% works.
+            stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}%`);
             if (anchorX || anchorY) requestAnimationFrame(() => {
                 const opts = { behavior: 'instant' };
                 if (anchorX) opts.left = anchorX.ratio * stage.scrollWidth  - anchorX.cx;
@@ -365,7 +362,7 @@ function cvApplyScrollZoom(newSize, event) {
                 stage.scrollTo(opts);
             });
         }
-        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight >= 100 ? 'hidden' : ''; }
+        if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight === 100 ? 'hidden' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
