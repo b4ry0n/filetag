@@ -2677,17 +2677,24 @@ function showFileMenu(e, path, isDir) {
     e.stopPropagation();
     closeFileMenu();
 
-    const name = path.split('/').pop();
+    // Cards pass root-relative paths; API endpoints need absolute paths.
+    const absPath = path.startsWith('/')
+        ? path
+        : state.currentBasePath
+            ? state.currentBasePath + '/' + path
+            : path;
+
+    const name = absPath.split('/').pop();
     const menu = document.createElement('div');
     menu.id = 'file-context-menu';
     menu.className = 'tag-context-menu';
     menu.innerHTML = `
         <div class="tag-menu-header">${esc(name)}</div>
-        <button class="tag-menu-action" onclick="closeFileMenu(); promptRename('${jesc(path)}', ${isDir})">Rename\u2026</button>
-        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove('${jesc(path)}', ${isDir})">Move to\u2026</button>
-        ${!isDir ? `<button class="tag-menu-action" onclick="closeFileMenu(); promptCopy('${jesc(path)}')">Copy\u2026</button>` : ''}
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptRename('${jesc(absPath)}', ${isDir})">Rename\u2026</button>
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove('${jesc(absPath)}', ${isDir})">Move to\u2026</button>
+        ${!isDir ? `<button class="tag-menu-action" onclick="closeFileMenu(); promptCopy('${jesc(absPath)}')">Copy\u2026</button>` : ''}
         <div class="tag-menu-divider"></div>
-        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); confirmDelete('${jesc(path)}', ${isDir})">Delete\u2026</button>
+        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); confirmDelete('${jesc(absPath)}', ${isDir})">Delete\u2026</button>
     `;
     document.body.appendChild(menu);
 
@@ -3058,10 +3065,14 @@ function confirmDelete(path, isDir) {
             await apiPost('/api/fs/delete', { path });
             _closeFsDialog();
             // If the deleted item was selected, clear selection.
-            if (state.selectedFile && state.selectedFile.path === path) {
+            const name = path.split('/').pop();
+            if (state.selectedFile && (state.selectedFile.path === path || state.selectedFile.path?.endsWith('/' + name) || state.selectedFile.path === name)) {
                 state.selectedFile = null;
             }
-            state.selectedPaths.delete(path);
+            // selectedPaths uses root-relative paths; remove any matching entry.
+            for (const p of state.selectedPaths) {
+                if (path.endsWith('/' + p) || p === path) { state.selectedPaths.delete(p); break; }
+            }
             await loadFiles(state.currentPath);
             render();
         } catch (err) {
