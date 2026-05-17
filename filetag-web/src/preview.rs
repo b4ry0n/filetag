@@ -124,12 +124,9 @@ pub async fn preview_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(rp.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
         Some(t) => t,
@@ -1180,12 +1177,9 @@ pub async fn thumb_handler(
     Query(rp): Query<DirParam>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(rp.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     // Virtual archive entry path (e.g. `archive.cbz::subdir/image.jpg`).
