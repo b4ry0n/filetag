@@ -72,9 +72,9 @@
 /* Vertical scroll mode */
 .cv-stage.cv-scroll-mode {
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;
     display: block;
-    cursor: default;
+    cursor: grab;
     scroll-behavior: smooth;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.2) transparent;
@@ -83,16 +83,18 @@
     flex-direction: column;
     align-items: center;
     max-height: none;
-    max-width: 100%;
     transform: none !important;
-    width: 100%;
+    /* Container width = zoom level (% of stage); auto margins centre it when smaller than stage. */
+    width: var(--cv-scroll-width, 100%);
+    margin-left: auto;
+    margin-right: auto;
     gap: 0;
     padding: 12px 0 40px;
 }
 .cv-stage.cv-scroll-mode .cv-page {
     max-height: none;
-    width: var(--cv-scroll-width, 100%);
-    max-width: var(--cv-scroll-width, 100%);
+    width: 100%;
+    max-width: 100%;
     margin: 0 auto 8px;
     display: block;
     background: #111;

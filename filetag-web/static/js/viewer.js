@@ -343,34 +343,48 @@ function cvApplyScrollZoom(newSize, event) {
             _cv.scrollHeight = Math.max(20, Math.min(300, newSize));
         }
         if (stage) {
-            // Always anchor: use cursor position when available, stage centre otherwise.
+            // Anchor to cursor position (both axes) so the point under the cursor stays fixed.
             const rect = stage.getBoundingClientRect();
             const cx = event ? (event.clientX - rect.left) : rect.width / 2;
-            const anchor = stage.scrollWidth > 0
+            const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
+            const anchorX = stage.scrollWidth > 0
                 ? { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx }
+                : null;
+            const anchorY = stage.scrollHeight > stage.clientHeight
+                ? { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy }
                 : null;
             if (_cv.scrollHeight >= 100) {
                 stage.style.removeProperty('--cv-scroll-height'); // let CSS default (100%) fill the stage
             } else {
                 stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}vh`);
             }
-            if (anchor) requestAnimationFrame(() => {
-                stage.scrollTo({ left: anchor.ratio * stage.scrollWidth - anchor.cx, behavior: 'instant' });
+            if (anchorX || anchorY) requestAnimationFrame(() => {
+                const opts = { behavior: 'instant' };
+                if (anchorX) opts.left = anchorX.ratio * stage.scrollWidth  - anchorX.cx;
+                if (anchorY) opts.top  = anchorY.ratio * stage.scrollHeight - anchorY.cy;
+                stage.scrollTo(opts);
             });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight >= 100 ? 'hidden' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
-            // Always anchor: use cursor position when available, stage centre otherwise.
+            // Anchor to cursor position (both axes) so the point under the cursor stays fixed.
             const rect = stage.getBoundingClientRect();
-            const cy = event ? (event.clientY - rect.top) : rect.height / 2;
-            const anchor = stage.scrollHeight > 0
+            const cx = event ? (event.clientX - rect.left) : rect.width / 2;
+            const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
+            const anchorX = stage.scrollWidth > stage.clientWidth
+                ? { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx }
+                : null;
+            const anchorY = stage.scrollHeight > 0
                 ? { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy }
                 : null;
             stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-            if (anchor) requestAnimationFrame(() => {
-                stage.scrollTo({ top: anchor.ratio * stage.scrollHeight - anchor.cy, behavior: 'instant' });
+            if (anchorX || anchorY) requestAnimationFrame(() => {
+                const opts = { behavior: 'instant' };
+                if (anchorX) opts.left = anchorX.ratio * stage.scrollWidth  - anchorX.cx;
+                if (anchorY) opts.top  = anchorY.ratio * stage.scrollHeight - anchorY.cy;
+                stage.scrollTo(opts);
             });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.visibility = _cv.scrollWidth === 100 ? 'hidden' : ''; }
@@ -457,6 +471,7 @@ function cvExitScrollView() {
     stage.classList.remove('cv-hscroll-mode');
     stage.style.removeProperty('--cv-scroll-width');
     stage.style.removeProperty('--cv-scroll-height');
+    stage.style.cursor = '';
     const container = document.getElementById('cv-pages');
     container.style.transform = '';
     container.style.flexDirection = '';
@@ -470,7 +485,7 @@ function cvExitScrollView() {
 // Media viewer – zoom / pan
 // ---------------------------------------------------------------------------
 
-const _cvDrag = { active: false, moved: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 };
+const _cvDrag = { active: false, moved: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0, startScrollLeft: 0, startScrollTop: 0 };
 let _cvPinchStart = null;  // { dist, zoom, midX, midY }
 
 function cvApplyTransform() {
@@ -563,12 +578,27 @@ function _cvInitStageEvents() {
         }
     }, { passive: false });
 
-    // Mousedown: start drag when zoomed (not in scroll mode)
+    // Mousedown: start drag when zoomed (normal mode) or always in scroll mode (drag-to-pan)
     stage.addEventListener('mousedown', e => {
         if (document.getElementById('media-viewer').hidden) return;
-        if (_cv.scroll) return;
-        _cvDrag.moved   = false;
-        _cvDrag.startX  = e.clientX;  _cvDrag.startY  = e.clientY;
+        _cvDrag.moved  = false;
+        _cvDrag.startX = e.clientX;  _cvDrag.startY = e.clientY;
+        if (_cv.scroll) {
+            // Cancel any ongoing keyboard-navigation animation so drag takes over cleanly.
+            if (_cvScrollAnimRafId !== null) {
+                cancelAnimationFrame(_cvScrollAnimRafId);
+                _cvScrollAnimRafId = null;
+                _cvScrollAnimTarget = null;
+                clearTimeout(_cvNavTimer);
+                _cvNavTarget = null;
+            }
+            _cvDrag.startScrollLeft = stage.scrollLeft;
+            _cvDrag.startScrollTop  = stage.scrollTop;
+            _cvDrag.active = true;
+            stage.style.cursor = 'grabbing';
+            e.preventDefault();  // prevent native image drag-and-drop
+            return;
+        }
         _cvDrag.startPanX = _cv.panX; _cvDrag.startPanY = _cv.panY;
         if (_cv.zoom > 1) {
             _cvDrag.active = true;
@@ -582,6 +612,14 @@ function _cvInitStageEvents() {
         const dx = e.clientX - _cvDrag.startX;
         const dy = e.clientY - _cvDrag.startY;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) _cvDrag.moved = true;
+        if (_cv.scroll) {
+            // Drag-to-pan: scroll the stage in the opposite direction of the drag.
+            if (_cvDrag.moved) {
+                const s = document.getElementById('cv-stage');
+                if (s) s.scrollTo({ left: _cvDrag.startScrollLeft - dx, top: _cvDrag.startScrollTop - dy, behavior: 'instant' });
+            }
+            return;
+        }
         _cv.panX = _cvDrag.startPanX + dx;
         _cv.panY = _cvDrag.startPanY + dy;
         cvClampPan();
@@ -592,7 +630,7 @@ function _cvInitStageEvents() {
         if (_cvDrag.active) {
             _cvDrag.active = false;
             const stage2 = document.getElementById('cv-stage');
-            if (stage2) stage2.style.cursor = _cv.zoom > 1 ? 'grab' : '';
+            if (stage2) stage2.style.cursor = _cv.scroll ? 'grab' : (_cv.zoom > 1 ? 'grab' : '');
         }
     });
 
@@ -600,9 +638,19 @@ function _cvInitStageEvents() {
     // Double-click in the nav zones (left <30%, right >70%) is ignored so rapid page-turning works.
     stage.addEventListener('dblclick', e => {
         if (document.getElementById('media-viewer').hidden) return;
+        if (_cvDrag.moved) return;  // suppress if the mousedown was a drag
         const x = e.clientX / window.innerWidth;
-        if (x < 0.3 || x > 0.7) return;  // nav zone — ignore
+        if (!_cv.scroll && (x < 0.3 || x > 0.7)) return;  // nav zone — ignore (normal mode only)
         e.preventDefault();
+        if (_cv.scroll) {
+            const cur = _cv.scrollDir === 'h' ? _cv.scrollHeight : _cv.scrollWidth;
+            if (cur > 100) {
+                cvApplyScrollZoom(_cv.scrollDir === 'h' ? 90 : 100, e);
+            } else {
+                cvApplyScrollZoom(cur * 2, e);
+            }
+            return;
+        }
         if (_cv.zoom > 1) {
             cvResetZoom();
         } else {
