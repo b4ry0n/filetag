@@ -3164,7 +3164,9 @@ async function trashItem(rootId, relPath, isDir) {
         }
         await loadFiles(state.currentPath);
         render();
-        _ftreeRefresh(state.currentBasePath);
+        _ftreeRefresh(state.currentPath
+            ? state.currentBasePath + '/' + state.currentPath
+            : state.currentBasePath);
         updateTrashBadge(rootId);
         showToast('Moved to trash. <a href="#" onclick="openTrashPanel();return false;">View</a>', 5000);
     } catch (err) {
