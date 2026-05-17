@@ -200,19 +200,22 @@ function _ftRenderEntry(e, parentAbs, depth) {
         const tagBadge = e.tag_count
             ? ` <span class="ft-tag-badge">${e.tag_count}</span>` : '';
         const icon = _ftFileIcon(e.name);
+        const ftRoot = _ftFindRoot(absPath);
+        const ftRootId = ftRoot ? ftRoot.id : (state.currentRootId ?? 0);
+        const relPath = _ftAbsToRootRel(absPath) || e.name;
         // Compute root-relative path for the selected-file comparison.
         const fileActiveCls = (() => {
             const sf = state.selectedFile;
             if (!sf) return '';
-            const root = _ftFindRoot(absPath);
-            if (!root) return '';
-            const rel = absPath === root.path ? '' : absPath.slice(root.path.length + 1);
+            if (!ftRoot) return '';
+            const rel = absPath === ftRoot.path ? '' : absPath.slice(ftRoot.path.length + 1);
             return rel === sf.path ? ' ft-active' : '';
         })();
         return `<div class="ft-row ft-file-row${fileActiveCls}" style="padding-left:${indent}px"
             draggable="true"
             ondragstart="ftreeDragStart(event,'${jesc(absPath)}','${jesc(parentAbs)}')"
             onclick="ftreeSelectFile('${jesc(absPath)}','${jesc(parentAbs)}')"
+            oncontextmenu="showFileMenu(event,'${jesc(relPath)}',false,${ftRootId})"
             title="${esc(absPath)}">
             <span class="ft-file-icon" aria-hidden="true">${icon}</span>
             <span class="ft-label ft-file-label">${esc(e.name)}${tagBadge}</span>
@@ -378,7 +381,7 @@ window.ftreeSelectFile = async function (absPath, parentAbs) {
 /** Drag a single file from the tree onto a sidebar tag to apply it. */
 window.ftreeDragStart = function (event, absPath, parentAbs) {
     event.stopPropagation();
-    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.effectAllowed = 'move';
     // Tags expect root-relative paths; compute that here.
     const relPath = _ftAbsToRootRel(absPath);
     event.dataTransfer.setData('text/filetag-paths', JSON.stringify([relPath]));
