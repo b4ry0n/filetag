@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
     AppState, ONDEMAND_PENDING, OnDemandGuard, THUMB_LIMITER, TRANSCODE_LIMITER, VTHUMB_LIMITER,
-    load_features_for, resolve_preview, root_for_dir,
+    load_features_for, resolve_preview, root_for_dir, root_from_dir_or_id,
 };
 use crate::types::DirParam;
 
@@ -1040,6 +1040,7 @@ pub async fn generate_ai_sprites(
 pub struct VThumbsParams {
     path: String,
     dir: Option<String>,
+    root_id: Option<usize>,
     #[serde(default)]
     n: Option<usize>,
     /// Client-configured max sprites (default 16). Lower = faster generation.
@@ -1055,12 +1056,9 @@ pub async fn api_vthumbs(
     Query(params): Query<VThumbsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     if !load_features_for(&state, &db_root.root).video {
@@ -1177,6 +1175,7 @@ pub fn sprites_for_duration(duration_secs: f64, min_n: usize, max_n: usize) -> u
 #[derive(Deserialize)]
 pub struct PregenParams {
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// Request body for `POST /api/vthumbs-pregen`.
@@ -1191,12 +1190,9 @@ pub async fn api_vthumbs_pregen(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<PregenBody>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     if !load_features_for(&state, &db_root.root).video {
@@ -1345,12 +1341,9 @@ pub async fn api_vtile_pregen(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<PregenBody>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     if !load_features_for(&state, &db_root.root).video {
@@ -1421,6 +1414,7 @@ pub async fn api_vtile_pregen(
 pub struct VTileParams {
     pub path: String,
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 /// Scan the vtile cache directory for `abs` and return the longest cached
@@ -1568,12 +1562,9 @@ pub async fn api_vtile(
     Query(params): Query<VTileParams>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     if !load_features_for(&state, &db_root.root).video {
@@ -1659,12 +1650,9 @@ pub async fn api_vtile_full(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     if !load_features_for(&state, &db_root.root).video {
@@ -1698,6 +1686,7 @@ pub async fn api_vtile_full(
 #[derive(Deserialize)]
 pub struct VtileFullTriggerQuery {
     pub dir: Option<String>,
+    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/vtile-full`.
@@ -1727,12 +1716,9 @@ pub async fn api_vtile_full_trigger(
     State(state): State<Arc<AppState>>,
     Json(body): Json<VtileFullTriggerBody>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
 
     if !load_features_for(&state, &db_root.root).video {
@@ -1742,6 +1728,7 @@ pub async fn api_vtile_full_trigger(
     let path = VTileParams {
         path: body.path,
         dir: params.dir,
+        root_id: params.root_id,
     };
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &path.path) {
         Some(t) => t,
