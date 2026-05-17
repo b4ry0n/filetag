@@ -343,46 +343,43 @@ function cvApplyScrollZoom(newSize, event) {
             _cv.scrollHeight = Math.max(20, Math.min(300, newSize));
         }
         if (stage) {
-            // Anchor to cursor position (both axes) so the point under the cursor stays fixed.
             const rect = stage.getBoundingClientRect();
-            const cx = event ? (event.clientX - rect.left) : rect.width / 2;
+            const cx = event ? (event.clientX - rect.left) : rect.width  / 2;
             const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
-            const anchorX = stage.scrollWidth > 0
-                ? { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx }
-                : null;
-            const anchorY = stage.scrollHeight > stage.clientHeight
-                ? { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy }
-                : null;
-            // Always set the property (using % of stage height) so zoom-in above 100% works.
+            // Capture the content-relative position of the cursor BEFORE the size change.
+            const oldW = stage.scrollWidth;
+            const oldH = stage.scrollHeight;
+            const contentX = stage.scrollLeft + cx;
+            const contentY = stage.scrollTop  + cy;
+            // Apply size change.
             stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}%`);
-            if (anchorX || anchorY) requestAnimationFrame(() => {
-                const opts = { behavior: 'instant' };
-                if (anchorX) opts.left = anchorX.ratio * stage.scrollWidth  - anchorX.cx;
-                if (anchorY) opts.top  = anchorY.ratio * stage.scrollHeight - anchorY.cy;
-                stage.scrollTo(opts);
-            });
+            // Accessing scrollWidth/scrollHeight forces a synchronous layout so the
+            // new dimensions are available immediately.  Direct assignment to
+            // scrollLeft/scrollTop bypasses scroll-behavior:smooth and is always instant,
+            // avoiding conflicts with queued smooth-scroll animations.
+            stage.scrollLeft = oldW > 0 ? (contentX / oldW) * stage.scrollWidth  - cx : stage.scrollLeft;
+            stage.scrollTop  = oldH > 0 ? (contentY / oldH) * stage.scrollHeight - cy : stage.scrollTop;
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight === 100 ? 'hidden' : ''; }
     } else {
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
-            // Anchor to cursor position (both axes) so the point under the cursor stays fixed.
             const rect = stage.getBoundingClientRect();
-            const cx = event ? (event.clientX - rect.left) : rect.width / 2;
+            const cx = event ? (event.clientX - rect.left) : rect.width  / 2;
             const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
-            const anchorX = stage.scrollWidth > stage.clientWidth
-                ? { ratio: (stage.scrollLeft + cx) / stage.scrollWidth, cx }
-                : null;
-            const anchorY = stage.scrollHeight > 0
-                ? { ratio: (stage.scrollTop + cy) / stage.scrollHeight, cy }
-                : null;
+            // Capture the content-relative position of the cursor BEFORE the size change.
+            const oldW = stage.scrollWidth;
+            const oldH = stage.scrollHeight;
+            const contentX = stage.scrollLeft + cx;
+            const contentY = stage.scrollTop  + cy;
+            // Apply size change.
             stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-            if (anchorX || anchorY) requestAnimationFrame(() => {
-                const opts = { behavior: 'instant' };
-                if (anchorX) opts.left = anchorX.ratio * stage.scrollWidth  - anchorX.cx;
-                if (anchorY) opts.top  = anchorY.ratio * stage.scrollHeight - anchorY.cy;
-                stage.scrollTo(opts);
-            });
+            // Accessing scrollWidth/scrollHeight forces a synchronous layout so the
+            // new dimensions are available immediately.  Direct assignment to
+            // scrollLeft/scrollTop bypasses scroll-behavior:smooth and is always instant,
+            // avoiding conflicts with queued smooth-scroll animations.
+            stage.scrollLeft = oldW > 0 ? (contentX / oldW) * stage.scrollWidth  - cx : stage.scrollLeft;
+            stage.scrollTop  = oldH > 0 ? (contentY / oldH) * stage.scrollHeight - cy : stage.scrollTop;
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.visibility = _cv.scrollWidth === 100 ? 'hidden' : ''; }
     }
