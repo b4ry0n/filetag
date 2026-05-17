@@ -385,7 +385,7 @@ function cardDragStart(event, path) {
     const rootId = parseInt(event.currentTarget?.dataset?.rootId);
     const rid = isNaN(rootId) ? state.currentRootId : rootId;
     event.dataTransfer.setData('text/filetag-root-id', rid != null ? String(rid) : '');
-    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.effectAllowed = 'move';
     // Prevent the root-reorder drag from interfering.
     event.stopPropagation();
 }

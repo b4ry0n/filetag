@@ -402,7 +402,7 @@ window.ftreeDirDragOver = function (event, absPath) {
     if (!event.dataTransfer.types.includes('text/filetag-paths')) return;
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer.dropEffect = 'copy';
+    event.dataTransfer.dropEffect = 'move';
     event.currentTarget.classList.add('ft-drop-target');
 };
 
