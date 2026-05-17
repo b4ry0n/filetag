@@ -191,10 +191,12 @@ pub struct ApiRoot {
 /// absent the server returns the virtual root (entry-point tiles).
 #[derive(Deserialize)]
 pub struct FileListParams {
-    /// Absolute filesystem path of the directory to list.
+    /// Absolute filesystem path of the directory to list (legacy; prefer `root_id` + `path`).
     pub dir: Option<String>,
     /// Root ID (from `GET /api/roots`) as alternative to `dir`.
     pub root_id: Option<usize>,
+    /// Root-relative subdirectory path, used with `root_id` (no leading slash).
+    pub path: Option<String>,
     #[serde(default)]
     pub show_hidden: bool,
 }
@@ -710,8 +712,12 @@ pub struct TagDirRecursiveRequest {
 /// Body for `POST /api/fs/rename`.
 #[derive(Deserialize)]
 pub struct FsRenameRequest {
-    /// Absolute filesystem path of the file or directory to rename.
-    pub path: String,
+    /// Absolute filesystem path of the file or directory to rename (legacy; prefer `root_id` + `rel_path`).
+    pub path: Option<String>,
+    /// Root ID (from `GET /api/roots`). Used together with `rel_path`.
+    pub root_id: Option<usize>,
+    /// Path of the item relative to its database root. Used with `root_id`.
+    pub rel_path: Option<String>,
     /// New filename (basename only — must not contain path separators).
     pub new_name: String,
 }
@@ -719,28 +725,46 @@ pub struct FsRenameRequest {
 /// Body for `POST /api/fs/move`.
 #[derive(Deserialize)]
 pub struct FsMoveRequest {
-    /// Absolute filesystem path of the file or directory to move.
-    pub path: String,
-    /// Absolute filesystem path of the destination directory.
-    /// Must be within the same database root as `path`.
-    pub dest_dir: String,
+    /// Absolute filesystem path of the file or directory to move (legacy; prefer `root_id` + `rel_path`).
+    pub path: Option<String>,
+    /// Absolute filesystem path of the destination directory (legacy; prefer `dest_root_id` + `dest_rel_dir`).
+    pub dest_dir: Option<String>,
+    /// Root ID of the source item.
+    pub root_id: Option<usize>,
+    /// Path of the source item relative to its database root.
+    pub rel_path: Option<String>,
+    /// Root ID of the destination directory (may differ from `root_id` for cross-root moves).
+    pub dest_root_id: Option<usize>,
+    /// Destination directory path relative to its database root.
+    pub dest_rel_dir: Option<String>,
 }
 
 /// Body for `POST /api/fs/delete`.
 #[derive(Deserialize)]
 pub struct FsDeleteRequest {
-    /// Absolute filesystem path of the file or directory to delete.
-    pub path: String,
+    /// Absolute filesystem path of the file or directory to delete (legacy; prefer `root_id` + `rel_path`).
+    pub path: Option<String>,
+    /// Root ID (from `GET /api/roots`). Used together with `rel_path`.
+    pub root_id: Option<usize>,
+    /// Path of the item relative to its database root. Used with `root_id`.
+    pub rel_path: Option<String>,
 }
 
 /// Body for `POST /api/fs/copy`.
 #[derive(Deserialize)]
 pub struct FsCopyRequest {
-    /// Absolute filesystem path of the source file (directories not supported).
-    pub path: String,
-    /// Absolute filesystem path of the destination directory.
-    /// Defaults to the same directory as `path` when absent.
+    /// Absolute filesystem path of the source file (legacy; prefer `root_id` + `rel_path`).
+    pub path: Option<String>,
+    /// Absolute filesystem path of the destination directory (legacy; prefer `dest_root_id` + `dest_rel_dir`).
     pub dest_dir: Option<String>,
+    /// Root ID of the source file.
+    pub root_id: Option<usize>,
+    /// Path of the source file relative to its database root.
+    pub rel_path: Option<String>,
+    /// Root ID of the destination directory.
+    pub dest_root_id: Option<usize>,
+    /// Destination directory path relative to its database root.
+    pub dest_rel_dir: Option<String>,
     /// New filename for the copy.  Defaults to `"Copy of <name>"` when absent.
     pub new_name: Option<String>,
 }

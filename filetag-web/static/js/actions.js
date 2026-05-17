@@ -25,9 +25,10 @@ function _navPush() {
     const snap = {
         mode:            state.mode,
         currentPath:     state.currentPath,
+        currentRootId:   state.currentRootId,
         currentBasePath: state.currentBasePath,
         zipPath:         state.zipPath,
-        zipDir:          state.zipDir,
+        zipRootId:       state.zipRootId ?? null,
         zipSubdir:       state.zipSubdir,
         searchQuery:     state.searchQuery,
     };
@@ -53,14 +54,16 @@ async function _navRestore(snap) {
         _lastClickedPath = null;
         _armedBulkTag    = null;
         if (snap.mode === 'zip') {
+            state.currentRootId   = snap.currentRootId ?? null;
             state.currentBasePath = snap.currentBasePath;
             state.currentPath     = snap.currentPath;
             state.zipPath         = snap.zipPath;
-            state.zipDir          = snap.zipDir || null;
+            state.zipRootId       = snap.zipRootId ?? snap.currentRootId ?? null;
             state.zipSubdir       = snap.zipSubdir || '';
             state.mode            = 'zip';
-            const zipEffDir = state.zipDir || state.currentBasePath;
-            const data = await api('/api/zip/entries?' + new URLSearchParams({ path: snap.zipPath, dir: zipEffDir }));
+            const params = new URLSearchParams({ path: snap.zipPath });
+            if (state.zipRootId != null) params.set('root_id', String(state.zipRootId));
+            const data = await api('/api/zip/entries?' + params.toString());
             state.zipEntries = data.entries || [];
         } else if (snap.mode === 'search') {
             await searchFiles(snap.searchQuery);
@@ -117,12 +120,12 @@ async function navigateTo(path) {
         _contentEl.innerHTML = '<div class="nav-loading"><div class="nav-loading-spinner"></div></div>';
     }
 
-    const _prevBase = state.currentBasePath;
+    const _prevRootId = state.currentRootId;
     await loadFiles(path);
     _navPush(); // record this directory in the navigation history
     // When navigating into a different database root (e.g. a child DB), reload
     // tags so the sidebar reflects the correct counts for the new root.
-    if (state.currentBasePath !== _prevBase) {
+    if (state.currentRootId !== _prevRootId) {
         loadTags().then(() => renderTags()).catch(() => {});
     }
     await loadSettings();
@@ -146,7 +149,11 @@ async function selectRoot(rootPath) {
     _armedBulkTag = null;
     renderDetail();
     try {
-        state.selectedRootInfo = await api('/api/info?dir=' + encodeURIComponent(rootPath));
+        const root = state.roots.find(r => r.path === rootPath);
+        const infoUrl = root != null
+            ? '/api/info?root_id=' + root.id
+            : '/api/info?dir=' + encodeURIComponent(rootPath);
+        state.selectedRootInfo = await api(infoUrl);
         renderDetail();
     } catch (_) { /* ignore */ }
 }
@@ -155,6 +162,8 @@ async function selectRoot(rootPath) {
 async function enterRoot(rootPath) {
     _thumbClearCache();
     _kbCursor = -1;
+    const root = state.roots.find(r => r.path === rootPath);
+    state.currentRootId = root ? root.id : null;
     state.currentBasePath = rootPath;
     state.currentPath = '';
     state.selectedFile = null;
@@ -182,6 +191,7 @@ async function enterRoot(rootPath) {
 async function goVirtualRoot() {
     _thumbClearCache();
     _kbCursor = -1;
+    state.currentRootId = null;
     state.currentBasePath = null;
     state.currentPath = '';
     state.selectedFile = null;
@@ -237,20 +247,22 @@ function navigateToParent(filePath) {
     const parts = filePath.split('/');
     const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
     // In multi-root search the file may belong to a different root than the
-    // currently active one — update currentBasePath so loadFiles targets the
+    // currently active one — switch currentRootId so loadFiles targets the
     // correct database root.
-    const fileRoot = searchDirForPath(filePath);
-    if (fileRoot && fileRoot !== state.currentBasePath) {
-        state.currentBasePath = fileRoot;
+    const fileRootId = searchRootIdForPath(filePath);
+    if (fileRootId != null && fileRootId !== state.currentRootId) {
+        state.currentRootId = fileRootId;
+        const rootMeta = state.roots.find(r => r.id === fileRootId);
+        if (rootMeta) state.currentBasePath = rootMeta.path;
     }
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
     // Switch sidebar to the files/tree pane (unless in split mode both are visible).
     if (!state.sidebarSplit) setSidebarTab('files');
     // Expand the tree to the target directory so it is visible after navigation.
-    const absDir = fileRoot
-        ? (dir ? fileRoot + '/' + dir : fileRoot)
-        : (state.currentBasePath ? (dir ? state.currentBasePath + '/' + dir : state.currentBasePath) : null);
+    const absDir = state.currentBasePath
+        ? (dir ? state.currentBasePath + '/' + dir : state.currentBasePath)
+        : null;
     const doNav = () => {
         if (typeof ftreeRequestScrollToActive === 'function') ftreeRequestScrollToActive();
         return navigateTo(dir).then(() => {
@@ -2605,27 +2617,29 @@ async function applyTagPicker() {
     const dir = currentAbsDir();
     const ops = [];
 
-    // Helper: group paths by their root dir (handles cross-root search results).
-    function groupByDir(ps) {
+    // Helper: group paths by their root_id (handles cross-root search results).
+    function groupByRootId(ps) {
         const map = new Map();
         for (const p of ps) {
-            const d = searchDirForPath(p);
-            if (!map.has(d)) map.set(d, []);
-            map.get(d).push(p);
+            const rid = searchRootIdForPath(p);
+            if (!map.has(rid)) map.set(rid, []);
+            map.get(rid).push(p);
         }
         return map;
     }
 
     // Add new tags (with selected subject if any) — one bulk request per root.
     if (toAdd.length > 0) {
-        for (const [d, ps] of groupByDir(paths)) {
-            ops.push(apiPost('/api/tag-bulk', { paths: ps, tags: toAdd, dir: d, ...(subject ? { subject } : {}) }));
+        for (const [rid, ps] of groupByRootId(paths)) {
+            const rootParam = rid != null ? { root_id: rid } : {};
+            ops.push(apiPost('/api/tag-bulk', { paths: ps, tags: toAdd, ...rootParam, ...(subject ? { subject } : {}) }));
         }
     }
     // Remove unchecked tags — one bulk request per root.
     if (toRemove.length > 0) {
-        for (const [d, ps] of groupByDir(paths)) {
-            ops.push(apiPost('/api/untag-bulk', { paths: ps, tags: toRemove, dir: d }));
+        for (const [rid, ps] of groupByRootId(paths)) {
+            const rootParam = rid != null ? { root_id: rid } : {};
+            ops.push(apiPost('/api/untag-bulk', { paths: ps, tags: toRemove, ...rootParam }));
         }
     }
     // If subject changed but no tag delta, re-apply existing tags with new subject.
@@ -2672,29 +2686,25 @@ window.doClearSearch = doClearSearch;
 // File management: context menu + operations
 // ---------------------------------------------------------------------------
 
-function showFileMenu(e, path, isDir) {
+function showFileMenu(e, path, isDir, rootId) {
     e.preventDefault();
     e.stopPropagation();
     closeFileMenu();
 
-    // Cards pass root-relative paths; API endpoints need absolute paths.
-    const absPath = path.startsWith('/')
-        ? path
-        : state.currentBasePath
-            ? state.currentBasePath + '/' + path
-            : path;
-
-    const name = absPath.split('/').pop();
+    // Use the provided rootId (from the card rendering context), or fall back
+    // to the currently active root. Never construct absolute paths.
+    rootId = rootId ?? state.currentRootId;
+    const name = path.split('/').pop();
     const menu = document.createElement('div');
     menu.id = 'file-context-menu';
     menu.className = 'tag-context-menu';
     menu.innerHTML = `
         <div class="tag-menu-header">${esc(name)}</div>
-        <button class="tag-menu-action" onclick="closeFileMenu(); promptRename('${jesc(absPath)}', ${isDir})">Rename\u2026</button>
-        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove('${jesc(absPath)}', ${isDir})">Move to\u2026</button>
-        ${!isDir ? `<button class="tag-menu-action" onclick="closeFileMenu(); promptCopy('${jesc(absPath)}')">Copy\u2026</button>` : ''}
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptRename(${rootId},'${jesc(path)}',${isDir})">Rename\u2026</button>
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove(${rootId},'${jesc(path)}',${isDir})">Move to\u2026</button>
+        ${!isDir ? `<button class="tag-menu-action" onclick="closeFileMenu(); promptCopy(${rootId},'${jesc(path)}')">Copy\u2026</button>` : ''}
         <div class="tag-menu-divider"></div>
-        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); confirmDelete('${jesc(absPath)}', ${isDir})">Delete\u2026</button>
+        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); confirmDelete(${rootId},'${jesc(path)}',${isDir})">Delete\u2026</button>
     `;
     document.body.appendChild(menu);
 
@@ -2773,8 +2783,8 @@ function _showFsDialog(title, html, onSubmit) {
 // Rename
 // ---------------------------------------------------------------------------
 
-function promptRename(path, isDir) {
-    const name = path.split('/').pop();
+function promptRename(rootId, relPath, isDir) {
+    const name = relPath.split('/').pop();
     _showFsDialog('Rename', `
         <form onsubmit="return false">
             <label class="fs-dialog-label">New name</label>
@@ -2789,7 +2799,7 @@ function promptRename(path, isDir) {
         const newName = (fd.get('new_name') || '').trim();
         if (!newName || newName === name) { _closeFsDialog(); return; }
         try {
-            await apiPost('/api/fs/rename', { path, new_name: newName });
+            await apiPost('/api/fs/rename', { root_id: rootId, rel_path: relPath, new_name: newName });
             _closeFsDialog();
             await loadFiles(state.currentPath);
             render();
@@ -2884,7 +2894,19 @@ async function _dpExpandToPath(absPath) {
 /** Load directory children (dirs only) into _dpCache. */
 async function _dpLoad(absPath) {
     try {
-        const r = await fetch('/api/files?dir=' + encodeURIComponent(absPath));
+        // Resolve root_id + rel_path for the request; avoids sending absolute
+        // system paths to the API.
+        const root = state.roots.find(r => absPath === r.path || absPath.startsWith(r.path + '/'));
+        let url;
+        if (root) {
+            const rel = absPath.slice(root.path.length).replace(/^\//, '');
+            const params = new URLSearchParams({ root_id: root.id });
+            if (rel) params.set('path', rel);
+            url = '/api/files?' + params.toString();
+        } else {
+            url = '/api/files?dir=' + encodeURIComponent(absPath);
+        }
+        const r = await fetch(url);
         if (!r.ok) { _dpCache[absPath] = []; return; }
         const data = await r.json();
         _dpCache[absPath] = (data.entries || []).filter(e => e.is_dir);
@@ -2980,20 +3002,33 @@ function _dpUpdateSelected(absPath) {
 
 function _dpConfirm() {
     if (!_dpSelected) return;
+    // Decompose absolute path into root_id + rel_path so the caller never
+    // needs to deal with system paths.
+    const root = state.roots.find(r => _dpSelected === r.path || _dpSelected.startsWith(r.path + '/'));
+    const destInfo = root
+        ? { rootId: root.id, relDir: _dpSelected.slice(root.path.length).replace(/^\//, '') }
+        : { rootId: null, relDir: _dpSelected }; // graceful fallback
     const cb = _dpOnSelect;
-    // Don't close yet for Move (caller decides); for Copy the callback closes it.
-    if (cb) cb(_dpSelected);
+    if (cb) cb(destInfo);
 }
 
 // ---------------------------------------------------------------------------
 // Move
 // ---------------------------------------------------------------------------
 
-function promptMove(path, isDir) {
-    const currentDir = path.slice(0, path.lastIndexOf('/')) || '/';
-    _showDirPickerDialog('Move to\u2026', currentDir, async destDir => {
+function promptMove(rootId, relPath, isDir) {
+    // Determine initial dir for the picker (parent directory of the item).
+    const root = state.roots.find(r => r.id === rootId);
+    const parentRel = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+    const initialDir = root ? (parentRel ? root.path + '/' + parentRel : root.path) : null;
+    _showDirPickerDialog('Move to\u2026', initialDir || state.currentBasePath, async destInfo => {
         try {
-            await apiPost('/api/fs/move', { path, dest_dir: destDir });
+            await apiPost('/api/fs/move', {
+                root_id: rootId,
+                rel_path: relPath,
+                dest_root_id: destInfo.rootId,
+                dest_rel_dir: destInfo.relDir,
+            });
             _closeDirPicker();
             await loadFiles(state.currentPath);
             render();
@@ -3007,23 +3042,29 @@ function promptMove(path, isDir) {
 // Copy
 // ---------------------------------------------------------------------------
 
-function promptCopy(path) {
-    const name = path.split('/').pop();
+function promptCopy(rootId, relPath) {
+    const name = relPath.split('/').pop();
     const dot = name.lastIndexOf('.');
     const stem = dot > 0 ? name.slice(0, dot) : name;
     const ext  = dot > 0 ? name.slice(dot) : '';
     const defaultName = `Copy of ${stem}${ext}`;
-    const currentDir = path.slice(0, path.lastIndexOf('/')) || '/';
+    const root = state.roots.find(r => r.id === rootId);
+    const parentRel = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+    const initialDir = root ? (parentRel ? root.path + '/' + parentRel : root.path) : state.currentBasePath;
 
-    _showDirPickerDialog('Copy to\u2026', currentDir, async destDir => {
+    _showDirPickerDialog('Copy to\u2026', initialDir, async destInfo => {
         // Ask for the new filename after the directory is chosen.
         _closeDirPicker();
+        const destLabel = destInfo.rootId != null
+            ? (state.roots.find(r => r.id === destInfo.rootId)?.name ?? '') +
+              (destInfo.relDir ? '/' + destInfo.relDir : '')
+            : destInfo.relDir;
         _showFsDialog('Copy file', `
             <form onsubmit="return false">
                 <label class="fs-dialog-label">New filename</label>
                 <input class="fs-dialog-input" type="text" name="new_name" value="${esc(defaultName)}" autocomplete="off" spellcheck="false"
                     onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
-                <div class="fs-dialog-hint">Destination: ${esc(destDir)}</div>
+                <div class="fs-dialog-hint">Destination: ${esc(destLabel)}</div>
             </form>
             <div class="fs-dialog-footer">
                 <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
@@ -3033,7 +3074,13 @@ function promptCopy(path) {
             const newName = (fd.get('new_name') || '').trim();
             if (!newName) { _closeFsDialog(); return; }
             try {
-                await apiPost('/api/fs/copy', { path, dest_dir: destDir, new_name: newName });
+                await apiPost('/api/fs/copy', {
+                    root_id: rootId,
+                    rel_path: relPath,
+                    dest_root_id: destInfo.rootId,
+                    dest_rel_dir: destInfo.relDir,
+                    new_name: newName,
+                });
                 _closeFsDialog();
                 await loadFiles(state.currentPath);
                 render();
@@ -3048,8 +3095,8 @@ function promptCopy(path) {
 // Delete
 // ---------------------------------------------------------------------------
 
-function confirmDelete(path, isDir) {
-    const name = path.split('/').pop();
+function confirmDelete(rootId, relPath, isDir) {
+    const name = relPath.split('/').pop();
     const what = isDir ? 'directory' : 'file';
     _showFsDialog(`Delete ${what}`, `
         <div class="fs-dialog-warn">
@@ -3062,16 +3109,15 @@ function confirmDelete(path, isDir) {
         </div>
     `, async () => {
         try {
-            await apiPost('/api/fs/delete', { path });
+            await apiPost('/api/fs/delete', { root_id: rootId, rel_path: relPath });
             _closeFsDialog();
             // If the deleted item was selected, clear selection.
-            const name = path.split('/').pop();
-            if (state.selectedFile && (state.selectedFile.path === path || state.selectedFile.path?.endsWith('/' + name) || state.selectedFile.path === name)) {
+            if (state.selectedFile && (state.selectedFile.path === relPath || state.selectedFile.path?.endsWith('/' + name) || state.selectedFile.path === name)) {
                 state.selectedFile = null;
             }
             // selectedPaths uses root-relative paths; remove any matching entry.
             for (const p of state.selectedPaths) {
-                if (path.endsWith('/' + p) || p === path) { state.selectedPaths.delete(p); break; }
+                if (relPath.endsWith('/' + p) || p === relPath) { state.selectedPaths.delete(p); break; }
             }
             await loadFiles(state.currentPath);
             render();

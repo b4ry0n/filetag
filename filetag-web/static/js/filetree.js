@@ -277,8 +277,19 @@ function _ftFileIcon(name) {
 
 async function _ftLoadDir(absPath) {
     try {
-        const url = '/api/files?dir=' + encodeURIComponent(absPath)
-            + (state.showHidden ? '&show_hidden=true' : '');
+        // Prefer root_id + relative path to avoid sending system paths in query params.
+        const root = _ftFindRoot(absPath);
+        let url;
+        if (root) {
+            const rel = absPath.slice(root.path.length).replace(/^\//, '');
+            const params = new URLSearchParams({ root_id: root.id });
+            if (rel) params.set('path', rel);
+            if (state.showHidden) params.set('show_hidden', 'true');
+            url = '/api/files?' + params.toString();
+        } else {
+            url = '/api/files?dir=' + encodeURIComponent(absPath)
+                + (state.showHidden ? '&show_hidden=true' : '');
+        }
         const r = await fetch(url);
         if (!r.ok) { state.ftreeCache[absPath] = []; return; }
         const data = await r.json();
@@ -326,7 +337,10 @@ window.ftreeToggleDir = async function (absPath) {
 /** Double-click: navigate the main panel to this directory. */
 window.ftreeNavDir = async function (absPath) {
     const root = _ftFindRoot(absPath);
-    if (root) state.currentBasePath = root.path;
+    if (root) {
+        state.currentBasePath = root.path;
+        state.currentRootId = root.id;
+    }
     // navigateTo expects a path relative to currentBasePath ('' = root itself).
     const relPath = root ? absPath.slice(root.path.length).replace(/^\//, '') : absPath;
     await navigateTo(relPath);
@@ -335,7 +349,10 @@ window.ftreeNavDir = async function (absPath) {
 /** Click: navigate to parent dir and pre-select the file. */
 window.ftreeSelectFile = async function (absPath, parentAbs) {
     const root = _ftFindRoot(absPath);
-    if (root) state.currentBasePath = root.path;
+    if (root) {
+        state.currentBasePath = root.path;
+        state.currentRootId = root.id;
+    }
     const relParent = root ? parentAbs.slice(root.path.length).replace(/^\//, '') : parentAbs;
     await navigateTo(relParent);
     // Try to select the file after navigation has settled.
@@ -365,8 +382,11 @@ window.ftreeDragStart = function (event, absPath, parentAbs) {
     // Tags expect root-relative paths; compute that here.
     const relPath = _ftAbsToRootRel(absPath);
     event.dataTransfer.setData('text/filetag-paths', JSON.stringify([relPath]));
-    // Pass the parent directory so tagDrop uses the correct root.
-    event.dataTransfer.setData('text/filetag-dir', parentAbs);
+    // Pass the numeric root ID so tagDrop uses the correct database without
+    // constructing system paths.
+    const root = _ftFindRoot(absPath);
+    const rootId = root ? root.id : state.currentRootId;
+    event.dataTransfer.setData('text/filetag-root-id', rootId != null ? String(rootId) : '');
 };
 
 /** Drag a directory — sets a custom type (no tagging action yet). */
@@ -403,30 +423,38 @@ window.ftreeDirDrop = async function (event, absPath) {
     try { paths = JSON.parse(pathsJson); } catch (_) { return; }
     if (!Array.isArray(paths) || paths.length === 0) return;
 
-    // Convert relative paths to absolute by combining with the source dir.
-    const sourceDir = event.dataTransfer.getData('text/filetag-dir') || currentAbsDir();
-    // Root of source files (needed to resolve relative paths).
-    const srcRoot = (state.roots || []).find(r =>
-        sourceDir === r.path || sourceDir.startsWith(r.path + '/'));
+    // Resolve source root from numeric root_id carried by the drag event.
+    const rawRid = event.dataTransfer.getData('text/filetag-root-id');
+    const srcRootId = rawRid !== '' && !isNaN(parseInt(rawRid)) ? parseInt(rawRid) : state.currentRootId;
+    const srcRoot = (state.roots || []).find(r => r.id === srcRootId);
 
-    const absPaths = paths.map(p => {
-        // If already absolute, use as-is; otherwise resolve against root.
-        if (p.startsWith('/')) return p;
-        if (srcRoot) return srcRoot.path + '/' + p;
-        return sourceDir + '/' + p;
-    });
+    // Resolve destination root and relative path from the target absPath.
+    const destRoot = _ftFindRoot(absPath);
+    const destRelDir = destRoot ? absPath.slice(destRoot.path.length).replace(/^\//, '') : null;
 
     let errors = 0;
-    for (const src of absPaths) {
+    for (const p of paths) {
         try {
-            await apiPost('/api/fs/move', { path: src, dest_dir: absPath });
+            const body = {
+                root_id: srcRootId,
+                rel_path: p,
+                dest_root_id: destRoot ? destRoot.id : undefined,
+                dest_rel_dir: destRelDir ?? undefined,
+            };
+            await apiPost('/api/fs/move', body);
         } catch (_) {
             errors++;
         }
     }
 
     // Invalidate tree cache for both source dir and destination.
-    ftreeInvalidateDir(sourceDir);
+    // Use the srcRoot path to derive the source directory from the first path.
+    const firstRelPath = paths[0] || '';
+    const firstRelDir = firstRelPath.includes('/')
+        ? firstRelPath.substring(0, firstRelPath.lastIndexOf('/'))
+        : '';
+    const srcDirAbs = srcRoot ? (firstRelDir ? srcRoot.path + '/' + firstRelDir : srcRoot.path) : null;
+    if (srcDirAbs) ftreeInvalidateDir(srcDirAbs);
     ftreeInvalidateDir(absPath);
     // Reload the current view.
     await loadFiles(state.currentPath);

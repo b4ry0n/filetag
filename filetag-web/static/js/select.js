@@ -12,22 +12,25 @@ async function _loadMissingFilesData(paths) {
     if (missing.length <= 5) {
         // Small selection: full detail per file (includes size, mtime, duration…).
         await Promise.all(missing.map(async p => {
-            const data = await api('/api/file?path=' + encodeURIComponent(p) + '&dir=' + encodeURIComponent(searchDirForPath(p)));
+            const rid = searchRootIdForPath(p);
+            const rootParam = rid != null ? '&root_id=' + rid : '';
+            const data = await api('/api/file?path=' + encodeURIComponent(p) + rootParam);
             state.selectedFilesData.set(p, data);
         }));
         return;
     }
 
     // Large selection: one bulk request per root, only tags returned.
-    // Group paths by root dir (handles cross-root search results).
-    const byDir = new Map();
+    // Group paths by root_id (handles cross-root search results).
+    const byRootId = new Map();
     for (const p of missing) {
-        const d = searchDirForPath(p);
-        if (!byDir.has(d)) byDir.set(d, []);
-        byDir.get(d).push(p);
+        const d = searchRootIdForPath(p);
+        if (!byRootId.has(d)) byRootId.set(d, []);
+        byRootId.get(d).push(p);
     }
-    await Promise.all([...byDir.entries()].map(async ([dir, ps]) => {
-        const res = await apiPost('/api/files-tags', { paths: ps, dir });
+    await Promise.all([...byRootId.entries()].map(async ([rootId, ps]) => {
+        const body = rootId != null ? { paths: ps, root_id: rootId } : { paths: ps };
+        const res = await apiPost('/api/files-tags', body);
         for (const [path, tags] of Object.entries(res.files || {})) {
             if (!state.selectedFilesData.has(path)) {
                 // Minimal record: enough for bulk tag chips and tag operations.
@@ -88,10 +91,12 @@ async function selectFile(path, event) {
     // the network.  Keep the old detail panel visible until the new data
     // arrives to avoid an empty-panel flash.
     _updateCardSelection();
-    // Use the card's data-dir attribute when available (correct root in search mode).
-    const dir = event?.currentTarget?.dataset?.dir || null;
+    // Use the card's data-root-id attribute when available (correct root in search mode).
+    const rootId = event?.currentTarget?.dataset?.rootId != null
+        ? parseInt(event.currentTarget.dataset.rootId)
+        : null;
     // Load the file detail and refresh the panel when done.
-    await loadFileDetail(path, dir);
+    await loadFileDetail(path, rootId != null && !isNaN(rootId) ? rootId : undefined);
     // Guard: another file may have been selected while we were waiting.
     if (state.selectedPaths.size === 1 && state.selectedPaths.has(path)) {
         renderDetail();

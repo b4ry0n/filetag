@@ -52,7 +52,8 @@ function _kbActivate() {
         const path = el.dataset.path;
         const name = path.split('/').pop();
         if (fileType(name) === 'zip') {
-            openZipDir(path, el.dataset.dir || searchDirForPath(path));
+            const rootId = el.dataset.rootId != null ? parseInt(el.dataset.rootId) : null;
+            openZipDir(path, rootId ?? state.currentRootId);
         } else {
             el.click(); // selectFile(path, event)
         }
@@ -292,15 +293,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Initial load: restore directory from sessionStorage if present (survives Cmd-R).
     const initialPath = sessionStorage.getItem('ft_path') || '';
-    const savedBase = sessionStorage.getItem('ft_base');
+    // Prefer the new numeric root_id; fall back to the legacy path string.
+    const savedBaseId = sessionStorage.getItem('ft_base_id');
+    const savedBase = sessionStorage.getItem('ft_base'); // legacy fallback
     await loadRoots();
     // Restore the previously active root from sessionStorage, or auto-enter when
     // there is exactly one entry-point (good UX on first visit).
     const entryPoints = state.roots.filter(r => r.entry_point);
-    const baseToRestore = savedBase || (entryPoints.length === 1 ? entryPoints[0].path : null);
-    if (baseToRestore) {
-        const rootMeta = state.roots.find(r => r.path === baseToRestore || baseToRestore.startsWith(r.path + '/'));
-        if (rootMeta) state.currentBasePath = baseToRestore;
+    let rootToRestore = null;
+    if (savedBaseId != null) {
+        rootToRestore = state.roots.find(r => r.id === parseInt(savedBaseId));
+    }
+    if (!rootToRestore && savedBase) {
+        rootToRestore = state.roots.find(r => r.path === savedBase || savedBase.startsWith(r.path + '/'));
+    }
+    if (!rootToRestore && entryPoints.length === 1) {
+        rootToRestore = entryPoints[0];
+    }
+    if (rootToRestore) {
+        state.currentRootId = rootToRestore.id;
+        state.currentBasePath = rootToRestore.path;
     }
     // Only load database-specific data when we already know which root to
     // target.  When currentBasePath is null (first visit with multiple roots,
@@ -309,7 +321,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Run sequentially rather than in parallel to avoid simultaneous SQLite
     // lock contention on network shares (SMB/NFS), where each concurrent open
     // causes dozens of extra round-trips due to WAL locking overhead.
-    const _hadContext = currentAbsDir() != null;
+    const _hadContext = state.currentRootId != null;
     await loadAuthStatus();
     if (_hadContext) {
         await loadInfo().catch(e => console.error('loadInfo failed:', e));

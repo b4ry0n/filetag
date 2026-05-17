@@ -884,11 +884,18 @@ pub async fn api_files(
     }
 
     let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
-    // When root_id is provided without a dir, browse the root directory itself.
+    // When root_id + path are provided, resolve the absolute directory from the root.
+    // When only root_id is provided (no dir, no path), browse the root directory itself.
     let root_owned = db_root.root.clone();
-    let abs_dir: &std::path::Path = match params.dir.as_deref() {
-        Some(d) => std::path::Path::new(d),
-        None => &root_owned,
+    let path_owned: std::path::PathBuf;
+    let abs_dir: &std::path::Path = if let Some(d) = params.dir.as_deref() {
+        std::path::Path::new(d)
+    } else if let Some(ref p) = params.path {
+        let rel = p.trim_start_matches('/');
+        path_owned = root_owned.join(rel);
+        &path_owned
+    } else {
+        &root_owned
     };
     let root_id_val = state
         .roots
@@ -2725,6 +2732,29 @@ fn rel_under_root(canon_parent: &Path, name: &str, eff_root: &Path) -> String {
     }
 }
 
+/// Resolve an absolute path from `root_id + rel_path` (preferred) or a legacy
+/// absolute path string.  Returns an error when neither combination is valid.
+fn resolve_fs_path(
+    state: &AppState,
+    root_id: Option<usize>,
+    rel_path: Option<&str>,
+    abs_path: Option<&str>,
+) -> Result<PathBuf, AppError> {
+    if let (Some(rid), Some(rel)) = (root_id, rel_path) {
+        let root = state
+            .roots
+            .get(rid)
+            .ok_or_else(|| AppError(anyhow::anyhow!("invalid root_id {rid}")))?;
+        Ok(root.root.join(rel.trim_start_matches('/')))
+    } else if let Some(p) = abs_path {
+        Ok(PathBuf::from(p))
+    } else {
+        Err(AppError(anyhow::anyhow!(
+            "path or root_id+rel_path required"
+        )))
+    }
+}
+
 /// POST /api/fs/rename — rename a file or directory in place.
 pub async fn api_fs_rename(
     State(state): State<Arc<AppState>>,
@@ -2732,7 +2762,12 @@ pub async fn api_fs_rename(
 ) -> Result<Json<serde_json::Value>, AppError> {
     validate_filename(&body.new_name).map_err(AppError)?;
 
-    let abs_path = PathBuf::from(&body.path);
+    let abs_path = resolve_fs_path(
+        &state,
+        body.root_id,
+        body.rel_path.as_deref(),
+        body.path.as_deref(),
+    )?;
     if !abs_path.exists() {
         return Err(AppError(anyhow::anyhow!("path does not exist")));
     }
@@ -2790,12 +2825,22 @@ pub async fn api_fs_move(
     State(state): State<Arc<AppState>>,
     Json(body): Json<FsMoveRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let abs_src = PathBuf::from(&body.path);
+    let abs_src = resolve_fs_path(
+        &state,
+        body.root_id,
+        body.rel_path.as_deref(),
+        body.path.as_deref(),
+    )?;
     if !abs_src.exists() {
         return Err(AppError(anyhow::anyhow!("source path does not exist")));
     }
 
-    let dest_dir = PathBuf::from(&body.dest_dir);
+    let dest_dir = resolve_fs_path(
+        &state,
+        body.dest_root_id,
+        body.dest_rel_dir.as_deref(),
+        body.dest_dir.as_deref(),
+    )?;
     if !dest_dir.is_dir() {
         return Err(AppError(anyhow::anyhow!("destination is not a directory")));
     }
@@ -2966,7 +3011,12 @@ pub async fn api_fs_delete(
     State(state): State<Arc<AppState>>,
     Json(body): Json<FsDeleteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let abs_path = PathBuf::from(&body.path);
+    let abs_path = resolve_fs_path(
+        &state,
+        body.root_id,
+        body.rel_path.as_deref(),
+        body.path.as_deref(),
+    )?;
     if !abs_path.exists() {
         return Err(AppError(anyhow::anyhow!("path does not exist")));
     }
@@ -3010,7 +3060,12 @@ pub async fn api_fs_copy(
     State(state): State<Arc<AppState>>,
     Json(body): Json<FsCopyRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let abs_src = PathBuf::from(&body.path);
+    let abs_src = resolve_fs_path(
+        &state,
+        body.root_id,
+        body.rel_path.as_deref(),
+        body.path.as_deref(),
+    )?;
     if !abs_src.is_file() {
         return Err(AppError(anyhow::anyhow!("source must be an existing file")));
     }
@@ -3024,11 +3079,19 @@ pub async fn api_fs_copy(
         ))
     })?;
 
-    let dest_dir_path = body
-        .dest_dir
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| src_parent.to_path_buf());
+    let dest_dir_path = if body.dest_root_id.is_some() || body.dest_rel_dir.is_some() {
+        resolve_fs_path(
+            &state,
+            body.dest_root_id,
+            body.dest_rel_dir.as_deref(),
+            None,
+        )?
+    } else {
+        body.dest_dir
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| src_parent.to_path_buf())
+    };
     if !dest_dir_path.is_dir() {
         return Err(AppError(anyhow::anyhow!(
             "destination directory does not exist"

@@ -175,7 +175,12 @@ function renderGrid(items) {
         const path = isDir ? null : fullPath(entry);
         const selected = state.selectedFile && state.selectedFile.path === path ? ' selected' : '';
         const type_ = isDir ? 'folder' : fileType(name);
-        // Resolve the correct DB-root dir for API calls on this entry.
+        // Resolve the numeric root ID for this entry (used in API calls and data attributes).
+        // In search mode each entry carries its own root_id; in browse mode use the active root.
+        const entryRootId = (!isDir && state.mode === 'search' && entry.root_id != null)
+            ? entry.root_id
+            : state.currentRootId;
+        // entryDir is kept for thumbnail/preview URLs (absolute path from server, not constructed).
         const entryDir = !isDir && state.mode === 'search' && entry.root_path
             ? entry.root_path
             : currentAbsDir();
@@ -231,7 +236,7 @@ function renderGrid(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})" oncontextmenu="showFileMenu(event,'${jesc(dirPath)}',true)">
+                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})" oncontextmenu="showFileMenu(event,'${jesc(dirPath)}',true,${state.currentRootId})">
                     ${dirSymlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -242,20 +247,20 @@ function renderGrid(items) {
             const isArchiveEntry = path.includes('::');
             const gotoDirBtn = state.mode === 'search'
                 ? isArchiveEntry
-                    ? `<button class="card-goto" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}','${jesc(entryDir)}')" title="Go to archive">${ICONS.gotoDir}</button>`
+                    ? `<button class="card-goto" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}',${entryRootId})" title="Go to archive">${ICONS.gotoDir}</button>`
                     : `<button class="card-goto" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const uncoveredBadge = entry.covered === false ? '<span class="card-uncovered" title="No filetag database on this filesystem">&#128274;</span>' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             const symlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)" oncontextmenu="showFileMenu(event,'${jesc(path)}',false)">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-root-id="${entryRootId}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)" oncontextmenu="showFileMenu(event,'${jesc(path)}',false,${entryRootId})">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
                 const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}" oncontextmenu="showFileMenu(event,'${jesc(path)}',false)">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-root-id="${entryRootId}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}" oncontextmenu="showFileMenu(event,'${jesc(path)}',false,${entryRootId})">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -319,20 +324,23 @@ function _renderListRows(items) {
         } else {
             const multiSel = state.selectedPaths.has(path) ? ' selected' : '';
             const isArchiveEntry = path.includes('::');
-            // entryDir must be declared before gotoDirBtn so it is in scope for the template.
+            // entryRootId for API calls; entryDir kept for zip/legacy thumbnail URLs.
+            const entryRootId = state.mode === 'search' && entry.root_id != null
+                ? entry.root_id
+                : state.currentRootId;
             const entryDir = state.mode === 'search' && entry.root_path
                 ? entry.root_path
                 : currentAbsDir();
             const gotoDirBtn = state.mode === 'search'
                 ? isArchiveEntry
-                    ? `<button class="goto-dir-btn" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}','${jesc(entryDir)}')" title="Go to archive">${ICONS.gotoDir}</button>`
+                    ? `<button class="goto-dir-btn" onclick="event.stopPropagation();openZipDir('${jesc(path.split('::')[0])}',${entryRootId})" title="Go to archive">${ICONS.gotoDir}</button>`
                     : `<button class="goto-dir-btn" onclick="event.stopPropagation();navigateToParent('${jesc(path)}')" title="Go to directory">${ICONS.gotoDir}</button>`
                 : '';
             const uncoveredBadge = entry.covered === false ? ' &#128274;' : '';
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             const symlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
             if (fileType(name) === 'zip') {
-                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-root-id="${entryRootId}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${uncoveredBadge}${symlinkSuffix}</span>
                     <span class="size">${size}</span>
@@ -341,7 +349,7 @@ function _renderListRows(items) {
                 </div>`;
             } else {
                 const dblFnL = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
+                html += `<div class="list-row${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-root-id="${entryRootId}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFnL}">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${uncoveredBadge}${symlinkSuffix}</span>
                     <span class="size">${size}</span>
@@ -365,9 +373,11 @@ function cardDragStart(event, path) {
         ? [...state.selectedPaths]
         : [path];
     event.dataTransfer.setData('text/filetag-paths', JSON.stringify(paths));
-    // Pass the DB-root dir so tag-drop handlers use the correct database.
-    const dir = event.currentTarget?.dataset?.dir || currentAbsDir();
-    event.dataTransfer.setData('text/filetag-dir', dir);
+    // Pass the numeric root ID so tag-drop handlers use the correct database
+    // without needing to know or construct any system paths.
+    const rootId = parseInt(event.currentTarget?.dataset?.rootId);
+    const rid = isNaN(rootId) ? state.currentRootId : rootId;
+    event.dataTransfer.setData('text/filetag-root-id', rid != null ? String(rid) : '');
     event.dataTransfer.effectAllowed = 'copy';
     // Prevent the root-reorder drag from interfering.
     event.stopPropagation();

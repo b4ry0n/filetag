@@ -1446,10 +1446,11 @@ async function tagDrop(event, tagName) {
     const raw = event.dataTransfer.getData('text/filetag-paths');
     if (!raw) return;
     const paths = JSON.parse(raw);
-    // Use the dir from the drag source (e.g. file tree) so the right DB root is used.
-    const dragDir = event.dataTransfer.getData('text/filetag-dir') || currentAbsDir();
+    // Prefer the numeric root_id from the drag source; fall back to current root.
+    const rawRid = event.dataTransfer.getData('text/filetag-root-id');
+    const dragRootId = rawRid !== '' && !isNaN(parseInt(rawRid)) ? parseInt(rawRid) : state.currentRootId;
     await Promise.all(paths.map(p =>
-        apiPost('/api/tag', { path: p, tags: [tagName], dir: dragDir })
+        apiPost('/api/tag', { path: p, tags: [tagName], root_id: dragRootId })
     ));
     showToast(`Applied "${tagName}" to ${paths.length} file${paths.length === 1 ? '' : 's'}.`);
     await loadTags();
@@ -1473,7 +1474,7 @@ async function subjectDrop(event, subjectName) {
     const raw = event.dataTransfer.getData('text/filetag-paths');
     if (!raw) return;
     const paths = JSON.parse(raw);
-    const dir = currentAbsDir();
+    const rootId = state.currentRootId;
     let assigned = 0;
     for (const p of paths) {
         let data = state.selectedFilesData.get(p) || (state.selectedFile?.path === p ? state.selectedFile : null);
@@ -1499,7 +1500,7 @@ async function subjectDrop(event, subjectName) {
             path: p,
             subject: subjectName,
             mode,
-            dir,
+            root_id: rootId,
         });
         assigned += 1;
     }

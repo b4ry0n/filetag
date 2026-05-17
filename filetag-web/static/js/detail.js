@@ -18,14 +18,15 @@ function parseZipEntryPath(path) {
     return { zipPath: path.slice(0, idx), entryName: path.slice(idx + 2) };
 }
 
-async function openZipDir(zipPath, dir) {
+async function openZipDir(zipPath, rootId) {
     _thumbClearCache();
     state.mode = 'zip';
     state.zipPath = zipPath;
     // Resolve the root that owns this zip so all subsequent requests (thumb,
     // tag, refresh) target the correct database, even when the zip lives on a
     // non-active root (e.g. face-results or tag-filter search results).
-    state.zipDir = dir || searchDirForPath(zipPath);
+    // Accept a numeric rootId or fall back to the current root.
+    state.zipRootId = (rootId != null && !isNaN(Number(rootId))) ? Number(rootId) : state.currentRootId;
     state.zipSubdir = '';
     state.zipEntries = [];
     state.selectedFile = null;
@@ -41,7 +42,9 @@ async function openZipDir(zipPath, dir) {
     el.className = '';
     el.innerHTML = `<div class="empty-state"><span class="empty-state-icon">🗜️</span><span class="empty-state-text">Loading archive…</span></div>`;
     document.getElementById('entry-count').textContent = '…';
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: zipPath, dir: state.zipDir }));
+    const params = new URLSearchParams({ path: zipPath });
+    if (state.zipRootId != null) params.set('root_id', String(state.zipRootId));
+    const data = await api('/api/zip/entries?' + params.toString());
     state.zipEntries = data.entries || [];
 
     // If archive root contains exactly one folder and no files, jump into it
@@ -57,8 +60,9 @@ async function openZipDir(zipPath, dir) {
 
 async function refreshZipEntries() {
     if (!state.zipPath) return;
-    const effectiveDir = state.zipDir || searchDirForPath(state.zipPath);
-    const data = await api('/api/zip/entries?' + new URLSearchParams({ path: state.zipPath, dir: effectiveDir }));
+    const params = new URLSearchParams({ path: state.zipPath });
+    if (state.zipRootId != null) params.set('root_id', String(state.zipRootId));
+    const data = await api('/api/zip/entries?' + params.toString());
     state.zipEntries = data.entries || [];
     renderContent();
     _thumbInit();
@@ -130,8 +134,9 @@ function renderZipGrid(entries) {
 
         let preview;
         if (entry.is_image) {
-            const zipThumbDir = state.zipDir || searchDirForPath(state.zipPath);
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: state.zipPath, page: entry.image_index, dir: zipThumbDir });
+            const thumbParams = new URLSearchParams({ path: state.zipPath, page: entry.image_index });
+            if (state.zipRootId != null) thumbParams.set('root_id', String(state.zipRootId));
+            const thumbUrl = '/api/zip/thumb?' + thumbParams.toString();
             preview = `<div class="card-icon" data-thumb-src="${thumbUrl}" data-name="${esc(displayName)}" data-thumb-hover="1">${fileIcon(displayName)}</div>`;
         } else {
             preview = `<div class="card-icon">${fileIcon(displayName)}</div>`;
@@ -2410,7 +2415,9 @@ async function comicImportSelection() {
         let imported = 0;
         for (const path of paths) {
             try {
-                const result = await apiPost('/api/comic/import-metadata', { path, dir: searchDirForPath(path) });
+                const rid = searchRootIdForPath(path);
+                const rootParam = rid != null ? { root_id: rid } : {};
+                const result = await apiPost('/api/comic/import-metadata', { path, ...rootParam });
                 imported += result.imported ?? 0;
             } catch (_) {
                 // skip archives without ComicInfo.xml silently
@@ -2599,9 +2606,12 @@ async function doBulkApplyTagToAll(tagStr) {
     });
     if (!paths.length) return;
     // Group paths by root and issue one bulk request per root.
-    const byDir = new Map();
-    for (const p of paths) { const d = searchDirForPath(p); if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(p); }
-    await Promise.all([...byDir.entries()].map(([d, ps]) => apiPost('/api/tag-bulk', { paths: ps, tags: [tagStr], dir: d })));
+    const byRootId = new Map();
+    for (const p of paths) { const rid = searchRootIdForPath(p); if (!byRootId.has(rid)) byRootId.set(rid, []); byRootId.get(rid).push(p); }
+    await Promise.all([...byRootId.entries()].map(([rid, ps]) => {
+        const rootParam = rid != null ? { root_id: rid } : {};
+        return apiPost('/api/tag-bulk', { paths: ps, tags: [tagStr], ...rootParam });
+    }));
     // Update local cache
     const eqIdx = tagStr.indexOf('=');
     const tName  = eqIdx !== -1 ? tagStr.slice(0, eqIdx) : tagStr;
@@ -2638,9 +2648,12 @@ async function doBulkRemoveTagChip(tagStr) {
         const data = state.selectedFilesData.get(p);
         return data && data.tags.some(t => formatTag(t) === tagStr);
     });
-    const byDir = new Map();
-    for (const p of paths) { const d = searchDirForPath(p); if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(p); }
-    await Promise.all([...byDir.entries()].map(([d, ps]) => apiPost('/api/untag-bulk', { paths: ps, tags: [tagStr], dir: d })));
+    const byRootId = new Map();
+    for (const p of paths) { const rid = searchRootIdForPath(p); if (!byRootId.has(rid)) byRootId.set(rid, []); byRootId.get(rid).push(p); }
+    await Promise.all([...byRootId.entries()].map(([rid, ps]) => {
+        const rootParam = rid != null ? { root_id: rid } : {};
+        return apiPost('/api/untag-bulk', { paths: ps, tags: [tagStr], ...rootParam });
+    }));
     // Update local cache immediately so the chip list refreshes right away,
     // before the slower loadTags() / loadFiles() network calls complete.
     for (const p of paths) {
