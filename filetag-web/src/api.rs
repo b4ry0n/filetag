@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -12,7 +12,7 @@ use filetag_lib::{db, query};
 use crate::archive::ensure_zip_entry_record;
 use crate::state::{
     AppError, AppState, file_is_covered, load_features_for, open_conn, open_for_file_op, parse_tag,
-    preview_safe_path, resolve_preview, root_from_dir_or_id, safe_path,
+    preview_safe_path, resolve_preview, root_for_dir, root_from_dir_or_id, safe_path,
 };
 use crate::types::*;
 use crate::video::video_info;
@@ -2690,5 +2690,316 @@ pub async fn api_settings_set(
     if let Some(v) = body.vtile_use_longest {
         db::set_setting(&conn, "vtile_use_longest", if v { "1" } else { "0" }).map_err(AppError)?;
     }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem operations (rename, move, delete, copy)
+// ---------------------------------------------------------------------------
+
+/// Validate a filename component: non-empty, no path separators, not "."/"..".
+fn validate_filename(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("filename is empty");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("'.' and '..' are not valid filenames");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("filename must not contain path separators");
+    }
+    Ok(())
+}
+
+/// Compute the relative path of `abs` under `eff_root` from a canonicalised
+/// parent directory.  Does not require `abs` to exist on disk.
+fn rel_under_root(canon_parent: &Path, name: &str, eff_root: &Path) -> String {
+    let parent_rel = canon_parent
+        .strip_prefix(eff_root)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if parent_rel.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", parent_rel, name)
+    }
+}
+
+/// POST /api/fs/rename — rename a file or directory in place.
+pub async fn api_fs_rename(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FsRenameRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_filename(&body.new_name).map_err(AppError)?;
+
+    let abs_path = PathBuf::from(&body.path);
+    if !abs_path.exists() {
+        return Err(AppError(anyhow::anyhow!("path does not exist")));
+    }
+
+    // Ensure the path is inside a known root.
+    root_for_dir(&state, &abs_path)
+        .ok_or_else(|| AppError(anyhow::anyhow!("path is not within any known database root")))?;
+
+    let is_dir = abs_path.is_dir();
+    let parent = abs_path
+        .parent()
+        .ok_or_else(|| AppError(anyhow::anyhow!("path has no parent")))?;
+
+    // Open the nearest child DB from the parent directory (always exists).
+    let (conn, eff_root) = db::find_and_open_fast(parent).map_err(AppError)?;
+    let old_rel = db::relative_to_root(&abs_path, &eff_root).map_err(AppError)?;
+    if old_rel == ".filetag" || old_rel.starts_with(".filetag/") {
+        return Err(AppError(anyhow::anyhow!("cannot operate on .filetag directory")));
+    }
+
+    let new_abs = parent.join(&body.new_name);
+    if new_abs.exists() {
+        return Err(AppError(anyhow::anyhow!(
+            "a file named {:?} already exists",
+            body.new_name
+        )));
+    }
+
+    // Compute new relative path without filesystem access (new_abs doesn't exist yet).
+    let canon_parent = parent.canonicalize().map_err(|e| AppError(e.into()))?;
+    let new_rel = rel_under_root(&canon_parent, &body.new_name, &eff_root);
+
+    // Perform the rename.
+    std::fs::rename(&abs_path, &new_abs)
+        .context("rename failed")
+        .map_err(AppError)?;
+
+    // Update DB records.
+    if is_dir {
+        let _ = db::rename_dir_paths(&conn, &old_rel, &new_rel);
+    } else {
+        let _ = db::rename_file_path(&conn, &old_rel, &new_rel);
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/fs/move — move a file or directory within the same root.
+pub async fn api_fs_move(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FsMoveRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let abs_src = PathBuf::from(&body.path);
+    if !abs_src.exists() {
+        return Err(AppError(anyhow::anyhow!("source path does not exist")));
+    }
+
+    let dest_dir = PathBuf::from(&body.dest_dir);
+    if !dest_dir.is_dir() {
+        return Err(AppError(anyhow::anyhow!("destination is not a directory")));
+    }
+
+    // Both must be within the same root.
+    let tr_src = root_for_dir(&state, &abs_src)
+        .ok_or_else(|| AppError(anyhow::anyhow!("source is not within any known database root")))?;
+    let tr_dest = root_for_dir(&state, &dest_dir).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "destination is not within any known database root"
+        ))
+    })?;
+    if tr_src.root != tr_dest.root {
+        return Err(AppError(anyhow::anyhow!(
+            "source and destination must be within the same database root"
+        )));
+    }
+
+    let name = abs_src
+        .file_name()
+        .ok_or_else(|| AppError(anyhow::anyhow!("source has no filename")))?;
+    let abs_dest = dest_dir.join(name);
+    if abs_dest.exists() {
+        return Err(AppError(anyhow::anyhow!(
+            "a file named {:?} already exists in the destination",
+            name
+        )));
+    }
+
+    // Prevent moving a directory into itself.
+    if abs_src.is_dir() {
+        let canon_src = abs_src.canonicalize().map_err(|e| AppError(e.into()))?;
+        let canon_dest = dest_dir.canonicalize().map_err(|e| AppError(e.into()))?;
+        if canon_dest.starts_with(&canon_src) {
+            return Err(AppError(anyhow::anyhow!(
+                "cannot move a directory into itself"
+            )));
+        }
+    }
+
+    // Open source and destination child DBs before the move.
+    let src_parent = abs_src
+        .parent()
+        .ok_or_else(|| AppError(anyhow::anyhow!("source has no parent")))?;
+    let (src_conn, src_eff_root) = db::find_and_open_fast(src_parent).map_err(AppError)?;
+    let old_rel = db::relative_to_root(&abs_src, &src_eff_root).map_err(AppError)?;
+    if old_rel == ".filetag" || old_rel.starts_with(".filetag/") {
+        return Err(AppError(anyhow::anyhow!("cannot operate on .filetag directory")));
+    }
+
+    let (dest_conn, dest_eff_root) = db::find_and_open_fast(&dest_dir).map_err(AppError)?;
+    let canon_dest_dir = dest_dir.canonicalize().map_err(|e| AppError(e.into()))?;
+    let name_str = name.to_string_lossy().into_owned();
+    let new_rel = rel_under_root(&canon_dest_dir, &name_str, &dest_eff_root);
+
+    // Perform the filesystem move.
+    std::fs::rename(&abs_src, &abs_dest)
+        .context("move failed")
+        .map_err(AppError)?;
+
+    let is_dir = abs_dest.is_dir();
+    if src_eff_root == dest_eff_root {
+        // Same child DB: update paths in place.
+        if is_dir {
+            let _ = db::rename_dir_paths(&src_conn, &old_rel, &new_rel);
+        } else {
+            let _ = db::rename_file_path(&src_conn, &old_rel, &new_rel);
+        }
+    } else {
+        // Different child DBs within the same root: remove from the source DB.
+        // Tags are not migrated; the destination DB will index the file on next access.
+        drop(dest_conn); // unused in this branch
+        if is_dir {
+            let _ = db::delete_dir_paths(&src_conn, &old_rel);
+        } else {
+            let _ = db::delete_file_by_path(&src_conn, &old_rel);
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/fs/delete — delete a file or directory.
+pub async fn api_fs_delete(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FsDeleteRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let abs_path = PathBuf::from(&body.path);
+    if !abs_path.exists() {
+        return Err(AppError(anyhow::anyhow!("path does not exist")));
+    }
+
+    // Ensure the path is inside a known root.
+    root_for_dir(&state, &abs_path)
+        .ok_or_else(|| AppError(anyhow::anyhow!("path is not within any known database root")))?;
+
+    let parent = abs_path
+        .parent()
+        .ok_or_else(|| AppError(anyhow::anyhow!("path has no parent")))?;
+    let (conn, eff_root) = db::find_and_open_fast(parent).map_err(AppError)?;
+    let rel = db::relative_to_root(&abs_path, &eff_root).map_err(AppError)?;
+    if rel == ".filetag" || rel.starts_with(".filetag/") {
+        return Err(AppError(anyhow::anyhow!("cannot delete .filetag directory")));
+    }
+
+    let is_dir = abs_path.is_dir();
+    if is_dir {
+        std::fs::remove_dir_all(&abs_path)
+            .context("delete failed")
+            .map_err(AppError)?;
+        let _ = db::delete_dir_paths(&conn, &rel);
+    } else {
+        std::fs::remove_file(&abs_path)
+            .context("delete failed")
+            .map_err(AppError)?;
+        let _ = db::delete_file_by_path(&conn, &rel);
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/fs/copy — copy a file (tags are copied to the destination).
+pub async fn api_fs_copy(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FsCopyRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let abs_src = PathBuf::from(&body.path);
+    if !abs_src.is_file() {
+        return Err(AppError(anyhow::anyhow!("source must be an existing file")));
+    }
+
+    let src_parent = abs_src
+        .parent()
+        .ok_or_else(|| AppError(anyhow::anyhow!("source has no parent")))?;
+    let tr_src = root_for_dir(&state, &abs_src)
+        .ok_or_else(|| AppError(anyhow::anyhow!("source is not within any known database root")))?;
+    let tr_src_root = tr_src.root.clone();
+
+    let dest_dir_path = body
+        .dest_dir
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| src_parent.to_path_buf());
+    if !dest_dir_path.is_dir() {
+        return Err(AppError(anyhow::anyhow!("destination directory does not exist")));
+    }
+
+    // Destination must be within the same root.
+    let tr_dest = root_for_dir(&state, &dest_dir_path).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "destination is not within any known database root"
+        ))
+    })?;
+    if tr_src_root != tr_dest.root {
+        return Err(AppError(anyhow::anyhow!(
+            "source and destination must be within the same database root"
+        )));
+    }
+
+    // Determine destination filename.
+    let dest_name: String = if let Some(ref n) = body.new_name {
+        validate_filename(n).map_err(AppError)?;
+        n.clone()
+    } else {
+        let stem = abs_src
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let ext = abs_src
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        format!("Copy of {}{}", stem, ext)
+    };
+
+    let abs_dest = dest_dir_path.join(&dest_name);
+    if abs_dest.exists() {
+        return Err(AppError(anyhow::anyhow!(
+            "destination file {:?} already exists",
+            dest_name
+        )));
+    }
+
+    // Copy the file.
+    std::fs::copy(&abs_src, &abs_dest)
+        .context("copy failed")
+        .map_err(AppError)?;
+
+    // Copy tags from source to the new file.
+    let (conn, eff_root) = db::find_and_open_fast(src_parent).map_err(AppError)?;
+    let src_rel = db::relative_to_root(&abs_src, &eff_root).map_err(AppError)?;
+    let canon_dest_dir = dest_dir_path.canonicalize().map_err(|e| AppError(e.into()))?;
+    let dest_rel = rel_under_root(&canon_dest_dir, &dest_name, &eff_root);
+
+    if let Ok(Some(src_file_id)) = db::file_id_by_path(&conn, &src_rel) {
+        if let Ok(tags) = db::tags_for_file(&conn, src_file_id) {
+            if !tags.is_empty() {
+                let _ = db::get_or_index_file(&conn, &dest_rel, &eff_root);
+                if let Ok(Some(dest_file_id)) = db::file_id_by_path(&conn, &dest_rel) {
+                    for (tag_name, value) in tags {
+                        if let Ok(tag_id) = db::get_or_create_tag(&conn, &tag_name) {
+                            let _ =
+                                db::apply_tag(&conn, dest_file_id, tag_id, value.as_deref(), None);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }

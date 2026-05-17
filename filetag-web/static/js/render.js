@@ -231,7 +231,7 @@ function renderGrid(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">
+                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})" oncontextmenu="showFileMenu(event,'${jesc(dirPath)}',true)">
                     ${dirSymlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -249,13 +249,13 @@ function renderGrid(items) {
             const uncoveredCls = entry.covered === false ? ' uncovered' : '';
             const symlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
             if (type_ === 'zip') {
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="handleZipClick('${jesc(path)}', event)" oncontextmenu="showFileMenu(event,'${jesc(path)}',false)">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
             } else {
                 const dblFn = `cvOpenFile('${jesc(path)}','${fileType(name)}')`;
-                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}">
+                html += `<div class="card${multiSel}${uncoveredCls}" data-path="${esc(path)}" data-dir="${esc(entryDir)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(path)}')" onclick="selectFile('${jesc(path)}', event)" ondblclick="${dblFn}" oncontextmenu="showFileMenu(event,'${jesc(path)}',false)">
                     ${checkmark}${gotoDirBtn}${uncoveredBadge}${symlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;

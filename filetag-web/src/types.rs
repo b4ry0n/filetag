@@ -707,6 +707,44 @@ pub struct TagDirRecursiveRequest {
     pub root_id: Option<usize>,
 }
 
+/// Body for `POST /api/fs/rename`.
+#[derive(Deserialize)]
+pub struct FsRenameRequest {
+    /// Absolute filesystem path of the file or directory to rename.
+    pub path: String,
+    /// New filename (basename only — must not contain path separators).
+    pub new_name: String,
+}
+
+/// Body for `POST /api/fs/move`.
+#[derive(Deserialize)]
+pub struct FsMoveRequest {
+    /// Absolute filesystem path of the file or directory to move.
+    pub path: String,
+    /// Absolute filesystem path of the destination directory.
+    /// Must be within the same database root as `path`.
+    pub dest_dir: String,
+}
+
+/// Body for `POST /api/fs/delete`.
+#[derive(Deserialize)]
+pub struct FsDeleteRequest {
+    /// Absolute filesystem path of the file or directory to delete.
+    pub path: String,
+}
+
+/// Body for `POST /api/fs/copy`.
+#[derive(Deserialize)]
+pub struct FsCopyRequest {
+    /// Absolute filesystem path of the source file (directories not supported).
+    pub path: String,
+    /// Absolute filesystem path of the destination directory.
+    /// Defaults to the same directory as `path` when absent.
+    pub dest_dir: Option<String>,
+    /// New filename for the copy.  Defaults to `"Copy of <name>"` when absent.
+    pub new_name: Option<String>,
+}
+
 /// Body for `POST /api/face/config`.
 #[derive(Deserialize)]
 pub struct FaceConfigRequest {

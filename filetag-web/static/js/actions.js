@@ -2667,3 +2667,228 @@ function cancelTagPickerMode() {
 
 window.doSearch = doSearch;
 window.doClearSearch = doClearSearch;
+
+// ---------------------------------------------------------------------------
+// File management: context menu + operations
+// ---------------------------------------------------------------------------
+
+function showFileMenu(e, path, isDir) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeFileMenu();
+
+    const name = path.split('/').pop();
+    const menu = document.createElement('div');
+    menu.id = 'file-context-menu';
+    menu.className = 'tag-context-menu';
+    menu.innerHTML = `
+        <div class="tag-menu-header">${esc(name)}</div>
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptRename('${jesc(path)}', ${isDir})">Rename\u2026</button>
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove('${jesc(path)}', ${isDir})">Move to\u2026</button>
+        ${!isDir ? `<button class="tag-menu-action" onclick="closeFileMenu(); promptCopy('${jesc(path)}')">Copy\u2026</button>` : ''}
+        <div class="tag-menu-divider"></div>
+        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); confirmDelete('${jesc(path)}', ${isDir})">Delete\u2026</button>
+    `;
+    document.body.appendChild(menu);
+
+    // Position the menu near the cursor, clamped to viewport.
+    const rect = menu.getBoundingClientRect();
+    let x = e.clientX;
+    let y = e.clientY;
+    if (x + rect.width  > window.innerWidth)  x = window.innerWidth  - rect.width  - 8;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    menu.style.left = x + 'px';
+    menu.style.top  = y + 'px';
+
+    requestAnimationFrame(() => {
+        document.addEventListener('click', closeFileMenu, { once: true });
+    });
+}
+
+function closeFileMenu() {
+    const m = document.getElementById('file-context-menu');
+    if (m) m.remove();
+}
+
+// ---------------------------------------------------------------------------
+// Shared dialog helpers
+// ---------------------------------------------------------------------------
+
+/** Remove the active fs-dialog overlay (if any). */
+function _closeFsDialog() {
+    const d = document.getElementById('fs-dialog-overlay');
+    if (d) d.remove();
+}
+
+/**
+ * Show a small inline dialog.
+ * @param {string} title
+ * @param {string} html        — inner HTML for the form body
+ * @param {function} onSubmit  — called with the FormData when committed
+ */
+function _showFsDialog(title, html, onSubmit) {
+    _closeFsDialog();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'fs-dialog-overlay';
+    overlay.className = 'fs-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="fs-dialog" role="dialog">
+            <div class="fs-dialog-header">
+                <span>${esc(title)}</span>
+                <button class="fs-dialog-close" onclick="_closeFsDialog()">\u00d7</button>
+            </div>
+            <div class="fs-dialog-body">${html}</div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Close on backdrop click.
+    overlay.addEventListener('click', e => { if (e.target === overlay) _closeFsDialog(); });
+
+    // Wire up the submit button (id="fs-dialog-submit").
+    const btn = overlay.querySelector('#fs-dialog-submit');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            const form = overlay.querySelector('form');
+            if (form) onSubmit(new FormData(form));
+        });
+    }
+
+    // Auto-focus the first input.
+    requestAnimationFrame(() => {
+        const inp = overlay.querySelector('input[type=text]');
+        if (inp) { inp.focus(); inp.select(); }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Rename
+// ---------------------------------------------------------------------------
+
+function promptRename(path, isDir) {
+    const name = path.split('/').pop();
+    _showFsDialog('Rename', `
+        <form onsubmit="return false">
+            <label class="fs-dialog-label">New name</label>
+            <input class="fs-dialog-input" type="text" name="new_name" value="${esc(name)}" autocomplete="off" spellcheck="false"
+                onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
+        </form>
+        <div class="fs-dialog-footer">
+            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
+            <button class="fs-dialog-btn primary" id="fs-dialog-submit">Rename</button>
+        </div>
+    `, async fd => {
+        const newName = (fd.get('new_name') || '').trim();
+        if (!newName || newName === name) { _closeFsDialog(); return; }
+        try {
+            await apiPost('/api/fs/rename', { path, new_name: newName });
+            _closeFsDialog();
+            await loadFiles(state.currentPath);
+            render();
+        } catch (err) {
+            alert('Rename failed: ' + err.message);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Move
+// ---------------------------------------------------------------------------
+
+function promptMove(path, isDir) {
+    const name = path.split('/').pop();
+    // Pre-fill with the current absolute directory (parent of the item).
+    const currentDir = path.slice(0, path.lastIndexOf('/')) || '/';
+    _showFsDialog('Move', `
+        <form onsubmit="return false">
+            <label class="fs-dialog-label">Destination folder</label>
+            <input class="fs-dialog-input" type="text" name="dest_dir" value="${esc(currentDir)}" autocomplete="off" spellcheck="false"
+                onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
+            <div class="fs-dialog-hint">Enter the absolute path of the destination folder within the same database root.</div>
+        </form>
+        <div class="fs-dialog-footer">
+            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
+            <button class="fs-dialog-btn primary" id="fs-dialog-submit">Move</button>
+        </div>
+    `, async fd => {
+        const destDir = (fd.get('dest_dir') || '').trim();
+        if (!destDir) { _closeFsDialog(); return; }
+        try {
+            await apiPost('/api/fs/move', { path, dest_dir: destDir });
+            _closeFsDialog();
+            await loadFiles(state.currentPath);
+            render();
+        } catch (err) {
+            alert('Move failed: ' + err.message);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Copy
+// ---------------------------------------------------------------------------
+
+function promptCopy(path) {
+    const name = path.split('/').pop();
+    const dot = name.lastIndexOf('.');
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext  = dot > 0 ? name.slice(dot) : '';
+    const defaultName = `Copy of ${stem}${ext}`;
+    _showFsDialog('Copy file', `
+        <form onsubmit="return false">
+            <label class="fs-dialog-label">New filename</label>
+            <input class="fs-dialog-input" type="text" name="new_name" value="${esc(defaultName)}" autocomplete="off" spellcheck="false"
+                onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
+        </form>
+        <div class="fs-dialog-footer">
+            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
+            <button class="fs-dialog-btn primary" id="fs-dialog-submit">Copy</button>
+        </div>
+    `, async fd => {
+        const newName = (fd.get('new_name') || '').trim();
+        if (!newName) { _closeFsDialog(); return; }
+        const destDir = path.slice(0, path.lastIndexOf('/')) || '/';
+        try {
+            await apiPost('/api/fs/copy', { path, dest_dir: destDir, new_name: newName });
+            _closeFsDialog();
+            await loadFiles(state.currentPath);
+            render();
+        } catch (err) {
+            alert('Copy failed: ' + err.message);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
+
+function confirmDelete(path, isDir) {
+    const name = path.split('/').pop();
+    const what = isDir ? 'directory' : 'file';
+    _showFsDialog(`Delete ${what}`, `
+        <div class="fs-dialog-warn">
+            Are you sure you want to permanently delete:<br>
+            <strong>${esc(name)}</strong>${isDir ? '<br><em>All contents will be deleted.</em>' : ''}
+        </div>
+        <div class="fs-dialog-footer">
+            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
+            <button class="fs-dialog-btn danger" id="fs-dialog-submit">Delete</button>
+        </div>
+    `, async () => {
+        try {
+            await apiPost('/api/fs/delete', { path });
+            _closeFsDialog();
+            // If the deleted item was selected, clear selection.
+            if (state.selectedFile && state.selectedFile.path === path) {
+                state.selectedFile = null;
+            }
+            state.selectedPaths.delete(path);
+            await loadFiles(state.currentPath);
+            render();
+        } catch (err) {
+            alert('Delete failed: ' + err.message);
+        }
+    });
+}

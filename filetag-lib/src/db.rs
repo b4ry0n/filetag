@@ -2355,6 +2355,48 @@ pub fn all_embeddings(conn: &Connection) -> Result<Vec<(i64, String, Vec<f32>)>>
     Ok(out)
 }
 
+/// Update the stored path of a single file record after a rename or move
+/// within the same database root.  Returns `true` when a matching record was
+/// found and updated.
+pub fn rename_file_path(conn: &Connection, old_rel: &str, new_rel: &str) -> Result<bool> {
+    let n = conn.execute(
+        "UPDATE files SET path = ?1 WHERE path = ?2",
+        params![new_rel, old_rel],
+    )?;
+    Ok(n > 0)
+}
+
+/// Update all file records whose path begins with `old_dir_rel/` to the
+/// equivalent path under `new_dir_rel`.  Used when a directory is renamed or
+/// moved within the same database root.  Returns the number of updated rows.
+pub fn rename_dir_paths(
+    conn: &Connection,
+    old_dir_rel: &str,
+    new_dir_rel: &str,
+) -> Result<usize> {
+    let old_prefix = format!("{}/", old_dir_rel);
+    let new_prefix = format!("{}/", new_dir_rel);
+    // Use SUBSTR equality instead of LIKE to avoid special-character issues.
+    let n = conn.execute(
+        "UPDATE files SET path = ?1 || SUBSTR(path, LENGTH(?2) + 1) \
+         WHERE SUBSTR(path, 1, LENGTH(?2)) = ?2",
+        params![new_prefix, old_prefix],
+    )?;
+    Ok(n)
+}
+
+/// Delete all file records whose path begins with `dir_rel/` (i.e. inside a
+/// directory), plus an exact match for `dir_rel` itself (edge case).  Used
+/// when a directory is deleted.  Returns the number of deleted rows.
+pub fn delete_dir_paths(conn: &Connection, dir_rel: &str) -> Result<usize> {
+    let prefix = format!("{}/", dir_rel);
+    let n = conn.execute(
+        "DELETE FROM files WHERE path = ?1 OR SUBSTR(path, 1, LENGTH(?2)) = ?2",
+        params![dir_rel, prefix],
+    )?;
+    Ok(n)
+}
+
 /// Return the internal `files.id` for a relative path, or `None` if not indexed.
 pub fn file_id_by_path(conn: &Connection, rel_path: &str) -> Result<Option<i64>> {
     use rusqlite::OptionalExtension;
