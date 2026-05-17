@@ -19,6 +19,7 @@ use crate::saliency::SalientPoint;
 use crate::state::Features;
 use crate::state::{
     AppState, OnDemandGuard, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir,
+    root_from_dir_or_id,
 };
 use crate::types::DirParam;
 use crate::video::{orient_to_vf_prefix, video_thumb_strip};
@@ -2998,6 +2999,7 @@ fn dir_thumb_cache_path(
 pub struct DirThumbsParams {
     path: String,
     dir: Option<String>,
+    root_id: Option<usize>,
 }
 
 /// `GET /api/dir-thumbs` — return a horizontal WebP sprite sheet of 240 × 240
@@ -3013,12 +3015,9 @@ pub async fn api_dir_thumbs(
     Query(params): Query<DirThumbsParams>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let db_root = match root_for_dir(
-        &state,
-        std::path::Path::new(params.dir.as_deref().unwrap_or("")),
-    ) {
-        Some(r) => r,
-        None => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+    let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
     };
     let abs_dir = match crate::state::preview_safe_path(&db_root.root, &params.path) {
         Some(p) => p,

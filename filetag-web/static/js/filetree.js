@@ -417,7 +417,10 @@ window.ftreeDirDrop = async function (event, absPath) {
     event.currentTarget.classList.remove('ft-drop-target');
 
     const pathsJson = event.dataTransfer.getData('text/filetag-paths');
-    if (!pathsJson) return;
+    if (!pathsJson) {
+        console.warn('[ftreeDirDrop] no text/filetag-paths in drag event — drop ignored');
+        return;
+    }
 
     let paths;
     try { paths = JSON.parse(pathsJson); } catch (_) { return; }
@@ -432,18 +435,27 @@ window.ftreeDirDrop = async function (event, absPath) {
     const destRoot = _ftFindRoot(absPath);
     const destRelDir = destRoot ? absPath.slice(destRoot.path.length).replace(/^\//, '') : null;
 
+    if (!destRoot) {
+        console.error('[ftreeDirDrop] destRoot not found for absPath:', absPath, '— state.roots:', state.roots?.map(r => r.path));
+        showToast('Cannot move: destination directory is not in a known database root.');
+        return;
+    }
+
     let errors = 0;
+    let lastError = '';
     for (const p of paths) {
         try {
             const body = {
                 root_id: srcRootId,
                 rel_path: p,
-                dest_root_id: destRoot ? destRoot.id : undefined,
-                dest_rel_dir: destRelDir ?? undefined,
+                dest_root_id: destRoot.id,
+                dest_rel_dir: destRelDir,
             };
+            console.debug('[ftreeDirDrop] moving', body, '→', absPath);
             await apiPost('/api/fs/move', body);
-        } catch (_) {
+        } catch (err) {
             errors++;
+            lastError = err.message || String(err);
         }
     }
 
@@ -462,7 +474,7 @@ window.ftreeDirDrop = async function (event, absPath) {
     renderFiletree();
 
     if (errors > 0) {
-        showToast(`${errors} file${errors === 1 ? '' : 's'} could not be moved.`);
+        showToast(`${errors} file${errors === 1 ? '' : 's'} could not be moved${lastError ? ': ' + lastError : '.'}`);
     }
 };
 

@@ -236,7 +236,11 @@ function renderGrid(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkBadge = entry.is_symlink ? '<span class="card-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})" oncontextmenu="showFileMenu(event,'${jesc(dirPath)}',true,${state.currentRootId})">
+                // Resolve absolute path for the filetree drop handler.
+                const absDirPath = state.currentBasePath
+                    ? (dirPath ? state.currentBasePath + '/' + dirPath : state.currentBasePath)
+                    : dirPath;
+                html += `<div class="card folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" ondragover="ftreeDirDragOver(event,'${jesc(absDirPath)}')" ondragleave="ftreeDirDragLeave(event)" ondrop="ftreeDirDrop(event,'${jesc(absDirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})" oncontextmenu="showFileMenu(event,'${jesc(dirPath)}',true,${state.currentRootId})">
                     ${dirSymlinkBadge}<div class="card-preview">${preview}</div>
                     <div class="card-body"><div class="card-name">${esc(name)}</div><div class="card-meta">${meta}</div></div>
                 </div>`;
@@ -313,7 +317,10 @@ function _renderListRows(items) {
                 const dirPath = fullPath(entry);
                 const dirSelected = state.selectedDir && state.selectedDir.path === dirPath ? ' selected' : '';
                 const dirSymlinkSuffix = entry.is_symlink ? ' <span class="list-symlink" title="Symbolic link">&#10138;</span>' : '';
-                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">
+                const absDirPath2 = state.currentBasePath
+                    ? (dirPath ? state.currentBasePath + '/' + dirPath : state.currentBasePath)
+                    : dirPath;
+                html += `<div class="list-row folder${dirSelected}" data-path="${esc(dirPath)}" draggable="true" ondragstart="cardDragStart(event,'${jesc(dirPath)}')" ondragover="ftreeDirDragOver(event,'${jesc(absDirPath2)}')" ondragleave="ftreeDirDragLeave(event)" ondrop="ftreeDirDrop(event,'${jesc(absDirPath2)}')" onclick="handleDirClick('${jesc(dirPath)}','${jesc(name)}',${entry.file_count ?? null})">
                     <span class="icon">${icon}</span>
                     <span class="name">${esc(name)}${dirSymlinkSuffix}</span>
                     <span class="size">${size}</span>
