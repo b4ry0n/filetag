@@ -396,17 +396,18 @@ window.ftreeDragStart = function (event, absPath, parentAbs) {
     event.dataTransfer.setData('text/filetag-root-id', rootId != null ? String(rootId) : '');
 };
 
-/** Drag a directory — sets a custom type (no tagging action yet). */
+/** Drag a directory to another directory in the sidebar. */
 window.ftreeDragDir = function (event, absPath) {
     event.stopPropagation();
-    event.dataTransfer.effectAllowed = 'none';
+    event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/filetag-dir-path', absPath);
 };
 
-/** Accept file-card drags over a sidebar directory row. */
+/** Accept file-card drags and directory drags over a sidebar directory row. */
 window.ftreeDirDragOver = function (event, absPath) {
-    // Only react to file-card drags, not tag-drags or root-reorder.
-    if (!event.dataTransfer.types.includes('text/filetag-paths')) return;
+    const hasFiles = event.dataTransfer.types.includes('text/filetag-paths');
+    const hasDir   = event.dataTransfer.types.includes('text/filetag-dir-path');
+    if (!hasFiles && !hasDir) return;
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
@@ -417,12 +418,73 @@ window.ftreeDirDragLeave = function (event) {
     event.currentTarget.classList.remove('ft-drop-target');
 };
 
-/** Drop file cards onto a sidebar directory: move them there. */
+/** Drop file cards or a directory onto a sidebar directory row: move them there. */
 window.ftreeDirDrop = async function (event, absPath) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.classList.remove('ft-drop-target');
 
+    // --- Directory drag ---
+    const srcDirAbs = event.dataTransfer.getData('text/filetag-dir-path');
+    if (srcDirAbs) {
+        // Ignore drop onto itself or its own parent (no-op).
+        if (srcDirAbs === absPath) return;
+        const srcParentAbs = srcDirAbs.includes('/')
+            ? srcDirAbs.substring(0, srcDirAbs.lastIndexOf('/'))
+            : '';
+        if (srcParentAbs === absPath) return;
+        // Ignore drop into a descendant of the source directory.
+        if (absPath.startsWith(srcDirAbs + '/')) {
+            showToast('Cannot move a directory into itself.');
+            return;
+        }
+
+        const srcRoot  = _ftFindRoot(srcDirAbs);
+        const destRoot = _ftFindRoot(absPath);
+        if (!srcRoot || !destRoot) {
+            showToast('Cannot move: directory is not within a known database root.');
+            return;
+        }
+        const srcRelPath  = srcDirAbs.slice(srcRoot.path.length).replace(/^\//, '');
+        const destRelDir  = absPath.slice(destRoot.path.length).replace(/^\//, '');
+        const dirName     = srcDirAbs.split('/').pop();
+
+        try {
+            await apiPost('/api/fs/move', {
+                root_id:      srcRoot.id,
+                rel_path:     srcRelPath,
+                dest_root_id: destRoot.id,
+                dest_rel_dir: destRelDir,
+            });
+        } catch (err) {
+            showToast('Could not move directory: ' + (err.message || err));
+            return;
+        }
+
+        // Invalidate tree cache for source parent and destination.
+        ftreeInvalidateDir(srcParentAbs);
+        ftreeInvalidateDir(absPath);
+
+        // If the current view is inside the moved directory, follow it.
+        const currentAbs = state.currentPath
+            ? state.currentBasePath + '/' + state.currentPath
+            : state.currentBasePath;
+        if (currentAbs === srcDirAbs || currentAbs.startsWith(srcDirAbs + '/')) {
+            const movedToAbs = absPath + '/' + dirName;
+            state.currentBasePath = destRoot.path;
+            state.currentRootId   = destRoot.id;
+            const newRel = movedToAbs.slice(destRoot.path.length).replace(/^\//, '');
+            await navigateTo(newRel);
+        } else {
+            await loadFiles(state.currentPath);
+            render();
+        }
+        renderFiletree();
+        showToast(`Moved "${dirName}".`);
+        return;
+    }
+
+    // --- File drag ---
     const pathsJson = event.dataTransfer.getData('text/filetag-paths');
     if (!pathsJson) return;
 
@@ -467,8 +529,8 @@ window.ftreeDirDrop = async function (event, absPath) {
     const firstRelDir = firstRelPath.includes('/')
         ? firstRelPath.substring(0, firstRelPath.lastIndexOf('/'))
         : '';
-    const srcDirAbs = srcRoot ? (firstRelDir ? srcRoot.path + '/' + firstRelDir : srcRoot.path) : null;
-    if (srcDirAbs) ftreeInvalidateDir(srcDirAbs);
+    const srcFileDirAbs = srcRoot ? (firstRelDir ? srcRoot.path + '/' + firstRelDir : srcRoot.path) : null;
+    if (srcFileDirAbs) ftreeInvalidateDir(srcFileDirAbs);
     ftreeInvalidateDir(absPath);
     // Reload the current view.
     await loadFiles(state.currentPath);
