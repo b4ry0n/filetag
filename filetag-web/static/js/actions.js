@@ -2768,7 +2768,7 @@ function _showFsDialog(title, html, onSubmit) {
     if (btn) {
         btn.addEventListener('click', () => {
             const form = overlay.querySelector('form');
-            if (form) onSubmit(new FormData(form));
+            onSubmit(form ? new FormData(form) : null);
         });
     }
 
