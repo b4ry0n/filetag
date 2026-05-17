@@ -2785,7 +2785,7 @@ pub async fn api_fs_rename(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// POST /api/fs/move — move a file or directory within the same root.
+/// POST /api/fs/move — move a file or directory (cross-root allowed).
 pub async fn api_fs_move(
     State(state): State<Arc<AppState>>,
     Json(body): Json<FsMoveRequest>,
@@ -2800,22 +2800,17 @@ pub async fn api_fs_move(
         return Err(AppError(anyhow::anyhow!("destination is not a directory")));
     }
 
-    // Both must be within the same root.
-    let tr_src = root_for_dir(&state, &abs_src).ok_or_else(|| {
+    // Both must be within a known root (cross-root moves are allowed).
+    root_for_dir(&state, &abs_src).ok_or_else(|| {
         AppError(anyhow::anyhow!(
             "source is not within any known database root"
         ))
     })?;
-    let tr_dest = root_for_dir(&state, &dest_dir).ok_or_else(|| {
+    root_for_dir(&state, &dest_dir).ok_or_else(|| {
         AppError(anyhow::anyhow!(
             "destination is not within any known database root"
         ))
     })?;
-    if tr_src.root != tr_dest.root {
-        return Err(AppError(anyhow::anyhow!(
-            "source and destination must be within the same database root"
-        )));
-    }
 
     let name = abs_src
         .file_name()
@@ -2823,13 +2818,15 @@ pub async fn api_fs_move(
     let abs_dest = dest_dir.join(name);
     if abs_dest.exists() {
         return Err(AppError(anyhow::anyhow!(
-            "a file named {:?} already exists in the destination",
+            "a file or directory named {:?} already exists in the destination",
             name
         )));
     }
 
+    let is_src_dir = abs_src.is_dir();
+
     // Prevent moving a directory into itself.
-    if abs_src.is_dir() {
+    if is_src_dir {
         let canon_src = abs_src.canonicalize().map_err(|e| AppError(e.into()))?;
         let canon_dest = dest_dir.canonicalize().map_err(|e| AppError(e.into()))?;
         if canon_dest.starts_with(&canon_src) {
@@ -2839,7 +2836,7 @@ pub async fn api_fs_move(
         }
     }
 
-    // Open source and destination child DBs before the move.
+    // Open source child DB and compute relative paths — before the move.
     let src_parent = abs_src
         .parent()
         .ok_or_else(|| AppError(anyhow::anyhow!("source has no parent")))?;
@@ -2851,32 +2848,113 @@ pub async fn api_fs_move(
         )));
     }
 
+    // Open destination child DB.
     let (dest_conn, dest_eff_root) = db::find_and_open_fast(&dest_dir).map_err(AppError)?;
     let canon_dest_dir = dest_dir.canonicalize().map_err(|e| AppError(e.into()))?;
     let name_str = name.to_string_lossy().into_owned();
     let new_rel = rel_under_root(&canon_dest_dir, &name_str, &dest_eff_root);
 
-    // Perform the filesystem move.
-    std::fs::rename(&abs_src, &abs_dest)
-        .context("move failed")
-        .map_err(AppError)?;
+    let same_db = src_eff_root == dest_eff_root;
 
-    let is_dir = abs_dest.is_dir();
-    if src_eff_root == dest_eff_root {
+    // For cross-root directory moves, snapshot tags before the filesystem op.
+    let dir_snapshot: Vec<db::FileWithTags> = if !same_db && is_src_dir {
+        db::files_under_prefix(&src_conn, &old_rel).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // For cross-root file moves, snapshot tags before the filesystem op.
+    let file_tags: Vec<(String, Option<String>, String)> = if !same_db && !is_src_dir {
+        if let Ok(Some(fid)) = db::file_id_by_path(&src_conn, &old_rel) {
+            db::tags_for_file_with_subject(&src_conn, fid).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Perform the filesystem move.  Fall back to copy+delete for files when
+    // rename fails (e.g. cross-device).
+    let move_err = std::fs::rename(&abs_src, &abs_dest).err();
+    if let Some(e) = move_err {
+        if !is_src_dir {
+            // Cross-device or other rename failure: copy then delete.
+            std::fs::copy(&abs_src, &abs_dest)
+                .context("cross-device move (copy phase) failed")
+                .map_err(AppError)?;
+            std::fs::remove_file(&abs_src)
+                .context("cross-device move (delete phase) failed")
+                .map_err(AppError)?;
+        } else {
+            return Err(AppError(
+                anyhow::Error::new(e).context("directory move failed"),
+            ));
+        }
+    }
+
+    // Update database records.
+    if same_db {
         // Same child DB: update paths in place.
-        if is_dir {
+        if is_src_dir {
             let _ = db::rename_dir_paths(&src_conn, &old_rel, &new_rel);
         } else {
             let _ = db::rename_file_path(&src_conn, &old_rel, &new_rel);
         }
+    } else if is_src_dir {
+        // Cross-root directory: delete old records and re-index with tags.
+        let _ = db::delete_dir_paths(&src_conn, &old_rel);
+        let old_prefix = format!("{}/", old_rel);
+        for fwt in &dir_snapshot {
+            // Translate old rel_path to new rel_path.
+            let suffix = fwt
+                .rel_path
+                .strip_prefix(&old_prefix)
+                .unwrap_or(&fwt.rel_path);
+            let dest_file_rel = format!("{}/{}", new_rel, suffix);
+            let _ = db::get_or_index_file(&dest_conn, &dest_file_rel, &dest_eff_root);
+            if let Ok(Some(dest_fid)) = db::file_id_by_path(&dest_conn, &dest_file_rel) {
+                for (tag_name, value, subject) in &fwt.tags {
+                    if let Ok(tag_id) = db::get_or_create_tag(&dest_conn, tag_name) {
+                        let _ = db::apply_tag(
+                            &dest_conn,
+                            dest_fid,
+                            tag_id,
+                            if value.is_empty() {
+                                None
+                            } else {
+                                Some(value.as_str())
+                            },
+                            if subject.is_empty() {
+                                None
+                            } else {
+                                Some(subject.as_str())
+                            },
+                        );
+                    }
+                }
+            }
+        }
     } else {
-        // Different child DBs within the same root: remove from the source DB.
-        // Tags are not migrated; the destination DB will index the file on next access.
-        drop(dest_conn); // unused in this branch
-        if is_dir {
-            let _ = db::delete_dir_paths(&src_conn, &old_rel);
-        } else {
-            let _ = db::delete_file_by_path(&src_conn, &old_rel);
+        // Cross-root file: delete from src, index + apply tags in dest.
+        let _ = db::delete_file_by_path(&src_conn, &old_rel);
+        let _ = db::get_or_index_file(&dest_conn, &new_rel, &dest_eff_root);
+        if let Ok(Some(dest_fid)) = db::file_id_by_path(&dest_conn, &new_rel) {
+            for (tag_name, value, subject) in &file_tags {
+                if let Ok(tag_id) = db::get_or_create_tag(&dest_conn, tag_name) {
+                    let _ = db::apply_tag(
+                        &dest_conn,
+                        dest_fid,
+                        tag_id,
+                        value.as_deref(),
+                        if subject.is_empty() {
+                            None
+                        } else {
+                            Some(subject.as_str())
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -2940,12 +3018,11 @@ pub async fn api_fs_copy(
     let src_parent = abs_src
         .parent()
         .ok_or_else(|| AppError(anyhow::anyhow!("source has no parent")))?;
-    let tr_src = root_for_dir(&state, &abs_src).ok_or_else(|| {
+    root_for_dir(&state, &abs_src).ok_or_else(|| {
         AppError(anyhow::anyhow!(
             "source is not within any known database root"
         ))
     })?;
-    let tr_src_root = tr_src.root.clone();
 
     let dest_dir_path = body
         .dest_dir
@@ -2958,17 +3035,12 @@ pub async fn api_fs_copy(
         )));
     }
 
-    // Destination must be within the same root.
-    let tr_dest = root_for_dir(&state, &dest_dir_path).ok_or_else(|| {
+    // Destination must be within a known root (cross-root copies are allowed).
+    root_for_dir(&state, &dest_dir_path).ok_or_else(|| {
         AppError(anyhow::anyhow!(
             "destination is not within any known database root"
         ))
     })?;
-    if tr_src_root != tr_dest.root {
-        return Err(AppError(anyhow::anyhow!(
-            "source and destination must be within the same database root"
-        )));
-    }
 
     // Determine destination filename.
     let dest_name: String = if let Some(ref n) = body.new_name {
@@ -3000,22 +3072,35 @@ pub async fn api_fs_copy(
         .map_err(AppError)?;
 
     // Copy tags from source to the new file.
-    let (conn, eff_root) = db::find_and_open_fast(src_parent).map_err(AppError)?;
-    let src_rel = db::relative_to_root(&abs_src, &eff_root).map_err(AppError)?;
+    let (src_conn, src_eff_root) = db::find_and_open_fast(src_parent).map_err(AppError)?;
+    let src_rel = db::relative_to_root(&abs_src, &src_eff_root).map_err(AppError)?;
     let canon_dest_dir = dest_dir_path
         .canonicalize()
         .map_err(|e| AppError(e.into()))?;
-    let dest_rel = rel_under_root(&canon_dest_dir, &dest_name, &eff_root);
 
-    if let Ok(Some(src_file_id)) = db::file_id_by_path(&conn, &src_rel)
-        && let Ok(tags) = db::tags_for_file(&conn, src_file_id)
+    // Open destination DB (may differ from source DB for cross-root copies).
+    let (dest_conn, dest_eff_root) = db::find_and_open_fast(&dest_dir_path).map_err(AppError)?;
+    let dest_rel = rel_under_root(&canon_dest_dir, &dest_name, &dest_eff_root);
+
+    if let Ok(Some(src_file_id)) = db::file_id_by_path(&src_conn, &src_rel)
+        && let Ok(tags) = db::tags_for_file_with_subject(&src_conn, src_file_id)
         && !tags.is_empty()
     {
-        let _ = db::get_or_index_file(&conn, &dest_rel, &eff_root);
-        if let Ok(Some(dest_file_id)) = db::file_id_by_path(&conn, &dest_rel) {
-            for (tag_name, value) in tags {
-                if let Ok(tag_id) = db::get_or_create_tag(&conn, &tag_name) {
-                    let _ = db::apply_tag(&conn, dest_file_id, tag_id, value.as_deref(), None);
+        let _ = db::get_or_index_file(&dest_conn, &dest_rel, &dest_eff_root);
+        if let Ok(Some(dest_file_id)) = db::file_id_by_path(&dest_conn, &dest_rel) {
+            for (tag_name, value, subject) in tags {
+                if let Ok(tag_id) = db::get_or_create_tag(&dest_conn, &tag_name) {
+                    let _ = db::apply_tag(
+                        &dest_conn,
+                        dest_file_id,
+                        tag_id,
+                        value.as_deref(),
+                        if subject.is_empty() {
+                            None
+                        } else {
+                            Some(subject.as_str())
+                        },
+                    );
                 }
             }
         }

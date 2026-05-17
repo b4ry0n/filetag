@@ -2793,30 +2793,201 @@ function promptRename(path, isDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Directory picker dialog  (for Move and Copy)
+// ---------------------------------------------------------------------------
+
+/** Cache of fetched children: absPath → [{name, is_dir, ...}] */
+const _dpCache = {};
+/** Which paths are expanded in the picker */
+const _dpExpanded = {};
+/** Currently selected directory in the picker */
+let _dpSelected = null;
+/** Callback once the user confirms a directory */
+let _dpOnSelect = null;
+
+function _closeDirPicker() {
+    const el = document.getElementById('dir-picker-overlay');
+    if (el) el.remove();
+    _dpSelected = null;
+    _dpOnSelect = null;
+}
+
+/**
+ * Show a directory-picker dialog.
+ * @param {string} title
+ * @param {string} initialDir  — pre-selected directory (absolute path)
+ * @param {function} onSelect  — called with the chosen absolute directory path
+ */
+async function _showDirPickerDialog(title, initialDir, onSelect) {
+    _closeDirPicker();
+    _dpOnSelect = onSelect;
+    _dpSelected = initialDir;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dir-picker-overlay';
+    overlay.className = 'fs-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="fs-dialog dir-picker-dialog" role="dialog">
+            <div class="fs-dialog-header">
+                <span>${esc(title)}</span>
+                <button class="fs-dialog-close" onclick="_closeDirPicker()">\u00d7</button>
+            </div>
+            <div class="fs-dialog-body">
+                <div id="dir-picker-tree" class="dir-picker-tree"></div>
+                <div id="dir-picker-selected" class="dir-picker-selected"></div>
+            </div>
+            <div class="fs-dialog-footer">
+                <button class="fs-dialog-btn" onclick="_closeDirPicker()">Cancel</button>
+                <button class="fs-dialog-btn primary" id="dir-picker-confirm" onclick="_dpConfirm()">Move here</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) _closeDirPicker(); });
+
+    // Expand path to the initial dir.
+    await _dpExpandToPath(initialDir);
+    _dpRender();
+    _dpUpdateSelected(initialDir);
+}
+
+/** Expand all ancestor directories of absPath in the picker. */
+async function _dpExpandToPath(absPath) {
+    const roots = state.roots || [];
+    // Find which root this path belongs to.
+    const root = roots.find(r => absPath === r.path || absPath.startsWith(r.path + '/'));
+    if (!root) return;
+
+    // Preload the root itself.
+    if (!_dpCache[root.path]) await _dpLoad(root.path);
+    _dpExpanded[root.path] = true;
+
+    // Walk down the path segments.
+    const rel = absPath.slice(root.path.length).replace(/^\//, '');
+    if (!rel) return;
+    const segs = rel.split('/');
+    let current = root.path;
+    for (const seg of segs) {
+        current = current + '/' + seg;
+        if (!_dpCache[current]) await _dpLoad(current);
+        _dpExpanded[current] = true;
+    }
+}
+
+/** Load directory children (dirs only) into _dpCache. */
+async function _dpLoad(absPath) {
+    try {
+        const r = await fetch('/api/files?dir=' + encodeURIComponent(absPath));
+        if (!r.ok) { _dpCache[absPath] = []; return; }
+        const data = await r.json();
+        _dpCache[absPath] = (data.entries || []).filter(e => e.is_dir);
+    } catch (_) {
+        _dpCache[absPath] = [];
+    }
+}
+
+function _dpRender() {
+    const el = document.getElementById('dir-picker-tree');
+    if (!el) return;
+    const roots = state.roots || [];
+    el.innerHTML = roots.map(r => _dpRenderRoot(r)).join('');
+}
+
+function _dpRenderRoot(root) {
+    const expanded = _dpExpanded[root.path] !== false;
+    const selCls = _dpSelected === root.path ? ' dp-selected' : '';
+    const chevCls = expanded ? '' : ' chevron-collapsed';
+    const children = expanded
+        ? _dpRenderChildren(root.path, _dpCache[root.path] || [], 1)
+        : '';
+    return `<div>
+        <div class="dp-row dp-root${selCls}" style="padding-left:4px"
+            onclick="_dpSelectDir('${jesc(root.path)}')"
+            ondblclick="event.stopPropagation()">
+            <svg class="chevron-icon${chevCls} dp-chevron" viewBox="0 0 12 12" width="11" height="11"
+                onclick="event.stopPropagation();_dpToggle('${jesc(root.path)}')">
+                <polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="dp-label">${esc(root.name)}</span>
+        </div>
+        ${children}
+    </div>`;
+}
+
+function _dpRenderChildren(parentAbs, entries, depth) {
+    if (!entries || !entries.length) return '';
+    return entries.map(e => _dpRenderEntry(e, parentAbs, depth)).join('');
+}
+
+function _dpRenderEntry(e, parentAbs, depth) {
+    const abs = parentAbs.replace(/\/$/, '') + '/' + e.name;
+    const indent = 4 + depth * 16;
+    const expanded = !!_dpExpanded[abs];
+    const selCls = _dpSelected === abs ? ' dp-selected' : '';
+    const chevCls = expanded ? '' : ' chevron-collapsed';
+    const children = expanded
+        ? _dpRenderChildren(abs, _dpCache[abs] || [], depth + 1)
+        : '';
+    return `<div>
+        <div class="dp-row${selCls}" style="padding-left:${indent}px"
+            onclick="_dpSelectDir('${jesc(abs)}')"
+            ondblclick="event.stopPropagation()">
+            <svg class="chevron-icon${chevCls} dp-chevron" viewBox="0 0 12 12" width="11" height="11"
+                onclick="event.stopPropagation();_dpToggle('${jesc(abs)}')">
+                <polyline points="2,3 6,8 10,3" fill="none" stroke="currentColor" stroke-width="1.4"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <svg class="dp-folder-icon" viewBox="0 0 16 14" width="13" height="13" fill="none"
+                stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2H6l1.5 1.5H13.5A1.5 1.5 0 0 1 15 5v6.5A1.5 1.5 0 0 1 13.5 13h-11A1.5 1.5 0 0 1 1 11.5V3.5z"/>
+            </svg>
+            <span class="dp-label">${esc(e.name)}</span>
+        </div>
+        ${children}
+    </div>`;
+}
+
+async function _dpToggle(absPath) {
+    if (_dpExpanded[absPath]) {
+        _dpExpanded[absPath] = false;
+        _dpRender();
+    } else {
+        _dpExpanded[absPath] = true;
+        if (!_dpCache[absPath]) await _dpLoad(absPath);
+        _dpRender();
+    }
+}
+
+function _dpSelectDir(absPath) {
+    _dpSelected = absPath;
+    _dpUpdateSelected(absPath);
+    // Re-render to update highlight.
+    _dpRender();
+}
+
+function _dpUpdateSelected(absPath) {
+    const el = document.getElementById('dir-picker-selected');
+    if (el) el.textContent = absPath || '(none)';
+}
+
+function _dpConfirm() {
+    if (!_dpSelected) return;
+    const cb = _dpOnSelect;
+    // Don't close yet for Move (caller decides); for Copy the callback closes it.
+    if (cb) cb(_dpSelected);
+}
+
+// ---------------------------------------------------------------------------
 // Move
 // ---------------------------------------------------------------------------
 
 function promptMove(path, isDir) {
-    const name = path.split('/').pop();
-    // Pre-fill with the current absolute directory (parent of the item).
     const currentDir = path.slice(0, path.lastIndexOf('/')) || '/';
-    _showFsDialog('Move', `
-        <form onsubmit="return false">
-            <label class="fs-dialog-label">Destination folder</label>
-            <input class="fs-dialog-input" type="text" name="dest_dir" value="${esc(currentDir)}" autocomplete="off" spellcheck="false"
-                onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
-            <div class="fs-dialog-hint">Enter the absolute path of the destination folder within the same database root.</div>
-        </form>
-        <div class="fs-dialog-footer">
-            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
-            <button class="fs-dialog-btn primary" id="fs-dialog-submit">Move</button>
-        </div>
-    `, async fd => {
-        const destDir = (fd.get('dest_dir') || '').trim();
-        if (!destDir) { _closeFsDialog(); return; }
+    _showDirPickerDialog('Move to\u2026', currentDir, async destDir => {
         try {
             await apiPost('/api/fs/move', { path, dest_dir: destDir });
-            _closeFsDialog();
+            _closeDirPicker();
             await loadFiles(state.currentPath);
             render();
         } catch (err) {
@@ -2835,28 +3006,34 @@ function promptCopy(path) {
     const stem = dot > 0 ? name.slice(0, dot) : name;
     const ext  = dot > 0 ? name.slice(dot) : '';
     const defaultName = `Copy of ${stem}${ext}`;
-    _showFsDialog('Copy file', `
-        <form onsubmit="return false">
-            <label class="fs-dialog-label">New filename</label>
-            <input class="fs-dialog-input" type="text" name="new_name" value="${esc(defaultName)}" autocomplete="off" spellcheck="false"
-                onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
-        </form>
-        <div class="fs-dialog-footer">
-            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
-            <button class="fs-dialog-btn primary" id="fs-dialog-submit">Copy</button>
-        </div>
-    `, async fd => {
-        const newName = (fd.get('new_name') || '').trim();
-        if (!newName) { _closeFsDialog(); return; }
-        const destDir = path.slice(0, path.lastIndexOf('/')) || '/';
-        try {
-            await apiPost('/api/fs/copy', { path, dest_dir: destDir, new_name: newName });
-            _closeFsDialog();
-            await loadFiles(state.currentPath);
-            render();
-        } catch (err) {
-            alert('Copy failed: ' + err.message);
-        }
+    const currentDir = path.slice(0, path.lastIndexOf('/')) || '/';
+
+    _showDirPickerDialog('Copy to\u2026', currentDir, async destDir => {
+        // Ask for the new filename after the directory is chosen.
+        _closeDirPicker();
+        _showFsDialog('Copy file', `
+            <form onsubmit="return false">
+                <label class="fs-dialog-label">New filename</label>
+                <input class="fs-dialog-input" type="text" name="new_name" value="${esc(defaultName)}" autocomplete="off" spellcheck="false"
+                    onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
+                <div class="fs-dialog-hint">Destination: ${esc(destDir)}</div>
+            </form>
+            <div class="fs-dialog-footer">
+                <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
+                <button class="fs-dialog-btn primary" id="fs-dialog-submit">Copy</button>
+            </div>
+        `, async fd => {
+            const newName = (fd.get('new_name') || '').trim();
+            if (!newName) { _closeFsDialog(); return; }
+            try {
+                await apiPost('/api/fs/copy', { path, dest_dir: destDir, new_name: newName });
+                _closeFsDialog();
+                await loadFiles(state.currentPath);
+                render();
+            } catch (err) {
+                alert('Copy failed: ' + err.message);
+            }
+        });
     });
 }
 

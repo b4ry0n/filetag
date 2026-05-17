@@ -127,6 +127,9 @@ function _ftRenderRoot(root) {
     return `<div class="ft-root">
         <div class="ft-row ft-root-row${activeCls}" style="padding-left:4px"
             onclick="ftreeNavDir('${jesc(root.path)}')"
+            ondragover="ftreeDirDragOver(event,'${jesc(root.path)}')"
+            ondragleave="ftreeDirDragLeave(event)"
+            ondrop="ftreeDirDrop(event,'${jesc(root.path)}')"
             title="${esc(root.path)}">
             <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
                 onclick="event.stopPropagation();ftreeToggleDir('${jesc(root.path)}')">
@@ -180,6 +183,9 @@ function _ftRenderEntry(e, parentAbs, depth) {
                 onclick="ftreeNavDir('${jesc(absPath)}')"
                 draggable="true"
                 ondragstart="ftreeDragDir(event,'${jesc(absPath)}')"
+                ondragover="ftreeDirDragOver(event,'${jesc(absPath)}')"
+                ondragleave="ftreeDirDragLeave(event)"
+                ondrop="ftreeDirDrop(event,'${jesc(absPath)}')"
                 title="${esc(absPath)}">
                 <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
                     onclick="event.stopPropagation();ftreeToggleDir('${jesc(absPath)}')">
@@ -368,6 +374,68 @@ window.ftreeDragDir = function (event, absPath) {
     event.stopPropagation();
     event.dataTransfer.effectAllowed = 'none';
     event.dataTransfer.setData('text/filetag-dir-path', absPath);
+};
+
+/** Accept file-card drags over a sidebar directory row. */
+window.ftreeDirDragOver = function (event, absPath) {
+    // Only react to file-card drags, not tag-drags or root-reorder.
+    if (!event.dataTransfer.types.includes('text/filetag-paths')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    event.currentTarget.classList.add('ft-drop-target');
+};
+
+window.ftreeDirDragLeave = function (event) {
+    event.currentTarget.classList.remove('ft-drop-target');
+};
+
+/** Drop file cards onto a sidebar directory: move them there. */
+window.ftreeDirDrop = async function (event, absPath) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.classList.remove('ft-drop-target');
+
+    const pathsJson = event.dataTransfer.getData('text/filetag-paths');
+    if (!pathsJson) return;
+
+    let paths;
+    try { paths = JSON.parse(pathsJson); } catch (_) { return; }
+    if (!Array.isArray(paths) || paths.length === 0) return;
+
+    // Convert relative paths to absolute by combining with the source dir.
+    const sourceDir = event.dataTransfer.getData('text/filetag-dir') || currentAbsDir();
+    // Root of source files (needed to resolve relative paths).
+    const srcRoot = (state.roots || []).find(r =>
+        sourceDir === r.path || sourceDir.startsWith(r.path + '/'));
+
+    const absPaths = paths.map(p => {
+        // If already absolute, use as-is; otherwise resolve against root.
+        if (p.startsWith('/')) return p;
+        if (srcRoot) return srcRoot.path + '/' + p;
+        return sourceDir + '/' + p;
+    });
+
+    let errors = 0;
+    for (const src of absPaths) {
+        try {
+            await apiPost('/api/fs/move', { path: src, dest_dir: absPath });
+        } catch (_) {
+            errors++;
+        }
+    }
+
+    // Invalidate tree cache for both source dir and destination.
+    ftreeInvalidateDir(sourceDir);
+    ftreeInvalidateDir(absPath);
+    // Reload the current view.
+    await loadFiles(state.currentPath);
+    render();
+    renderFiletree();
+
+    if (errors > 0) {
+        showToast(`${errors} file${errors === 1 ? '' : 's'} could not be moved.`);
+    }
 };
 
 // ---------------------------------------------------------------------------

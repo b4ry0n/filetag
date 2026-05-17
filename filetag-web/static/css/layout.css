@@ -2205,3 +2205,74 @@ mark.tag-filter-match {
     color: #fff;
 }
 .fs-dialog-btn.danger:hover { filter: brightness(1.1); }
+
+/* -------------------------------------------------------------------------
+   Directory picker dialog
+   ------------------------------------------------------------------------- */
+.dir-picker-dialog {
+    min-width: 420px;
+    max-width: 580px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+.dir-picker-dialog .fs-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    flex: 1;
+    overflow: hidden;
+    padding: 0;
+}
+.dir-picker-tree {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 12px 16px 0;
+    padding: 4px 0;
+    background: var(--bg);
+    font-size: 13px;
+    min-height: 180px;
+    max-height: 50vh;
+}
+.dir-picker-selected {
+    font-size: 12px;
+    color: var(--text-dim, var(--text-muted));
+    padding: 6px 16px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dp-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding-right: 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 0 2px;
+    user-select: none;
+}
+.dp-row:hover { background: var(--bg-hover); }
+.dp-row.dp-selected { background: var(--primary); color: #fff; }
+.dp-row.dp-selected svg { stroke: #fff; }
+.dp-root {
+    font-weight: 600;
+    font-size: 13px;
+}
+.dp-chevron { flex-shrink: 0; opacity: 0.65; cursor: pointer; }
+.dp-folder-icon { flex-shrink: 0; opacity: 0.7; }
+.dp-row.dp-selected .dp-folder-icon { opacity: 1; }
+.dp-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* -------------------------------------------------------------------------
+   Sidebar filetree: drag-over highlight
+   ------------------------------------------------------------------------- */
+.ft-row.ft-drop-target {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+    outline: 1.5px dashed var(--primary);
+    outline-offset: -2px;
+    border-radius: 4px;
+}
