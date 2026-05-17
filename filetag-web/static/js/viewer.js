@@ -65,7 +65,7 @@ function cvThumbUrl(i) {
 }
 
 async function openMediaViewer(path, startPage = 0) {
-    // Detecteer archiefbestand (.cbz/.zip) of zip-entry (virtueel pad met '::')
+    // Detect archive file (.cbz/.zip/.cbr/.rar/.cb7/.7z) or archive entry (virtual path with '::')
     // When a virtual entry path is passed (e.g. from search results), extract
     // the archive path and resolve the correct page index.
     if (typeof path === 'string' && path.includes('::')) {
@@ -83,7 +83,7 @@ async function openMediaViewer(path, startPage = 0) {
         } catch (_) { startPage = 0; }
         path = archivePath;
     }
-    const isArchive = (typeof path === 'string' && (path.includes('::') || path.match(/\.(cbz|zip)$/i)));
+    const isArchive = (typeof path === 'string' && (path.includes('::') || path.match(/\.(cbz|zip|cbr|rar|cb7|7z)$/i)));
     if (isArchive) {
         const overlay = document.getElementById('media-viewer');
         overlay.hidden = false;
@@ -98,13 +98,13 @@ async function openMediaViewer(path, startPage = 0) {
 
         const res = await fetch('/api/zip/pages?' + new URLSearchParams({ path }) + dirParam('&'));
         if (!res.ok) {
-            document.getElementById('cv-status').textContent = 'Cannot read ZIP';
+            document.getElementById('cv-status').textContent = 'Cannot read archive';
             return;
         }
         const data = await res.json();
         _cv.pages = data.pages || [];
         if (_cv.pages.length === 0) {
-            document.getElementById('cv-status').textContent = 'No images in ZIP';
+            document.getElementById('cv-status').textContent = 'No images in archive';
             return;
         }
         cvBuildThumbs();
