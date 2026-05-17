@@ -2782,6 +2782,21 @@ function _showFsDialog(title, html, onSubmit) {
 // Rename
 // ---------------------------------------------------------------------------
 
+/**
+ * Invalidate the filetree cache for a set of affected absolute directories and
+ * re-render the sidebar tree. Call this after any filesystem operation.
+ * @param {...string} absDirs  — absolute paths of directories that changed
+ */
+function _ftreeRefresh(...absDirs) {
+    if (typeof ftreeInvalidateDir !== 'function') return;
+    if (absDirs.length === 0) {
+        if (typeof ftreeClearCache === 'function') ftreeClearCache();
+    } else {
+        for (const d of absDirs) { if (d) ftreeInvalidateDir(d); }
+    }
+    if (typeof renderFiletree === 'function') renderFiletree();
+}
+
 function promptRename(rootId, relPath, isDir) {
     const name = relPath.split('/').pop();
     _showFsDialog('Rename', `
@@ -2802,6 +2817,7 @@ function promptRename(rootId, relPath, isDir) {
             _closeFsDialog();
             await loadFiles(state.currentPath);
             render();
+            _ftreeRefresh(state.currentBasePath);
         } catch (err) {
             alert('Rename failed: ' + err.message);
         }
@@ -3032,6 +3048,7 @@ function promptMove(rootId, relPath, isDir) {
             await loadFiles(state.currentPath);
             render();
             showToast('Moved.');
+            _ftreeRefresh();
         } catch (err) {
             alert('Move failed: ' + err.message);
         }
@@ -3084,6 +3101,7 @@ function promptCopy(rootId, relPath) {
                 _closeFsDialog();
                 await loadFiles(state.currentPath);
                 render();
+                _ftreeRefresh();
             } catch (err) {
                 alert('Copy failed: ' + err.message);
             }
@@ -3121,6 +3139,7 @@ function confirmDelete(rootId, relPath, isDir) {
             }
             await loadFiles(state.currentPath);
             render();
+            _ftreeRefresh(state.currentBasePath);
         } catch (err) {
             alert('Delete failed: ' + err.message);
         }
@@ -3145,6 +3164,7 @@ async function trashItem(rootId, relPath, isDir) {
         }
         await loadFiles(state.currentPath);
         render();
+        _ftreeRefresh(state.currentBasePath);
         updateTrashBadge(rootId);
         showToast('Moved to trash. <a href="#" onclick="openTrashPanel();return false;">View</a>', 5000);
     } catch (err) {
@@ -3213,6 +3233,7 @@ async function restoreTrashItem(rootId, trashId) {
         await apiPost('/api/trash/restore', { root_id: rootId, trash_id: trashId });
         await loadFiles(state.currentPath);
         render();
+        _ftreeRefresh();
         loadTrashItems(rootId);
         updateTrashBadge(rootId);
         showToast('Restored.');
