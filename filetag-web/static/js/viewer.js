@@ -339,47 +339,53 @@ function cvApplyScrollZoom(newSize, event) {
     const stage = document.getElementById('cv-stage');
     const btn   = document.getElementById('cv-zoom-reset-btn');
     if (_cv.scrollDir === 'h') {
+        // Capture the old zoom level before updating so we can compute the scale factor.
+        const oldPct = _cv.scrollHeight;
         if (newSize !== undefined) {
             _cv.scrollHeight = Math.max(20, Math.min(300, newSize));
         }
         if (stage) {
-            const rect = stage.getBoundingClientRect();
+            // Scale factor derived from the CSS zoom level change.  Images maintain their
+            // aspect ratio, so both axes scale by the same factor.  This avoids reading
+            // stage.scrollWidth / stage.scrollHeight from the DOM (those can be unreliable
+            // immediately after a CSS custom-property change).
+            const scale = _cv.scrollHeight / oldPct;
+            const rect  = stage.getBoundingClientRect();
             const cx = event ? (event.clientX - rect.left) : rect.width  / 2;
             const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
-            // Capture the content-relative position of the cursor BEFORE the size change.
-            const oldW = stage.scrollWidth;
-            const oldH = stage.scrollHeight;
+            // Read scroll position BEFORE the CSS change.
             const contentX = stage.scrollLeft + cx;
             const contentY = stage.scrollTop  + cy;
             // Apply size change.
             stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}%`);
-            // Accessing scrollWidth/scrollHeight forces a synchronous layout so the
-            // new dimensions are available immediately.  Direct assignment to
-            // scrollLeft/scrollTop bypasses scroll-behavior:smooth and is always instant,
-            // avoiding conflicts with queued smooth-scroll animations.
-            stage.scrollLeft = oldW > 0 ? (contentX / oldW) * stage.scrollWidth  - cx : stage.scrollLeft;
-            stage.scrollTop  = oldH > 0 ? (contentY / oldH) * stage.scrollHeight - cy : stage.scrollTop;
+            // Keep the content point that was under the cursor fixed on screen.
+            // Direct assignment bypasses scroll-behavior:smooth and is always instant.
+            stage.scrollLeft = contentX * scale - cx;
+            stage.scrollTop  = contentY * scale - cy;
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight === 100 ? 'hidden' : ''; }
     } else {
+        // Capture the old zoom level before updating so we can compute the scale factor.
+        const oldPct = _cv.scrollWidth;
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
-            const rect = stage.getBoundingClientRect();
+            // Scale factor derived from the CSS zoom level change.  Images maintain their
+            // aspect ratio, so both axes scale by the same factor.  This avoids reading
+            // stage.scrollWidth / stage.scrollHeight from the DOM (those can be unreliable
+            // immediately after a CSS custom-property change).
+            const scale = _cv.scrollWidth / oldPct;
+            const rect  = stage.getBoundingClientRect();
             const cx = event ? (event.clientX - rect.left) : rect.width  / 2;
             const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
-            // Capture the content-relative position of the cursor BEFORE the size change.
-            const oldW = stage.scrollWidth;
-            const oldH = stage.scrollHeight;
+            // Read scroll position BEFORE the CSS change.
             const contentX = stage.scrollLeft + cx;
             const contentY = stage.scrollTop  + cy;
             // Apply size change.
             stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-            // Accessing scrollWidth/scrollHeight forces a synchronous layout so the
-            // new dimensions are available immediately.  Direct assignment to
-            // scrollLeft/scrollTop bypasses scroll-behavior:smooth and is always instant,
-            // avoiding conflicts with queued smooth-scroll animations.
-            stage.scrollLeft = oldW > 0 ? (contentX / oldW) * stage.scrollWidth  - cx : stage.scrollLeft;
-            stage.scrollTop  = oldH > 0 ? (contentY / oldH) * stage.scrollHeight - cy : stage.scrollTop;
+            // Keep the content point that was under the cursor fixed on screen.
+            // Direct assignment bypasses scroll-behavior:smooth and is always instant.
+            stage.scrollLeft = contentX * scale - cx;
+            stage.scrollTop  = contentY * scale - cy;
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.visibility = _cv.scrollWidth === 100 ? 'hidden' : ''; }
     }
