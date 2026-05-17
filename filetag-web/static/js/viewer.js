@@ -339,53 +339,35 @@ function cvApplyScrollZoom(newSize, event) {
     const stage = document.getElementById('cv-stage');
     const btn   = document.getElementById('cv-zoom-reset-btn');
     if (_cv.scrollDir === 'h') {
-        // Capture the old zoom level before updating so we can compute the scale factor.
         const oldPct = _cv.scrollHeight;
         if (newSize !== undefined) {
             _cv.scrollHeight = Math.max(20, Math.min(300, newSize));
         }
         if (stage) {
-            // Scale factor derived from the CSS zoom level change.  Images maintain their
-            // aspect ratio, so both axes scale by the same factor.  This avoids reading
-            // stage.scrollWidth / stage.scrollHeight from the DOM (those can be unreliable
-            // immediately after a CSS custom-property change).
             const scale = _cv.scrollHeight / oldPct;
             const rect  = stage.getBoundingClientRect();
             const cx = event ? (event.clientX - rect.left) : rect.width  / 2;
             const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
-            // Read scroll position BEFORE the CSS change.
             const contentX = stage.scrollLeft + cx;
             const contentY = stage.scrollTop  + cy;
-            // Apply size change.
             stage.style.setProperty('--cv-scroll-height', `${_cv.scrollHeight}%`);
-            // Keep the content point that was under the cursor fixed on screen.
-            // Direct assignment bypasses scroll-behavior:smooth and is always instant.
-            stage.scrollLeft = contentX * scale - cx;
-            stage.scrollTop  = contentY * scale - cy;
+            stage.style.setProperty('--cv-scroll-gap', `${8 * _cv.scrollHeight / 100}px`);
+            stage.scrollTo({ left: 20 + scale * (contentX - 20) - cx, top: contentY * scale - cy, behavior: 'instant' });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollHeight) + '%'; btn.style.visibility = _cv.scrollHeight === 100 ? 'hidden' : ''; }
     } else {
-        // Capture the old zoom level before updating so we can compute the scale factor.
         const oldPct = _cv.scrollWidth;
         if (newSize !== undefined) _cv.scrollWidth = Math.max(20, Math.min(300, newSize));
         if (stage) {
-            // Scale factor derived from the CSS zoom level change.  Images maintain their
-            // aspect ratio, so both axes scale by the same factor.  This avoids reading
-            // stage.scrollWidth / stage.scrollHeight from the DOM (those can be unreliable
-            // immediately after a CSS custom-property change).
             const scale = _cv.scrollWidth / oldPct;
             const rect  = stage.getBoundingClientRect();
             const cx = event ? (event.clientX - rect.left) : rect.width  / 2;
             const cy = event ? (event.clientY - rect.top)  : rect.height / 2;
-            // Read scroll position BEFORE the CSS change.
             const contentX = stage.scrollLeft + cx;
             const contentY = stage.scrollTop  + cy;
-            // Apply size change.
             stage.style.setProperty('--cv-scroll-width', `${_cv.scrollWidth}%`);
-            // Keep the content point that was under the cursor fixed on screen.
-            // Direct assignment bypasses scroll-behavior:smooth and is always instant.
-            stage.scrollLeft = contentX * scale - cx;
-            stage.scrollTop  = contentY * scale - cy;
+            stage.style.setProperty('--cv-scroll-gap', `${8 * _cv.scrollWidth / 100}px`);
+            stage.scrollTo({ left: contentX * scale - cx, top: 12 + scale * (contentY - 12) - cy, behavior: 'instant' });
         }
         if (btn) { btn.textContent = Math.round(_cv.scrollWidth) + '%'; btn.style.visibility = _cv.scrollWidth === 100 ? 'hidden' : ''; }
     }
@@ -471,6 +453,7 @@ function cvExitScrollView() {
     stage.classList.remove('cv-hscroll-mode');
     stage.style.removeProperty('--cv-scroll-width');
     stage.style.removeProperty('--cv-scroll-height');
+    stage.style.removeProperty('--cv-scroll-gap');
     stage.style.cursor = '';
     const container = document.getElementById('cv-pages');
     container.style.transform = '';

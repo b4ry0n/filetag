@@ -73,6 +73,7 @@
 .cv-stage.cv-scroll-mode {
     overflow-y: auto;
     overflow-x: auto;
+    overflow-anchor: none;
     display: block;
     cursor: grab;
     scroll-behavior: smooth;
@@ -89,14 +90,14 @@
     width: var(--cv-scroll-width, 100%);
     margin-left: auto;
     margin-right: auto;
-    gap: 0;
+    gap: var(--cv-scroll-gap, 8px);
     padding: 12px 0 40px;
 }
 .cv-stage.cv-scroll-mode .cv-page {
     max-height: none;
     width: 100%;
     max-width: 100%;
-    margin: 0 auto 8px;
+    margin: 0 auto;
     display: block;
     background: #111;
     object-fit: contain;
@@ -106,7 +107,9 @@
 .cv-stage.cv-hscroll-mode {
     overflow-x: auto;
     overflow-y: auto;
+    overflow-anchor: none;
     justify-content: flex-start;
+    align-items: flex-start;
     cursor: default;
     scroll-behavior: smooth;
     scrollbar-width: thin;
@@ -115,14 +118,14 @@
 .cv-stage.cv-hscroll-mode .cv-pages {
     flex-direction: row;
     flex-wrap: nowrap;
-    align-items: center;
+    align-items: flex-start;
     justify-content: flex-start;
     max-width: none;
     max-height: none;
     width: max-content;
     height: 100%;
     transform: none !important;
-    gap: 8px;
+    gap: var(--cv-scroll-gap, 8px);
     padding: 0 20px;
 }
 .cv-stage.cv-hscroll-mode .cv-page {
