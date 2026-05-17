@@ -169,7 +169,11 @@ function showToast(msg, duration = 3000) {
     const container = document.getElementById('toast-container');
     const el = document.createElement('div');
     el.className = 'toast';
-    el.textContent = msg;
+    if (/<[a-z][\s\S]*>/i.test(msg)) {
+        el.innerHTML = msg;
+    } else {
+        el.textContent = msg;
+    }
     container.appendChild(el);
     if (duration > 0) {
         setTimeout(() => dismissToast(el), duration);
