@@ -3154,24 +3154,37 @@ function confirmDelete(rootId, relPath, isDir) {
 async function trashItem(rootId, relPath, isDir) {
     try {
         await apiPost('/api/trash/move', { root_id: rootId, rel_path: relPath });
-        // Clear selection if the trashed item was selected.
-        if (state.selectedFile && (state.selectedFile.path === relPath ||
-                state.selectedFile.path === relPath.split('/').pop())) {
-            state.selectedFile = null;
-        }
-        for (const p of state.selectedPaths) {
-            if (relPath.endsWith('/' + p) || p === relPath) { state.selectedPaths.delete(p); break; }
-        }
-        await loadFiles(state.currentPath);
-        render();
-        _ftreeRefresh(state.currentPath
-            ? state.currentBasePath + '/' + state.currentPath
-            : state.currentBasePath);
-        updateTrashBadge(rootId);
-        showToast('Moved to trash. <a href="#" onclick="openTrashPanel();return false;">View</a>', 5000);
     } catch (err) {
         alert('Could not move to trash: ' + err.message);
+        return;
     }
+
+    // Clear selection if the trashed item was selected.
+    if (state.selectedFile && (state.selectedFile.path === relPath ||
+            state.selectedFile.path === relPath.split('/').pop())) {
+        state.selectedFile = null;
+    }
+    for (const p of state.selectedPaths) {
+        if (relPath.endsWith('/' + p) || p === relPath) { state.selectedPaths.delete(p); break; }
+    }
+
+    // If the trashed directory is (or contains) the currently viewed directory,
+    // navigate to its parent so we don't try to list a now-deleted path.
+    const trashedAbs  = state.currentBasePath + (relPath ? '/' + relPath : '');
+    const currentAbs  = state.currentPath ? state.currentBasePath + '/' + state.currentPath : state.currentBasePath;
+    if (isDir && (currentAbs === trashedAbs || currentAbs.startsWith(trashedAbs + '/'))) {
+        const parentRel = relPath.includes('/') ? relPath.split('/').slice(0, -1).join('/') : '';
+        await navigateTo(parentRel);
+    } else {
+        await loadFiles(state.currentPath);
+        render();
+    }
+
+    _ftreeRefresh(state.currentPath
+        ? state.currentBasePath + '/' + state.currentPath
+        : state.currentBasePath);
+    updateTrashBadge(rootId);
+    showToast('Moved to trash. <a href="#" onclick="openTrashPanel();return false;">View</a>', 5000);
 }
 
 /** Open the trash panel for the current root. */
@@ -3231,17 +3244,33 @@ function renderTrashPanel(rootId, items) {
 }
 
 async function restoreTrashItem(rootId, trashId) {
+    let result;
     try {
-        await apiPost('/api/trash/restore', { root_id: rootId, trash_id: trashId });
-        await loadFiles(state.currentPath);
-        render();
-        _ftreeRefresh();
-        loadTrashItems(rootId);
-        updateTrashBadge(rootId);
-        showToast('Restored.');
+        result = await apiPost('/api/trash/restore', { root_id: rootId, trash_id: trashId });
     } catch (err) {
-        alert('Restore failed: ' + err.message);
+        if (err.message && err.message.startsWith('conflict:')) {
+            // Original location is occupied — offer to restore with a different name.
+            if (!confirm('The original location is already occupied.\n\nRestore with a different name instead?')) return;
+            try {
+                result = await apiPost('/api/trash/restore', {
+                    root_id: rootId, trash_id: trashId, rename_on_conflict: true,
+                });
+            } catch (err2) {
+                alert('Restore failed: ' + err2.message);
+                return;
+            }
+        } else {
+            alert('Restore failed: ' + err.message);
+            return;
+        }
     }
+    await loadFiles(state.currentPath);
+    render();
+    _ftreeRefresh();
+    loadTrashItems(rootId);
+    updateTrashBadge(rootId);
+    const label = (result && result.restored_name) ? `Restored as \u201c${result.restored_name}\u201d.` : 'Restored.';
+    showToast(label);
 }
 
 async function deleteTrashItem(rootId, trashId) {

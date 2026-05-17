@@ -801,6 +801,8 @@ pub struct TrashMoveRequest {
 pub struct TrashRestoreRequest {
     pub root_id: usize,
     pub trash_id: String,
+    /// When true, find an available name if the original location is already occupied.
+    pub rename_on_conflict: Option<bool>,
 }
 
 /// Body for `POST /api/trash/delete` (permanent delete from trash).

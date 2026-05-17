@@ -3383,6 +3383,26 @@ pub async fn api_trash_list(
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
+/// Find an available path by appending a counter suffix to the stem.
+/// E.g. `foo.jpg` → `foo (2).jpg`, `foo (3).jpg`, …
+fn find_available_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    let parent = path.parent().unwrap_or(std::path::Path::new(""));
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    for i in 2u32..=999 {
+        let name = if ext.is_empty() {
+            format!("{stem} ({i})")
+        } else {
+            format!("{stem} ({i}).{ext}")
+        };
+        let candidate = parent.join(&name);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("could not find an available name for '{}'", path.display())
+}
+
 /// POST /api/trash/restore — move an item from the trash back to its original path.
 pub async fn api_trash_restore(
     State(state): State<Arc<AppState>>,
@@ -3396,13 +3416,19 @@ pub async fn api_trash_restore(
     let tdir = trash_dir(root);
     let item = read_trash_item(&tdir, &body.trash_id).map_err(AppError)?;
 
-    let dest = root.root.join(&item.original_rel_path);
-    if dest.exists() {
-        return Err(AppError(anyhow::anyhow!(
-            "cannot restore '{}': something already exists at the original location",
-            item.original_name
-        )));
-    }
+    let original_dest = root.root.join(&item.original_rel_path);
+    let dest = if original_dest.exists() {
+        if body.rename_on_conflict.unwrap_or(false) {
+            find_available_path(&original_dest).map_err(AppError)?
+        } else {
+            return Err(AppError(anyhow::anyhow!(
+                "conflict: '{}' already exists at the original location",
+                item.original_name
+            )));
+        }
+    } else {
+        original_dest
+    };
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .context("creating parent directories")
@@ -3417,7 +3443,14 @@ pub async fn api_trash_restore(
     let _ = std::fs::remove_dir_all(tdir.join(&body.trash_id));
     let _ = std::fs::remove_file(tdir.join(format!("{}.json", body.trash_id)));
 
-    Ok(Json(serde_json::json!({ "ok": true })))
+    let restored_name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_owned();
+    Ok(Json(
+        serde_json::json!({ "ok": true, "restored_name": restored_name }),
+    ))
 }
 
 /// POST /api/trash/delete — permanently delete one item from the trash.
