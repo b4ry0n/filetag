@@ -178,6 +178,9 @@ function _ftRenderEntry(e, parentAbs, depth) {
                 ? `<div class="ft-loading" style="padding-left:${indent + 14}px">Loading\u2026</div>`
                 : '');
         const dirActiveCls = (currentAbsDir() === absPath) ? ' ft-active' : '';
+        const dirFtRoot = _ftFindRoot(absPath);
+        const dirRootId = dirFtRoot ? dirFtRoot.id : (state.currentRootId ?? 0);
+        const dirRelPath = _ftAbsToRootRel(absPath) || e.name;
         return `<div class="ft-dir">
             <div class="ft-row${dirActiveCls}" style="padding-left:${indent}px"
                 onclick="ftreeNavDir('${jesc(absPath)}')"
@@ -186,6 +189,7 @@ function _ftRenderEntry(e, parentAbs, depth) {
                 ondragover="ftreeDirDragOver(event,'${jesc(absPath)}')"
                 ondragleave="ftreeDirDragLeave(event)"
                 ondrop="ftreeDirDrop(event,'${jesc(absPath)}')"
+                oncontextmenu="showFileMenu(event,'${jesc(dirRelPath)}',true,${dirRootId})"
                 title="${esc(absPath)}">
                 <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
                     onclick="event.stopPropagation();ftreeToggleDir('${jesc(absPath)}')">
