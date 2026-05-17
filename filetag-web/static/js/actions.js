@@ -2702,9 +2702,8 @@ function showFileMenu(e, path, isDir, rootId) {
         <div class="tag-menu-header">${esc(name)}</div>
         <button class="tag-menu-action" onclick="closeFileMenu(); promptRename(${rootId},'${jesc(path)}',${isDir})">Rename\u2026</button>
         <button class="tag-menu-action" onclick="closeFileMenu(); promptMove(${rootId},'${jesc(path)}',${isDir})">Move to\u2026</button>
-        ${!isDir ? `<button class="tag-menu-action" onclick="closeFileMenu(); promptCopy(${rootId},'${jesc(path)}')">Copy\u2026</button>` : ''}
         <div class="tag-menu-divider"></div>
-        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); confirmDelete(${rootId},'${jesc(path)}',${isDir})">Delete\u2026</button>
+        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); trashItem(${rootId},'${jesc(path)}',${isDir})">Move to Trash</button>
     `;
     document.body.appendChild(menu);
 
@@ -3032,6 +3031,7 @@ function promptMove(rootId, relPath, isDir) {
             _closeDirPicker();
             await loadFiles(state.currentPath);
             render();
+            showToast('Moved.');
         } catch (err) {
             alert('Move failed: ' + err.message);
         }
@@ -3125,4 +3125,135 @@ function confirmDelete(rootId, relPath, isDir) {
             alert('Delete failed: ' + err.message);
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Trash
+// ---------------------------------------------------------------------------
+
+/** Move a file or directory to the trash (no confirmation needed). */
+async function trashItem(rootId, relPath, isDir) {
+    try {
+        await apiPost('/api/trash/move', { root_id: rootId, rel_path: relPath });
+        // Clear selection if the trashed item was selected.
+        if (state.selectedFile && (state.selectedFile.path === relPath ||
+                state.selectedFile.path === relPath.split('/').pop())) {
+            state.selectedFile = null;
+        }
+        for (const p of state.selectedPaths) {
+            if (relPath.endsWith('/' + p) || p === relPath) { state.selectedPaths.delete(p); break; }
+        }
+        await loadFiles(state.currentPath);
+        render();
+        updateTrashBadge(rootId);
+        showToast('Moved to trash. <a href="#" onclick="openTrashPanel();return false;">View</a>', 5000);
+    } catch (err) {
+        alert('Could not move to trash: ' + err.message);
+    }
+}
+
+/** Open the trash panel for the current root. */
+function openTrashPanel() {
+    const rootId = _currentRootId();
+    if (rootId == null) return;
+    document.getElementById('trash-panel').removeAttribute('hidden');
+    loadTrashItems(rootId);
+}
+
+function closeTrashPanel() {
+    document.getElementById('trash-panel').setAttribute('hidden', '');
+}
+
+function _currentRootId() {
+    const root = state.roots.find(r => r.path === state.currentBasePath) ||
+        (state.roots.length ? state.roots[0] : null);
+    return root ? root.id : null;
+}
+
+async function loadTrashItems(rootId) {
+    try {
+        const data = await api(`/api/trash?root_id=${rootId}`);
+        renderTrashPanel(rootId, data.items || []);
+    } catch (err) {
+        document.getElementById('trash-list').innerHTML =
+            `<div class="trash-empty-msg">Error loading trash: ${esc(err.message)}</div>`;
+    }
+}
+
+function renderTrashPanel(rootId, items) {
+    const list = document.getElementById('trash-list');
+    const emptyBtn = document.getElementById('trash-empty-btn');
+    emptyBtn.disabled = items.length === 0;
+
+    if (items.length === 0) {
+        list.innerHTML = '<div class="trash-empty-msg">Trash is empty.</div>';
+        return;
+    }
+
+    list.innerHTML = items.map(item => `
+        <div class="trash-item" data-id="${esc(item.trash_id)}">
+            <span class="trash-item-icon">${item.is_dir ? '📁' : '📄'}</span>
+            <div class="trash-item-info">
+                <div class="trash-item-name" title="${esc(item.original_rel_path)}">${esc(item.original_name)}</div>
+                <div class="trash-item-path">${esc(item.original_rel_path)}</div>
+                <div class="trash-item-date">${esc(item.trashed_at.replace('T', ' ').replace('Z', ' UTC'))}</div>
+            </div>
+            <div class="trash-item-actions">
+                <button class="trash-btn restore" title="Restore"
+                    onclick="restoreTrashItem(${rootId},'${esc(item.trash_id)}')">↩ Restore</button>
+                <button class="trash-btn delete" title="Delete permanently"
+                    onclick="deleteTrashItem(${rootId},'${esc(item.trash_id)}')">✕</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function restoreTrashItem(rootId, trashId) {
+    try {
+        await apiPost('/api/trash/restore', { root_id: rootId, trash_id: trashId });
+        await loadFiles(state.currentPath);
+        render();
+        loadTrashItems(rootId);
+        updateTrashBadge(rootId);
+        showToast('Restored.');
+    } catch (err) {
+        alert('Restore failed: ' + err.message);
+    }
+}
+
+async function deleteTrashItem(rootId, trashId) {
+    if (!confirm('Permanently delete this item? This cannot be undone.')) return;
+    try {
+        await apiPost('/api/trash/delete', { root_id: rootId, trash_id: trashId });
+        loadTrashItems(rootId);
+        updateTrashBadge(rootId);
+    } catch (err) {
+        alert('Delete failed: ' + err.message);
+    }
+}
+
+async function emptyTrash(rootId) {
+    if (rootId == null) rootId = _currentRootId();
+    if (rootId == null) return;
+    if (!confirm('Permanently delete everything in the trash? This cannot be undone.')) return;
+    try {
+        const res = await apiPost('/api/trash/empty', { root_id: rootId });
+        loadTrashItems(rootId);
+        updateTrashBadge(rootId);
+        showToast(`Trash emptied (${res.deleted || 0} item${res.deleted === 1 ? '' : 's'} deleted).`);
+    } catch (err) {
+        alert('Could not empty trash: ' + err.message);
+    }
+}
+
+async function updateTrashBadge(rootId) {
+    try {
+        const data = await api(`/api/trash?root_id=${rootId}`);
+        const count = (data.items || []).length;
+        const badge = document.getElementById('trash-badge');
+        if (badge) {
+            badge.textContent = count > 0 ? count : '';
+            badge.style.display = count > 0 ? '' : 'none';
+        }
+    } catch (_) {}
 }

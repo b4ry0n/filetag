@@ -784,3 +784,44 @@ pub struct FaceConfigRequest {
     /// Index into the roots list returned by `GET /api/roots`.
     pub root_id: Option<usize>,
 }
+
+// ---------------------------------------------------------------------------
+// Trash
+// ---------------------------------------------------------------------------
+
+/// Body for `POST /api/trash/move`.
+#[derive(Deserialize)]
+pub struct TrashMoveRequest {
+    pub root_id: Option<usize>,
+    pub rel_path: Option<String>,
+}
+
+/// Body for `POST /api/trash/restore`.
+#[derive(Deserialize)]
+pub struct TrashRestoreRequest {
+    pub root_id: usize,
+    pub trash_id: String,
+}
+
+/// Body for `POST /api/trash/delete` (permanent delete from trash).
+#[derive(Deserialize)]
+pub struct TrashDeleteRequest {
+    pub root_id: usize,
+    pub trash_id: String,
+}
+
+/// Body for `POST /api/trash/empty`.
+#[derive(Deserialize)]
+pub struct TrashEmptyRequest {
+    pub root_id: usize,
+}
+
+/// One item listed in the trash.
+#[derive(serde::Serialize, Deserialize, Clone)]
+pub struct TrashItem {
+    pub trash_id: String,
+    pub original_rel_path: String,
+    pub original_name: String,
+    pub trashed_at: String,
+    pub is_dir: bool,
+}

@@ -3171,3 +3171,327 @@ pub async fn api_fs_copy(
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+// ---------------------------------------------------------------------------
+// Trash
+// ---------------------------------------------------------------------------
+
+/// Helper: path to the trash directory for a given root.
+fn trash_dir(root: &filetag_lib::db::TagRoot) -> PathBuf {
+    root.root.join(".filetag").join("trash")
+}
+
+/// Generate a unique trash ID using timestamp + random bytes.
+fn new_trash_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::rngs::ThreadRng::default();
+    let mut bytes = [0u8; 8];
+    rng.fill_bytes(&mut bytes);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("{:013x}{:016x}", ts, u64::from_le_bytes(bytes))
+}
+
+/// Generate an ISO-8601 UTC timestamp string (without chrono dependency).
+fn utc_now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Format as YYYY-MM-DDTHH:MM:SSZ using manual calculation.
+    let s = secs;
+    let (y, mo, d, h, mi, sec) = {
+        let mut days = s / 86400;
+        let time = s % 86400;
+        let h = time / 3600;
+        let mi = (time % 3600) / 60;
+        let sec = time % 60;
+        // Gregorian calendar calculation from Unix epoch (1970-01-01).
+        let mut y = 1970u64;
+        loop {
+            let leap = y.is_multiple_of(4) && !y.is_multiple_of(100) || y.is_multiple_of(400);
+            let dy = if leap { 366 } else { 365 };
+            if days < dy {
+                break;
+            }
+            days -= dy;
+            y += 1;
+        }
+        let leap = y.is_multiple_of(4) && !y.is_multiple_of(100) || y.is_multiple_of(400);
+        let months = [
+            31u64,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
+        let mut mo = 1u64;
+        for &dm in &months {
+            if days < dm {
+                break;
+            }
+            days -= dm;
+            mo += 1;
+        }
+        (y, mo, days + 1, h, mi, sec)
+    };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{sec:02}Z")
+}
+
+/// Write metadata JSON for a trash entry.
+fn write_trash_meta(
+    tdir: &Path,
+    trash_id: &str,
+    original_rel_path: &str,
+    original_name: &str,
+    is_dir: bool,
+) -> anyhow::Result<()> {
+    let meta = serde_json::json!({
+        "original_rel_path": original_rel_path,
+        "original_name":     original_name,
+        "trashed_at":        utc_now_iso(),
+        "is_dir":            is_dir,
+    });
+    let meta_path = tdir.join(format!("{trash_id}.json"));
+    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)
+        .context("writing trash metadata")?;
+    Ok(())
+}
+
+/// Read a `TrashItem` from a `<id>.json` file in the trash directory.
+fn read_trash_item(tdir: &Path, trash_id: &str) -> anyhow::Result<TrashItem> {
+    let meta_path = tdir.join(format!("{trash_id}.json"));
+    let raw = std::fs::read_to_string(&meta_path).context("reading trash metadata")?;
+    let v: serde_json::Value = serde_json::from_str(&raw)?;
+    Ok(TrashItem {
+        trash_id: trash_id.to_owned(),
+        original_rel_path: v["original_rel_path"].as_str().unwrap_or("").to_owned(),
+        original_name: v["original_name"].as_str().unwrap_or("").to_owned(),
+        trashed_at: v["trashed_at"].as_str().unwrap_or("").to_owned(),
+        is_dir: v["is_dir"].as_bool().unwrap_or(false),
+    })
+}
+
+/// POST /api/trash/move — move a file or directory to the trash.
+pub async fn api_trash_move(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TrashMoveRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let abs_path = resolve_fs_path(&state, body.root_id, body.rel_path.as_deref(), None)?;
+    if !abs_path.exists() {
+        return Err(AppError(anyhow::anyhow!("path does not exist")));
+    }
+
+    let root = root_for_dir(&state, &abs_path).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "path is not within any known database root"
+        ))
+    })?;
+
+    let rel = db::relative_to_root(&abs_path, &root.root).map_err(AppError)?;
+    if rel == ".filetag" || rel.starts_with(".filetag/") {
+        return Err(AppError(anyhow::anyhow!("cannot trash .filetag directory")));
+    }
+
+    // Refuse to trash a directory that contains a nested database root.
+    if abs_path.is_dir() {
+        for e in walkdir::WalkDir::new(&abs_path)
+            .min_depth(1)
+            .max_depth(10)
+            .into_iter()
+            .flatten()
+        {
+            if e.file_name() == ".filetag" && e.path().is_dir() {
+                return Err(AppError(anyhow::anyhow!(
+                    "Cannot trash a directory that contains a nested \
+                     .filetag database ({}). Trash that database root separately.",
+                    e.path().display()
+                )));
+            }
+        }
+    }
+
+    let name = abs_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_owned();
+
+    let tdir = trash_dir(root);
+    let id = new_trash_id();
+    let slot = tdir.join(&id);
+
+    std::fs::create_dir_all(&slot)
+        .context("creating trash slot")
+        .map_err(AppError)?;
+
+    let dest = slot.join(&name);
+    std::fs::rename(&abs_path, &dest)
+        .context("moving to trash")
+        .map_err(AppError)?;
+
+    let is_dir = dest.is_dir();
+    write_trash_meta(&tdir, &id, &rel, &name, is_dir).map_err(AppError)?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "trash_id": id })))
+}
+
+/// GET /api/trash?root_id=N — list all items in the trash for a root.
+pub async fn api_trash_list(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let root_id: usize = params
+        .get("root_id")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| AppError(anyhow::anyhow!("root_id required")))?;
+    let root = state
+        .roots
+        .get(root_id)
+        .ok_or_else(|| AppError(anyhow::anyhow!("invalid root_id")))?;
+
+    let tdir = trash_dir(root);
+    let mut items: Vec<TrashItem> = Vec::new();
+
+    if tdir.exists() {
+        let rd = std::fs::read_dir(&tdir)
+            .context("reading trash")
+            .map_err(AppError)?;
+        for entry in rd.flatten() {
+            let fname = entry.file_name();
+            let s = fname.to_string_lossy();
+            if s.ends_with(".json") {
+                let id = s.trim_end_matches(".json").to_owned();
+                if let Ok(item) = read_trash_item(&tdir, &id) {
+                    items.push(item);
+                }
+            }
+        }
+    }
+
+    items.sort_by(|a, b| b.trashed_at.cmp(&a.trashed_at));
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+/// POST /api/trash/restore — move an item from the trash back to its original path.
+pub async fn api_trash_restore(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TrashRestoreRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let root = state
+        .roots
+        .get(body.root_id)
+        .ok_or_else(|| AppError(anyhow::anyhow!("invalid root_id")))?;
+
+    let tdir = trash_dir(root);
+    let item = read_trash_item(&tdir, &body.trash_id).map_err(AppError)?;
+
+    let dest = root.root.join(&item.original_rel_path);
+    if dest.exists() {
+        return Err(AppError(anyhow::anyhow!(
+            "cannot restore '{}': something already exists at the original location",
+            item.original_name
+        )));
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .context("creating parent directories")
+            .map_err(AppError)?;
+    }
+
+    let src = tdir.join(&body.trash_id).join(&item.original_name);
+    std::fs::rename(&src, &dest)
+        .context("restoring from trash")
+        .map_err(AppError)?;
+
+    let _ = std::fs::remove_dir_all(tdir.join(&body.trash_id));
+    let _ = std::fs::remove_file(tdir.join(format!("{}.json", body.trash_id)));
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/trash/delete — permanently delete one item from the trash.
+pub async fn api_trash_delete(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TrashDeleteRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let root = state
+        .roots
+        .get(body.root_id)
+        .ok_or_else(|| AppError(anyhow::anyhow!("invalid root_id")))?;
+
+    let tdir = trash_dir(root);
+    let item = read_trash_item(&tdir, &body.trash_id).map_err(AppError)?;
+
+    let slot = tdir.join(&body.trash_id);
+    if slot.exists() {
+        std::fs::remove_dir_all(&slot)
+            .context("removing trash slot")
+            .map_err(AppError)?;
+    }
+    let _ = std::fs::remove_file(tdir.join(format!("{}.json", body.trash_id)));
+
+    if let Ok((conn, _)) = db::find_and_open_fast(&root.root) {
+        if item.is_dir {
+            let _ = db::delete_dir_paths(&conn, &item.original_rel_path);
+        } else {
+            let _ = db::delete_file_by_path(&conn, &item.original_rel_path);
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/trash/empty — permanently delete all items from the trash for a root.
+pub async fn api_trash_empty(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TrashEmptyRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let root = state
+        .roots
+        .get(body.root_id)
+        .ok_or_else(|| AppError(anyhow::anyhow!("invalid root_id")))?;
+
+    let tdir = trash_dir(root);
+    if !tdir.exists() {
+        return Ok(Json(serde_json::json!({ "ok": true, "deleted": 0 })));
+    }
+
+    let mut deleted = 0usize;
+    if let Ok(rd) = std::fs::read_dir(&tdir) {
+        let conn_res = db::find_and_open_fast(&root.root);
+        for entry in rd.flatten() {
+            let fname = entry.file_name();
+            let s = fname.to_string_lossy();
+            if s.ends_with(".json") {
+                let id = s.trim_end_matches(".json").to_owned();
+                if let Ok(item) = read_trash_item(&tdir, &id) {
+                    if let Ok((ref conn, _)) = conn_res {
+                        if item.is_dir {
+                            let _ = db::delete_dir_paths(conn, &item.original_rel_path);
+                        } else {
+                            let _ = db::delete_file_by_path(conn, &item.original_rel_path);
+                        }
+                    }
+                    deleted += 1;
+                }
+            }
+        }
+    }
+
+    std::fs::remove_dir_all(&tdir)
+        .context("emptying trash")
+        .map_err(AppError)?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
+}

@@ -2276,3 +2276,69 @@ mark.tag-filter-match {
     outline-offset: -2px;
     border-radius: 4px;
 }
+
+/* -------------------------------------------------------------------------
+   Trash panel
+   ------------------------------------------------------------------------- */
+.trash-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.trash-item:last-child { border-bottom: none; }
+.trash-item-icon { font-size: 1.4rem; line-height: 1.2; flex-shrink: 0; }
+.trash-item-info { flex: 1; min-width: 0; }
+.trash-item-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.trash-item-path {
+    font-size: 0.78rem;
+    color: var(--text-secondary, #888);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.trash-item-date {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #888);
+}
+.trash-item-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.trash-btn {
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+.trash-btn.restore {
+    background: var(--primary, #4a90e2);
+    color: #fff;
+}
+.trash-btn.restore:hover { opacity: 0.85; }
+.trash-btn.delete {
+    background: transparent;
+    color: var(--danger, #e53e3e);
+    border: 1px solid var(--danger, #e53e3e);
+}
+.trash-btn.delete:hover {
+    background: var(--danger, #e53e3e);
+    color: #fff;
+}
+.trash-empty-msg {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-secondary, #888);
+    font-size: 0.9rem;
+}
