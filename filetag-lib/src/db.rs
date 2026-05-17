@@ -2369,11 +2369,7 @@ pub fn rename_file_path(conn: &Connection, old_rel: &str, new_rel: &str) -> Resu
 /// Update all file records whose path begins with `old_dir_rel/` to the
 /// equivalent path under `new_dir_rel`.  Used when a directory is renamed or
 /// moved within the same database root.  Returns the number of updated rows.
-pub fn rename_dir_paths(
-    conn: &Connection,
-    old_dir_rel: &str,
-    new_dir_rel: &str,
-) -> Result<usize> {
+pub fn rename_dir_paths(conn: &Connection, old_dir_rel: &str, new_dir_rel: &str) -> Result<usize> {
     let old_prefix = format!("{}/", old_dir_rel);
     let new_prefix = format!("{}/", new_dir_rel);
     // Use SUBSTR equality instead of LIKE to avoid special-character issues.

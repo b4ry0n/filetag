@@ -2738,8 +2738,11 @@ pub async fn api_fs_rename(
     }
 
     // Ensure the path is inside a known root.
-    root_for_dir(&state, &abs_path)
-        .ok_or_else(|| AppError(anyhow::anyhow!("path is not within any known database root")))?;
+    root_for_dir(&state, &abs_path).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "path is not within any known database root"
+        ))
+    })?;
 
     let is_dir = abs_path.is_dir();
     let parent = abs_path
@@ -2750,7 +2753,9 @@ pub async fn api_fs_rename(
     let (conn, eff_root) = db::find_and_open_fast(parent).map_err(AppError)?;
     let old_rel = db::relative_to_root(&abs_path, &eff_root).map_err(AppError)?;
     if old_rel == ".filetag" || old_rel.starts_with(".filetag/") {
-        return Err(AppError(anyhow::anyhow!("cannot operate on .filetag directory")));
+        return Err(AppError(anyhow::anyhow!(
+            "cannot operate on .filetag directory"
+        )));
     }
 
     let new_abs = parent.join(&body.new_name);
@@ -2796,8 +2801,11 @@ pub async fn api_fs_move(
     }
 
     // Both must be within the same root.
-    let tr_src = root_for_dir(&state, &abs_src)
-        .ok_or_else(|| AppError(anyhow::anyhow!("source is not within any known database root")))?;
+    let tr_src = root_for_dir(&state, &abs_src).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "source is not within any known database root"
+        ))
+    })?;
     let tr_dest = root_for_dir(&state, &dest_dir).ok_or_else(|| {
         AppError(anyhow::anyhow!(
             "destination is not within any known database root"
@@ -2838,7 +2846,9 @@ pub async fn api_fs_move(
     let (src_conn, src_eff_root) = db::find_and_open_fast(src_parent).map_err(AppError)?;
     let old_rel = db::relative_to_root(&abs_src, &src_eff_root).map_err(AppError)?;
     if old_rel == ".filetag" || old_rel.starts_with(".filetag/") {
-        return Err(AppError(anyhow::anyhow!("cannot operate on .filetag directory")));
+        return Err(AppError(anyhow::anyhow!(
+            "cannot operate on .filetag directory"
+        )));
     }
 
     let (dest_conn, dest_eff_root) = db::find_and_open_fast(&dest_dir).map_err(AppError)?;
@@ -2884,8 +2894,11 @@ pub async fn api_fs_delete(
     }
 
     // Ensure the path is inside a known root.
-    root_for_dir(&state, &abs_path)
-        .ok_or_else(|| AppError(anyhow::anyhow!("path is not within any known database root")))?;
+    root_for_dir(&state, &abs_path).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "path is not within any known database root"
+        ))
+    })?;
 
     let parent = abs_path
         .parent()
@@ -2893,7 +2906,9 @@ pub async fn api_fs_delete(
     let (conn, eff_root) = db::find_and_open_fast(parent).map_err(AppError)?;
     let rel = db::relative_to_root(&abs_path, &eff_root).map_err(AppError)?;
     if rel == ".filetag" || rel.starts_with(".filetag/") {
-        return Err(AppError(anyhow::anyhow!("cannot delete .filetag directory")));
+        return Err(AppError(anyhow::anyhow!(
+            "cannot delete .filetag directory"
+        )));
     }
 
     let is_dir = abs_path.is_dir();
@@ -2925,8 +2940,11 @@ pub async fn api_fs_copy(
     let src_parent = abs_src
         .parent()
         .ok_or_else(|| AppError(anyhow::anyhow!("source has no parent")))?;
-    let tr_src = root_for_dir(&state, &abs_src)
-        .ok_or_else(|| AppError(anyhow::anyhow!("source is not within any known database root")))?;
+    let tr_src = root_for_dir(&state, &abs_src).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "source is not within any known database root"
+        ))
+    })?;
     let tr_src_root = tr_src.root.clone();
 
     let dest_dir_path = body
@@ -2935,7 +2953,9 @@ pub async fn api_fs_copy(
         .map(PathBuf::from)
         .unwrap_or_else(|| src_parent.to_path_buf());
     if !dest_dir_path.is_dir() {
-        return Err(AppError(anyhow::anyhow!("destination directory does not exist")));
+        return Err(AppError(anyhow::anyhow!(
+            "destination directory does not exist"
+        )));
     }
 
     // Destination must be within the same root.
@@ -2982,20 +3002,20 @@ pub async fn api_fs_copy(
     // Copy tags from source to the new file.
     let (conn, eff_root) = db::find_and_open_fast(src_parent).map_err(AppError)?;
     let src_rel = db::relative_to_root(&abs_src, &eff_root).map_err(AppError)?;
-    let canon_dest_dir = dest_dir_path.canonicalize().map_err(|e| AppError(e.into()))?;
+    let canon_dest_dir = dest_dir_path
+        .canonicalize()
+        .map_err(|e| AppError(e.into()))?;
     let dest_rel = rel_under_root(&canon_dest_dir, &dest_name, &eff_root);
 
-    if let Ok(Some(src_file_id)) = db::file_id_by_path(&conn, &src_rel) {
-        if let Ok(tags) = db::tags_for_file(&conn, src_file_id) {
-            if !tags.is_empty() {
-                let _ = db::get_or_index_file(&conn, &dest_rel, &eff_root);
-                if let Ok(Some(dest_file_id)) = db::file_id_by_path(&conn, &dest_rel) {
-                    for (tag_name, value) in tags {
-                        if let Ok(tag_id) = db::get_or_create_tag(&conn, &tag_name) {
-                            let _ =
-                                db::apply_tag(&conn, dest_file_id, tag_id, value.as_deref(), None);
-                        }
-                    }
+    if let Ok(Some(src_file_id)) = db::file_id_by_path(&conn, &src_rel)
+        && let Ok(tags) = db::tags_for_file(&conn, src_file_id)
+        && !tags.is_empty()
+    {
+        let _ = db::get_or_index_file(&conn, &dest_rel, &eff_root);
+        if let Ok(Some(dest_file_id)) = db::file_id_by_path(&conn, &dest_rel) {
+            for (tag_name, value) in tags {
+                if let Ok(tag_id) = db::get_or_create_tag(&conn, &tag_name) {
+                    let _ = db::apply_tag(&conn, dest_file_id, tag_id, value.as_deref(), None);
                 }
             }
         }
