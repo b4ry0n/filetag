@@ -417,10 +417,7 @@ window.ftreeDirDrop = async function (event, absPath) {
     event.currentTarget.classList.remove('ft-drop-target');
 
     const pathsJson = event.dataTransfer.getData('text/filetag-paths');
-    if (!pathsJson) {
-        console.warn('[ftreeDirDrop] no text/filetag-paths in drag event — drop ignored');
-        return;
-    }
+    if (!pathsJson) return;
 
     let paths;
     try { paths = JSON.parse(pathsJson); } catch (_) { return; }
@@ -436,7 +433,6 @@ window.ftreeDirDrop = async function (event, absPath) {
     const destRelDir = destRoot ? absPath.slice(destRoot.path.length).replace(/^\//, '') : null;
 
     if (!destRoot) {
-        console.error('[ftreeDirDrop] destRoot not found for absPath:', absPath, '— state.roots:', state.roots?.map(r => r.path));
         showToast('Cannot move: destination directory is not in a known database root.');
         return;
     }
@@ -451,7 +447,6 @@ window.ftreeDirDrop = async function (event, absPath) {
                 dest_root_id: destRoot.id,
                 dest_rel_dir: destRelDir,
             };
-            console.debug('[ftreeDirDrop] moving', body, '→', absPath);
             await apiPost('/api/fs/move', body);
         } catch (err) {
             errors++;
