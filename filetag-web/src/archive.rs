@@ -853,7 +853,13 @@ pub async fn api_zip_thumb(
         let small = {
             let bytes = img_bytes.clone();
             tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+                let orient = if bytes.starts_with(&[0xFF, 0xD8]) {
+                    crate::preview::jpeg_exif_orientation(&bytes)
+                } else {
+                    1
+                };
                 let img = image::load_from_memory(&bytes).ok()?;
+                let img = crate::preview::apply_exif_orientation(img, orient);
                 let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
                 crate::preview::encode_lossy_webp_pub(&img, 80.0)
             })

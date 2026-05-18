@@ -690,7 +690,7 @@ pub async fn preview_heic(path: &Path, root: &Path, features: Features) -> Respo
 
 /// Read the EXIF Orientation tag from raw JPEG bytes.
 /// Returns the orientation value (1–8), or 1 (normal) if absent or unreadable.
-fn jpeg_exif_orientation(data: &[u8]) -> u8 {
+pub fn jpeg_exif_orientation(data: &[u8]) -> u8 {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return 1;
     }
@@ -768,7 +768,7 @@ fn parse_tiff_orientation(tiff: &[u8]) -> u8 {
 
 /// Rotate/flip a `DynamicImage` to match its EXIF orientation tag so that the
 /// resulting image is always in "normal" (orientation 1) display order.
-fn apply_exif_orientation(img: image::DynamicImage, orient: u8) -> image::DynamicImage {
+pub fn apply_exif_orientation(img: image::DynamicImage, orient: u8) -> image::DynamicImage {
     match orient {
         2 => img.fliph(),
         3 => img.rotate180(),
@@ -1683,9 +1683,15 @@ fn build_cover_frame_rust(cover: &Path, output: &Path) -> bool {
     let Ok(data) = std::fs::read(cover) else {
         return false;
     };
+    let orient = if data.starts_with(&[0xFF, 0xD8]) {
+        jpeg_exif_orientation(&data)
+    } else {
+        1
+    };
     let Ok(img) = image::load_from_memory(&data) else {
         return false;
     };
+    let img = apply_exif_orientation(img, orient);
 
     const CANVAS: u32 = 240;
 
@@ -1773,8 +1779,15 @@ async fn dir_item_jpeg(
                 .flatten()?;
         // Resize the cover: square-crop for "crop" style, fit-in-box for
         // "fit"/"scattered" styles so the collage builder can preserve the
-        // aspect ratio.
+        // aspect ratio.  Apply EXIF orientation first — archive covers (JPEG
+        // photos stored inside CBZ/ZIP) often carry a rotation tag.
+        let orient = if bytes.starts_with(&[0xFF, 0xD8]) {
+            jpeg_exif_orientation(&bytes)
+        } else {
+            1
+        };
         let img = image::load_from_memory(&bytes).ok()?;
+        let img = apply_exif_orientation(img, orient);
         let thumb = if preserve_aspect {
             img.resize(240, 240, image::imageops::FilterType::Lanczos3)
         } else {
