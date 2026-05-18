@@ -520,6 +520,9 @@ pub async fn api_cache_clear_subdir(
         "hls2",
         "video",
         "dir-thumbs",
+        "zip-pages",
+        "vtiles",
+        "tiff-preview",
     ];
     if !ALLOWED_SUBDIRS.contains(&body.subdir.as_str()) {
         return Err(AppError(anyhow::anyhow!(

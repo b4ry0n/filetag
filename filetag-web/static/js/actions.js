@@ -2234,6 +2234,9 @@ async function loadCacheInfo() {
             ai_sprites: {en:'AI sprites',           nl:'AI-sprites',          de:'KI-Sprites',         fr:'Sprites IA',          es:'Sprites de IA',          it:'Sprite IA',          pt:'Sprites de IA',          pl:"Sprite'y AI",        sv:'AI-spritar'},
             hls2:       {en:'HLS video files',      nl:'HLS-videobestanden',  de:'HLS-Videodateien',   fr:'Fichiers HLS',        es:'Archivos HLS',           it:'File HLS',           pt:'Ficheiros HLS',          pl:'Pliki HLS',          sv:'HLS-filer'},
             video:      {en:'Video transcodes',     nl:'Video-transcodes',    de:'Transkodierungen',   fr:'Transcodages',        es:'Transcodificaciones',    it:'Transcodifiche',     pt:'Transcodificações',      pl:'Transkodowania',     sv:'Transkodningar'},
+            'zip-pages':{en:'Archive pages',        nl:'Archiefpagina\'s',   de:'Archivseiten',       fr:'Pages d\'archive',   es:'Páginas de archivo',     it:'Pagine archivio',    pt:'Páginas de arquivo',     pl:'Strony archiwum',    sv:'Arkivsidor'},
+            'vtiles':   {en:'Video tiles',           nl:'Videotegels',         de:'Videokacheln',       fr:'Tuiles vidéo',      es:'Mosaicos de vídeo',      it:'Tile video',         pt:'Mosaicos de vídeo',      pl:'Kafle wideo',        sv:'Videobrickor'},
+            'tiff-preview':{en:'TIFF previews',      nl:'TIFF-voorbeelden',    de:'TIFF-Vorschauen',    fr:'Aperçus TIFF',      es:'Vistas previas TIFF',    it:'Anteprime TIFF',     pt:'Pré-visualizações TIFF',  pl:'Podglądy TIFF',   sv:'TIFF-förhandsvisningar'},
         };
         function cacheDirLabel(name) {
             const map = CACHE_DIR_LABELS_BY_LANG[name];
