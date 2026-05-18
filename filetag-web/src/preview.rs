@@ -848,8 +848,12 @@ pub async fn image_thumb_jpeg(path: &Path, features: Features) -> Option<Vec<u8>
         && let Some(jpeg) = heic_extract_jpeg_thumbnail(&raw)
     {
         // Resize the extracted thumbnail to the standard thumb size.
+        // Apply EXIF orientation: iPhone HEIC files store the embedded JPEG in
+        // sensor orientation; the orientation tag must be honoured explicitly.
         let resized = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+            let orient = jpeg_exif_orientation(&jpeg);
             let img = image::load_from_memory(&jpeg).ok()?;
+            let img = apply_exif_orientation(img, orient);
             let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
             encode_lossy_webp(&img, 80.0)
         })
@@ -1456,7 +1460,15 @@ async fn thumb_from_raw_bytes(
 ) -> Option<Vec<u8>> {
     let raw_bytes = raw_bytes.to_vec();
     tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        // Honour EXIF orientation for JPEG-encoded bytes (archive covers, RAW
+        // fallback previews, etc.) so portrait photos are not rendered sideways.
+        let orient = if raw_bytes.starts_with(&[0xFF, 0xD8]) {
+            jpeg_exif_orientation(&raw_bytes)
+        } else {
+            1
+        };
         let img = image::load_from_memory(&raw_bytes).ok()?;
+        let img = apply_exif_orientation(img, orient);
         let img = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
         encode_lossy_webp(&img, 80.0)
     })
