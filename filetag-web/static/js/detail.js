@@ -2232,9 +2232,9 @@ function renderDetail() {
         // Entry inside a zip archive
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index, dir: _previewDir, priority: 'high' });
+            const pageUrl = '/api/zip/page?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index, dir: _previewDir });
             preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
-                      `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
+                      `<img src="${pageUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
             // Entries not loaded yet (e.g. selected from search results);
             // show placeholder and async-fetch entries to render the real preview.
@@ -2405,13 +2405,13 @@ function renderDetail() {
                 const entry = (data.entries || []).find(e => e.name === _zipEntryName);
                 const placeholder = document.getElementById('zip-entry-preview-placeholder');
                 if (!placeholder || !entry || !entry.is_image || entry.image_index === null) return;
-                const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: _zipPath, page: entry.image_index, dir: _previewDir, priority: 'high' });
+                const pageUrl = '/api/zip/page?' + new URLSearchParams({ path: _zipPath, page: entry.image_index, dir: _previewDir });
                 const anchor = document.createElement('a');
                 anchor.className = 'preview-zoomable';
                 anchor.title = 'Click to open in viewer';
                 anchor.onclick = () => openMediaViewer(_zipPath, entry.image_index);
                 const imgEl = document.createElement('img');
-                imgEl.src = thumbUrl;
+                imgEl.src = pageUrl;
                 imgEl.alt = _entryName;
                 imgEl.onerror = function() { _cardThumbError(this); };
                 anchor.appendChild(imgEl);
