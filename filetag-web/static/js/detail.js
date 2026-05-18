@@ -1488,6 +1488,9 @@ const _thumbCache    = new Map();    // thumb URL → blob URL  (null = permanen
 const _thumbSalient  = new Map();    // blob URL → {cx, cy} — populated from X-Salient-* headers
 // _thumbActive: Map<Element, {score: number, ctrl: AbortController}>
 const _thumbActive   = new Map();    // regular-thumb elements currently in flight
+// Timestamp (performance.now()) until which _thumbRun reserves one connection
+// slot for the detail-panel preview after _thumbPreemptForDetail() fires.
+let   _thumbPreemptUntil = 0;
 
 const _dirThumbQueue  = [];          // ordered: visible-first, then by proximity
 const _dirThumbActive = new Set();   // dir-thumb elements currently being fetched
@@ -1731,13 +1734,14 @@ function _dirPreviewReplace(el, blobUrl) {
 /** Fill free slots in the regular-thumb parallel pool from _thumbQueue.
  *
  *  The queue is kept sorted descending by score so the highest-priority tile
- *  is always dequeued first.  No automatic preemption of active fetches;
- *  use _thumbPreemptForDetail() to interrupt the lowest-scoring active fetch
- *  when the detail panel needs immediate access to a server semaphore slot.
+ *  is always dequeued first.  During the 500 ms preemption window after
+ *  _thumbPreemptForDetail() fires, one connection slot is kept free so the
+ *  browser can assign it to the detail-panel preview request.
  */
 function _thumbRun() {
     _thumbFlush();
-    while (_thumbActive.size < THUMB_CONCURRENCY && _thumbQueue.length > 0) {
+    const limit = performance.now() < _thumbPreemptUntil ? THUMB_CONCURRENCY - 1 : THUMB_CONCURRENCY;
+    while (_thumbActive.size < limit && _thumbQueue.length > 0) {
         const item = _thumbQueue.shift();
         const { el, score } = item;
         if (!el.isConnected || !el.dataset.thumbSrc || _thumbActive.has(el)) continue;
@@ -1751,24 +1755,30 @@ function _thumbRun() {
 }
 
 /**
- * Abort the single lowest-scoring active thumbnail fetch to free an HTTP
- * connection slot for a high-priority detail-panel request.
+ * Free one HTTP connection slot for the detail-panel preview request.
  *
- * Called by renderDetail() when a file is selected.  The aborted fetch is
- * re-queued automatically by _thumbFetchOne's AbortError handler so it
- * will be retried once the detail-panel image has loaded.
+ * Aborts the lowest-scoring active tile fetch and reserves the freed slot
+ * for 500 ms by capping _thumbRun at THUMB_CONCURRENCY-1.  This prevents
+ * the finally() callback from immediately refilling the slot with a new tile
+ * fetch before the browser can assign it to the detail-panel image.
+ *
+ * Called by renderDetail() just before panel.innerHTML is set.
  */
 function _thumbPreemptForDetail() {
-    if (_thumbActive.size === 0) return;
-    let worstEl = null, worstScore = Infinity;
-    for (const [el, data] of _thumbActive) {
-        if (data.score < worstScore) { worstScore = data.score; worstEl = el; }
+    // Abort the worst active tile fetch (if any) to free its connection.
+    if (_thumbActive.size > 0) {
+        let worstEl = null, worstScore = Infinity;
+        for (const [el, data] of _thumbActive) {
+            if (data.score < worstScore) { worstScore = data.score; worstEl = el; }
+        }
+        if (worstEl !== null) {
+            _thumbActive.get(worstEl).ctrl.abort();
+            _thumbActive.delete(worstEl);
+            // _thumbFetchOne re-queues worstEl on AbortError.
+        }
     }
-    if (worstEl !== null) {
-        _thumbActive.get(worstEl).ctrl.abort();
-        _thumbActive.delete(worstEl);
-        // _thumbFetchOne re-queues worstEl on AbortError.
-    }
+    // Hold one slot free for 500 ms so _thumbRun cannot immediately reclaim it.
+    _thumbPreemptUntil = performance.now() + 500;
 }
 
 async function _thumbFetchOne(el, score, ctrl) {
