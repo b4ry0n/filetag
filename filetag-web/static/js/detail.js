@@ -1452,36 +1452,76 @@ function _dirThumbInit() {
 }
 
 // ---------------------------------------------------------------------------
-// Thumbnail queue: serial loader + parallel dir-thumb pool
+// Thumbnail queue: priority-scored pool + parallel dir-thumb pool
 // ---------------------------------------------------------------------------
-// Regular thumbnails (images, videos, PDFs, archives) are handled by a serial
-// queue (_thumbQueue) — one at a time, respecting the server-side semaphore.
+// Regular thumbnails use a scored priority queue: each item is {el, score}
+// sorted descending so highest-priority tiles are always served first.
+//
+// Priority scores are continuous numbers (see THUMB_SCORE).  Scroll events
+// trigger a re-sort of the queue (cheap, no HTTP impact).  Active fetches are
+// never aborted on scroll — preemption only happens when the user explicitly
+// opens the detail panel (via _thumbPreemptForDetail), freeing one connection
+// slot for the detail-panel image without causing request thrashing.
 //
 // Directory-preview thumbnails use a separate parallel pool (_dirThumbQueue /
 // _dirThumbActive, cap DIR_THUMB_CONCURRENCY).  The server starts a background
 // collage-generation task on first request and returns 202 Accepted
 // immediately, so multiple requests can be in-flight without serialising.
-//
-// Ordering strategy:
-//   1. IntersectionObserver (rootMargin 150 px) fires first for visible
-//      directories → added to the front of _dirThumbQueue.
-//   2. When a slot becomes free and the queue is empty,
-//      _dirThumbEnqueueRemaining() collects all unqueued dir-thumb elements
-//      and sorts them by distance from the viewport midpoint (nearest first),
-//      so the page fills in concentric rings rather than random order.
 
 const DIR_THUMB_CONCURRENCY = 6; // max parallel dir-thumb fetches / pollers
 const THUMB_CONCURRENCY = 6;     // max parallel regular-thumb fetches
 
+// Canonical priority scores.  HIGH is forwarded to the backend so it can use
+// a dedicated semaphore that is never blocked by normal tile loads.
+const THUMB_SCORE = Object.freeze({
+    HIGH:         1_000_000,  // detail-panel preview (explicit user selection)
+    VISIBLE_MAX:    999_999,  // tile at viewport centre
+    VISIBLE_MIN:    500_000,  // tile at viewport edge
+    OFFSCREEN_MAX:  499_999,  // tile just outside viewport
+    OFFSCREEN_MIN:        0,  // tile far off-screen
+});
+
+// _thumbQueue: Array<{el: Element, score: number}> — sorted descending by score.
 const _thumbQueue    = [];
 let   _thumbBusy     = false;    // kept for back-compat; no longer used as a gate
 const _thumbCache    = new Map();    // thumb URL → blob URL  (null = permanent miss)
 const _thumbSalient  = new Map();    // blob URL → {cx, cy} — populated from X-Salient-* headers
-const _thumbActive   = new Set();    // regular-thumb elements currently in flight
+// _thumbActive: Map<Element, {score: number, ctrl: AbortController}>
+const _thumbActive   = new Map();    // regular-thumb elements currently in flight
 
 const _dirThumbQueue  = [];          // ordered: visible-first, then by proximity
 const _dirThumbActive = new Set();   // dir-thumb elements currently being fetched
 let   _dirThumbAbortCtrl = new AbortController(); // aborted on navigation to cancel in-flight fetches
+
+/**
+ * Compute the priority score for a thumbnail element.
+ *
+ * HIGH (1_000_000) is reserved for elements marked with
+ * data-thumb-priority="high" (detail-panel previews).  All other elements
+ * are scored by their position relative to the viewport: tiles at the centre
+ * score highest, tiles outside the viewport score progressively lower.
+ */
+function _thumbScore(el) {
+    if (el.dataset.thumbPriority === 'high') return THUMB_SCORE.HIGH;
+    if (!el.isConnected) return THUMB_SCORE.OFFSCREEN_MIN;
+    const r  = el.getBoundingClientRect();
+    const vw = window.innerWidth,  vh = window.innerHeight;
+    const cx = r.left + r.width  / 2;
+    const cy = r.top  + r.height / 2;
+    const inView = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
+    if (inView) {
+        const dx = Math.abs(cx - vw / 2) / (vw / 2 || 1);
+        const dy = Math.abs(cy - vh / 2) / (vh / 2 || 1);
+        const dist = Math.min(1, Math.sqrt(dx * dx + dy * dy));
+        return Math.round(
+            THUMB_SCORE.VISIBLE_MIN +
+            (1 - dist) * (THUMB_SCORE.VISIBLE_MAX - THUMB_SCORE.VISIBLE_MIN)
+        );
+    }
+    // Off-screen: score falls with pixel distance beyond the viewport edge.
+    const off = Math.max(0, r.top - vh, -r.bottom, r.left - vw, -r.right);
+    return Math.max(THUMB_SCORE.OFFSCREEN_MIN, THUMB_SCORE.OFFSCREEN_MAX - Math.round(off));
+}
 
 const _thumbObserver = new IntersectionObserver((entries) => {
     const newlyRegular = [];
@@ -1496,10 +1536,10 @@ const _thumbObserver = new IntersectionObserver((entries) => {
                 _dirThumbQueue.unshift(el);
             }
         } else {
-            // Regular thumb: add to the front of the queue (lazy-gate).
-            // Items are not pre-queued, so indexOf will be -1; the else-if
-            // branch handles the normal first-entry case.
-            const i = _thumbQueue.indexOf(el);
+            // Regular thumb: remove any existing queue entry and re-insert with
+            // an updated score.  Active fetches are left untouched — preemption
+            // on scroll would cause request thrashing.
+            const i = _thumbQueue.findIndex(item => item.el === el);
             if (i !== -1) {
                 _thumbQueue.splice(i, 1);
                 newlyRegular.push(el);
@@ -1510,7 +1550,7 @@ const _thumbObserver = new IntersectionObserver((entries) => {
     }
     if (newlyRegular.length > 0) {
         newlyRegular.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
-        _thumbQueue.unshift(...newlyRegular);
+        _thumbQueue.unshift(...newlyRegular.map(el => ({ el, score: _thumbScore(el) })));
     }
     _thumbRun();
     _dirThumbSchedule();
@@ -1518,39 +1558,39 @@ const _thumbObserver = new IntersectionObserver((entries) => {
 
 function _thumbFlush() {
     for (let i = _thumbQueue.length - 1; i >= 0; i--) {
-        if (!_thumbQueue[i].isConnected) _thumbQueue.splice(i, 1);
+        if (!_thumbQueue[i].el.isConnected) _thumbQueue.splice(i, 1);
     }
     for (let i = _dirThumbQueue.length - 1; i >= 0; i--) {
         if (!_dirThumbQueue[i].isConnected) _dirThumbQueue.splice(i, 1);
     }
 }
 
-/** Re-sort both thumbnail queues by distance from the current viewport centre.
+/** Re-sort both thumbnail queues by priority.  Called inside a
+ *  requestAnimationFrame callback on scroll, so getBoundingClientRect()
+ *  does not force a synchronous layout reflow.
  *
- *  The IntersectionObserver promotes elements to the front of the queue when
- *  they first enter the viewport, then unobserves them.  After that, if the
- *  user scrolls away and back again, those elements are already somewhere in
- *  the queue but are no longer observed — so they won't be re-promoted
- *  automatically.  By re-sorting on scroll we ensure that whatever is visible
- *  right now is always processed first, regardless of scroll history.
- *
- *  getBoundingClientRect() is viewport-relative and does NOT force a full
- *  layout reflow when called inside a requestAnimationFrame callback.
+ *  Regular thumbs are re-scored and sorted descending (highest priority
+ *  first).  HIGH-priority items never enter the regular queue so they are
+ *  never affected.  No active fetches are aborted here; use
+ *  _thumbPreemptForDetail() for explicit preemption on detail-panel selection.
  */
 let _thumbViewportSortPending = false;
 function _thumbViewportSort() {
     _thumbViewportSortPending = false;
     if (_thumbQueue.length < 2 && _dirThumbQueue.length < 2) return;
-    const centre = window.innerHeight / 2;
-    const dist = el => {
-        if (!el.isConnected) return Infinity;
-        const r = el.getBoundingClientRect();
-        return Math.abs(r.top + r.height / 2 - centre);
-    };
+    // Re-score and sort the regular thumbnail queue.
     if (_thumbQueue.length > 1) {
-        _thumbQueue.sort((a, b) => dist(a) - dist(b));
+        for (const item of _thumbQueue) item.score = _thumbScore(item.el);
+        _thumbQueue.sort((a, b) => b.score - a.score);
     }
+    // Dir-thumb queue: sort by distance from viewport midpoint (closest first).
     if (_dirThumbQueue.length > 1) {
+        const centre = window.innerHeight / 2;
+        const dist = el => {
+            if (!el.isConnected) return Infinity;
+            const r = el.getBoundingClientRect();
+            return Math.abs(r.top + r.height / 2 - centre);
+        };
         _dirThumbQueue.sort((a, b) => dist(a) - dist(b));
     }
 }
@@ -1584,7 +1624,7 @@ function _thumbInit() {
                 _thumbObserver.observe(el);
             }
         } else {
-            if (_thumbQueue.includes(el) || _thumbActive.has(el)) return;
+            if (_thumbQueue.some(item => item.el === el) || _thumbActive.has(el)) return;
             // Only observe; the card is queued when it enters the viewport.
             _thumbObserver.observe(el);
         }
@@ -1688,21 +1728,50 @@ function _dirPreviewReplace(el, blobUrl) {
     probe.src = blobUrl;
 }
 
-/** Fill free slots in the regular-thumb parallel pool from _thumbQueue. */
+/** Fill free slots in the regular-thumb parallel pool from _thumbQueue.
+ *
+ *  The queue is kept sorted descending by score so the highest-priority tile
+ *  is always dequeued first.  No automatic preemption of active fetches;
+ *  use _thumbPreemptForDetail() to interrupt the lowest-scoring active fetch
+ *  when the detail panel needs immediate access to a server semaphore slot.
+ */
 function _thumbRun() {
     _thumbFlush();
     while (_thumbActive.size < THUMB_CONCURRENCY && _thumbQueue.length > 0) {
-        const el = _thumbQueue.shift();
+        const item = _thumbQueue.shift();
+        const { el, score } = item;
         if (!el.isConnected || !el.dataset.thumbSrc || _thumbActive.has(el)) continue;
-        _thumbActive.add(el);
-        _thumbFetchOne(el).finally(() => {
+        const ctrl = new AbortController();
+        _thumbActive.set(el, { score, ctrl });
+        _thumbFetchOne(el, score, ctrl).finally(() => {
             _thumbActive.delete(el);
             _thumbRun();
         });
     }
 }
 
-async function _thumbFetchOne(el) {
+/**
+ * Abort the single lowest-scoring active thumbnail fetch to free an HTTP
+ * connection slot for a high-priority detail-panel request.
+ *
+ * Called by renderDetail() when a file is selected.  The aborted fetch is
+ * re-queued automatically by _thumbFetchOne's AbortError handler so it
+ * will be retried once the detail-panel image has loaded.
+ */
+function _thumbPreemptForDetail() {
+    if (_thumbActive.size === 0) return;
+    let worstEl = null, worstScore = Infinity;
+    for (const [el, data] of _thumbActive) {
+        if (data.score < worstScore) { worstScore = data.score; worstEl = el; }
+    }
+    if (worstEl !== null) {
+        _thumbActive.get(worstEl).ctrl.abort();
+        _thumbActive.delete(worstEl);
+        // _thumbFetchOne re-queues worstEl on AbortError.
+    }
+}
+
+async function _thumbFetchOne(el, score, ctrl) {
     const src = el.dataset.thumbSrc;
     if (!src) return;
     // Check cache before fetching (another element may have populated it).
@@ -1711,26 +1780,29 @@ async function _thumbFetchOne(el) {
         if (cached) _thumbReplace(el, cached); else _thumbShowFailed(el);
         return;
     }
+    // Append priority hint so the backend can use the dedicated high-priority
+    // semaphore and avoid queueing behind normal tile loads.
+    const url = score >= THUMB_SCORE.HIGH
+        ? src + (src.includes('?') ? '&' : '?') + 'priority=high'
+        : src;
     try {
-        const resp = await fetch(src);
+        const resp = await fetch(url, { signal: ctrl.signal });
         if (!el.isConnected) return;
         if (resp.status === 200) {
             const salientCx = resp.headers.get('x-salient-cx');
             const salientCy = resp.headers.get('x-salient-cy');
             const blob = await resp.blob();
-            const url = URL.createObjectURL(blob);
-            _thumbCache.set(src, url);
+            const blobUrl = URL.createObjectURL(blob);
+            _thumbCache.set(src, blobUrl);
             if (salientCx !== null && salientCy !== null) {
-                _thumbSalient.set(url, { cx: parseFloat(salientCx), cy: parseFloat(salientCy) });
+                _thumbSalient.set(blobUrl, { cx: parseFloat(salientCx), cy: parseFloat(salientCy) });
             }
-            if (el.isConnected) _thumbReplace(el, url);
+            if (el.isConnected) _thumbReplace(el, blobUrl);
         } else if (resp.status === 202 || resp.status === 503) {
-            // Fallback: server indicated not yet ready (should rarely fire since
-            // thumb_handler now waits asynchronously for a generation slot).
+            // Server not yet ready; re-queue with a brief delay.
             await new Promise(resolve => setTimeout(resolve, 500));
-            if (el.isConnected) {
-                _thumbQueue.push(el);
-                _thumbObserver.observe(el);
+            if (el.isConnected && el.dataset.thumbSrc) {
+                _thumbQueue.push({ el, score: _thumbScore(el) });
             }
         } else if (resp.status === 204) {
             _thumbCache.set(src, null);
@@ -1738,7 +1810,15 @@ async function _thumbFetchOne(el) {
         } else {
             if (el.isConnected) _thumbShowFailed(el);
         }
-    } catch (_) {
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            // Preempted by _thumbPreemptForDetail: re-queue so the element
+            // is retried once the high-priority request has completed.
+            if (el.isConnected && el.dataset.thumbSrc) {
+                _thumbQueue.push({ el, score: _thumbScore(el) });
+            }
+            return;
+        }
         if (el.isConnected) _thumbShowFailed(el);
     }
 }
@@ -1848,6 +1928,7 @@ function _thumbClearCache() {
     for (const url of _thumbCache.values()) URL.revokeObjectURL(url);
     _thumbCache.clear();
     _thumbQueue.length = 0;
+    for (const data of _thumbActive.values()) data.ctrl.abort();
     _thumbActive.clear();
     _dirThumbAbort(); // abort in-flight dir-thumb fetches + clear queue
     _trickplayCache.clear();
@@ -2139,7 +2220,7 @@ function renderDetail() {
         // Entry inside a zip archive
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
-            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index, dir: _previewDir });
+            const thumbUrl = '/api/zip/thumb?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index, dir: _previewDir, priority: 'high' });
             preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
                       `<img src="${thumbUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
         } else {
@@ -2187,9 +2268,10 @@ function renderDetail() {
         preview = `<pre class="preview-text" id="preview-text-content" ondblclick="openLightbox('${jesc(f.path)}','text')" onclick="if(!state.selectedPaths.has('${jesc(f.path)}'))selectFile('${jesc(f.path)}',event);"` +
                   ` title="Double-click to enlarge">Loading…</pre>`;
     } else if (type_ === 'zip') {
-        const _zipCoverDir = _previewDir ? '?dir=' + encodeURIComponent(_previewDir) : '';
+        const _zipCoverParams = new URLSearchParams({ priority: 'high' });
+        if (_previewDir) _zipCoverParams.set('dir', _previewDir);
         preview = `<div class="zip-cover-wrap" onclick="openMediaViewer('${jesc(f.path)}')">
-            <img src="/thumb/${encodePath(f.path)}${_zipCoverDir}" alt="${esc(name)}" class="zip-cover"
+            <img src="/thumb/${encodePath(f.path)}?${_zipCoverParams}" alt="${esc(name)}" class="zip-cover"
                  onerror="this.style.display='none'">
             <div class="preview-viewer-hover-zone"><button class="preview-viewer-overlay-btn" onclick="event.stopPropagation();openMediaViewer('${jesc(f.path)}')" tabindex="-1">Open in viewer</button></div>
         </div>`;
@@ -2230,6 +2312,7 @@ function renderDetail() {
 
     const viewerBtnRow = '';
 
+    _thumbPreemptForDetail();
     panel.innerHTML = `
         <div class="detail-top">
         <div class="detail-header">

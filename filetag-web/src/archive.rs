@@ -15,9 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::preview::mime_for_ext;
-use crate::state::{
-    AppState, THUMB_LIMITER, open_conn, preview_safe_path, resolve_preview, root_from_dir_or_id,
-};
+use crate::state::{AppState, open_conn, preview_safe_path, resolve_preview, root_from_dir_or_id};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -748,6 +746,8 @@ pub struct ZipThumbParams {
     page: usize,
     dir: Option<String>,
     root_id: Option<usize>,
+    /// Priority hint: `"high"` uses the dedicated high-priority semaphore.
+    priority: Option<String>,
 }
 
 /// `GET /api/zip/thumb` — return a JPEG thumbnail for an archive page.
@@ -813,7 +813,10 @@ pub async fn api_zip_thumb(
         return crate::preview::attach_salient_headers_pub(resp, salient);
     }
 
-    let _permit = match THUMB_LIMITER.acquire().await {
+    let _permit = match crate::state::thumb_semaphore(params.priority.as_deref())
+        .acquire()
+        .await
+    {
         Ok(p) => p,
         Err(_) => {
             return (

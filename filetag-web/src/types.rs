@@ -276,6 +276,19 @@ pub struct DirParam {
     pub root_id: Option<usize>,
 }
 
+/// Query parameters accepted by thumbnail endpoints (`/thumb/<path>` and
+/// `/api/zip/thumb`).
+#[derive(Deserialize, Default)]
+pub struct ThumbParam {
+    /// Absolute filesystem path of the currently browsed directory.
+    pub dir: Option<String>,
+    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
+    pub root_id: Option<usize>,
+    /// Priority hint: `"high"` routes to the dedicated high-priority semaphore
+    /// so detail-panel requests are never queued behind tile loads.
+    pub priority: Option<String>,
+}
+
 /// Body for `POST /api/files-tags` — fetch tags for multiple paths in one
 /// request.
 #[derive(Deserialize)]

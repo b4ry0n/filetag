@@ -88,10 +88,29 @@ pub fn load_features_for(state: &AppState, root_path: &Path) -> Features {
 // Concurrency limiters
 // ---------------------------------------------------------------------------
 
+/// Normal-priority thumbnail semaphore (tile-grid lazy loads).
 /// Limit concurrent heavy thumbnail/extraction operations to prevent spawning
 /// too many ffmpeg/ffprobe/unrar processes at once when browsing directories
 /// with many large media files.
 pub static THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// High-priority thumbnail semaphore (detail-panel preview, explicit user
+/// actions).  Kept separate from THUMB_LIMITER so high-priority requests are
+/// never queued behind normal tile loads.  With THUMB_LIMITER = 1 and
+/// HIGH_THUMB_LIMITER = 1, at most 2 thumbnail generations run concurrently
+/// (one per tier).
+pub static HIGH_THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// Returns the thumbnail-generation semaphore for the given priority string.
+/// `"high"` routes to `HIGH_THUMB_LIMITER`; anything else uses `THUMB_LIMITER`.
+#[inline]
+pub fn thumb_semaphore(priority: Option<&str>) -> &'static tokio::sync::Semaphore {
+    if priority == Some("high") {
+        &HIGH_THUMB_LIMITER
+    } else {
+        &THUMB_LIMITER
+    }
+}
 
 /// Separate semaphore for video sprite generation.  Sprite builds can run up
 /// to 4 in parallel without saturating the CPU, and must not block the

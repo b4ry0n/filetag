@@ -18,10 +18,9 @@ use crate::extract::{heic_extract_jpeg_thumbnail, raw_embedded_jpeg, raw_tiff_or
 use crate::saliency::SalientPoint;
 use crate::state::Features;
 use crate::state::{
-    AppState, OnDemandGuard, THUMB_LIMITER, load_features_for, resolve_preview, root_for_dir,
-    root_from_dir_or_id,
+    AppState, OnDemandGuard, load_features_for, resolve_preview, root_for_dir, root_from_dir_or_id,
 };
-use crate::types::DirParam;
+use crate::types::{DirParam, ThumbParam};
 use crate::video::{orient_to_vf_prefix, video_thumb_strip};
 
 // ---------------------------------------------------------------------------
@@ -1076,6 +1075,7 @@ async fn thumb_archive_entry(
     entry_name: &str,
     root: &Path,
     features: Features,
+    priority: Option<&str>,
 ) -> Response {
     // Build stable cache paths: <root>/.filetag/cache/thumbs/<mtime>_<size>_<slug>.thumb.{webp,sp}
     let (cache_path, sp_path): (Option<PathBuf>, Option<PathBuf>) = (|| {
@@ -1129,7 +1129,10 @@ async fn thumb_archive_entry(
     }
 
     let _od = OnDemandGuard::new();
-    let _permit = THUMB_LIMITER.acquire().await.unwrap();
+    let _permit = crate::state::thumb_semaphore(priority)
+        .acquire()
+        .await
+        .unwrap();
 
     let zip_abs = zip_abs.to_path_buf();
     let entry_name = entry_name.to_string();
@@ -1178,7 +1181,7 @@ async fn thumb_archive_entry(
 /// Thumbnail endpoint — generates a JPEG thumbnail for any previewable file.
 pub async fn thumb_handler(
     AxumPath(rel_path): AxumPath<String>,
-    Query(rp): Query<DirParam>,
+    Query(rp): Query<ThumbParam>,
     State(state): State<Arc<AppState>>,
 ) -> Response {
     let db_root = match root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id) {
@@ -1197,7 +1200,14 @@ pub async fn thumb_handler(
             None => return (StatusCode::BAD_REQUEST, "Invalid archive path").into_response(),
         };
         let features = load_features_for(&state, &db_root.root);
-        return thumb_archive_entry(&zip_abs, entry_name, &db_root.root, features).await;
+        return thumb_archive_entry(
+            &zip_abs,
+            entry_name,
+            &db_root.root,
+            features,
+            rp.priority.as_deref(),
+        )
+        .await;
     }
 
     let (abs, cache_root) = match resolve_preview(&state, &db_root.root, &rel_path) {
@@ -1245,7 +1255,10 @@ pub async fn thumb_handler(
                     return attach_salient_headers(resp, salient);
                 }
                 let _od = OnDemandGuard::new();
-                let _permit = THUMB_LIMITER.acquire().await.unwrap();
+                let _permit = crate::state::thumb_semaphore(rp.priority.as_deref())
+                    .acquire()
+                    .await
+                    .unwrap();
                 let abs2 = abs.clone();
                 let root = cache_root.clone();
                 let use_saliency = features.saliency_pose && crate::saliency::pose_model_ready();
@@ -1294,21 +1307,26 @@ pub async fn thumb_handler(
         // HEIC/HEIF
         "heic" | "heif" => {
             let root = cache_root.clone();
-            thumb_cached(&abs, &cache_root, |abs| {
-                Box::pin(async move {
-                    if let Some(data) = image_thumb_jpeg(abs, features).await {
-                        return Some(data);
-                    }
-                    // sips fallback: handles HEVC-encoded HEIC (dynamic wallpapers)
-                    // that the pure-Rust extractor and ImageMagick miss.
-                    if features.imagemagick
-                        && let Some(data) = sips_thumb_jpeg(abs, &root).await
-                    {
-                        return Some(data);
-                    }
-                    None
-                })
-            })
+            thumb_cached(
+                &abs,
+                &cache_root,
+                crate::state::thumb_semaphore(rp.priority.as_deref()),
+                |abs| {
+                    Box::pin(async move {
+                        if let Some(data) = image_thumb_jpeg(abs, features).await {
+                            return Some(data);
+                        }
+                        // sips fallback: handles HEVC-encoded HEIC (dynamic wallpapers)
+                        // that the pure-Rust extractor and ImageMagick miss.
+                        if features.imagemagick
+                            && let Some(data) = sips_thumb_jpeg(abs, &root).await
+                        {
+                            return Some(data);
+                        }
+                        None
+                    })
+                },
+            )
             .await
         }
 
@@ -1316,32 +1334,40 @@ pub async fn thumb_handler(
         "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "dng" | "raf" | "pef" | "srw" | "raw"
         | "3fr" | "x3f" | "rwl" | "iiq" | "mef" | "mos" | "psd" | "psb" | "xcf" | "ai" | "eps" => {
             let root = cache_root.clone();
-            thumb_cached(&abs, &cache_root, move |abs| {
-                Box::pin(async move {
-                    // raw_thumb_rust reads TIFF IFD0 orientation (tag 0x0112) correctly.
-                    // Embedded JPEG previews in TIFF-family RAW files (ARW, NEF, CR2, …)
-                    // are stored in native sensor orientation without their own EXIF tag,
-                    // so we must take the orientation from the outer TIFF container.
-                    if let Some(data) = raw_thumb_rust(abs).await {
-                        return Some(data);
-                    }
-                    // Fallback for formats not in RAW_THUMB_EXTS (PSD, XCF, CR3, EPS, …)
-                    if let Some(full_jpeg) = raw_extract_jpeg(abs, features).await {
-                        thumb_from_raw_bytes(&full_jpeg, &root, features).await
-                    } else {
-                        None
-                    }
-                })
-            })
+            thumb_cached(
+                &abs,
+                &cache_root,
+                crate::state::thumb_semaphore(rp.priority.as_deref()),
+                move |abs| {
+                    Box::pin(async move {
+                        // raw_thumb_rust reads TIFF IFD0 orientation (tag 0x0112) correctly.
+                        // Embedded JPEG previews in TIFF-family RAW files (ARW, NEF, CR2, …)
+                        // are stored in native sensor orientation without their own EXIF tag,
+                        // so we must take the orientation from the outer TIFF container.
+                        if let Some(data) = raw_thumb_rust(abs).await {
+                            return Some(data);
+                        }
+                        // Fallback for formats not in RAW_THUMB_EXTS (PSD, XCF, CR3, EPS, …)
+                        if let Some(full_jpeg) = raw_extract_jpeg(abs, features).await {
+                            thumb_from_raw_bytes(&full_jpeg, &root, features).await
+                        } else {
+                            None
+                        }
+                    })
+                },
+            )
             .await
         }
 
         // PDF
         "pdf" => {
             let root = cache_root.clone();
-            thumb_cached(&abs, &cache_root, move |abs| {
-                Box::pin(async move { pdf_thumb_jpeg(abs, &root, features).await })
-            })
+            thumb_cached(
+                &abs,
+                &cache_root,
+                crate::state::thumb_semaphore(rp.priority.as_deref()),
+                move |abs| Box::pin(async move { pdf_thumb_jpeg(abs, &root, features).await }),
+            )
             .await
         }
 
@@ -1380,7 +1406,10 @@ pub async fn thumb_handler(
                     return attach_salient_headers(resp, salient);
                 }
                 let _od = OnDemandGuard::new();
-                let _permit = THUMB_LIMITER.acquire().await.unwrap();
+                let _permit = crate::state::thumb_semaphore(rp.priority.as_deref())
+                    .acquire()
+                    .await
+                    .unwrap();
                 if let Some(data) = image_thumb_jpeg(&abs, features).await {
                     let _ = tokio::fs::write(&cache, &data).await;
                     // Compute salient point in the same request so the first
@@ -1414,7 +1443,10 @@ pub async fn thumb_handler(
         _ => {
             preview_handler(
                 AxumPath(rel_path),
-                Query(rp),
+                Query(DirParam {
+                    dir: rp.dir,
+                    root_id: rp.root_id,
+                }),
                 State(state),
                 HeaderMap::new(),
             )
@@ -1432,7 +1464,12 @@ use std::pin::Pin;
 
 /// General-purpose cached thumbnail: check cache, acquire permit, run `generate`
 /// callback, write cache, serve WebP.
-async fn thumb_cached<F>(abs: &Path, root: &Path, generate: F) -> Response
+async fn thumb_cached<F>(
+    abs: &Path,
+    root: &Path,
+    limiter: &'static tokio::sync::Semaphore,
+    generate: F,
+) -> Response
 where
     F: FnOnce(&Path) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + Send + '_>>,
 {
@@ -1441,7 +1478,7 @@ where
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
         }
         let _od = OnDemandGuard::new();
-        let _permit = THUMB_LIMITER.acquire().await.unwrap();
+        let _permit = limiter.acquire().await.unwrap();
         if let Some(data) = generate(abs).await {
             let _ = tokio::fs::write(&cache, &data).await;
             return ([(header::CONTENT_TYPE, "image/webp")], data).into_response();
