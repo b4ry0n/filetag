@@ -2237,6 +2237,7 @@ async function loadCacheInfo() {
             'zip-pages':{en:'Archive pages',        nl:'Archiefpagina\'s',   de:'Archivseiten',       fr:'Pages d\'archive',   es:'Páginas de archivo',     it:'Pagine archivio',    pt:'Páginas de arquivo',     pl:'Strony archiwum',    sv:'Arkivsidor'},
             'vtiles':   {en:'Video tiles',           nl:'Videotegels',         de:'Videokacheln',       fr:'Tuiles vidéo',      es:'Mosaicos de vídeo',      it:'Tile video',         pt:'Mosaicos de vídeo',      pl:'Kafle wideo',        sv:'Videobrickor'},
             'tiff-preview':{en:'TIFF previews',      nl:'TIFF-voorbeelden',    de:'TIFF-Vorschauen',    fr:'Aperçus TIFF',      es:'Vistas previas TIFF',    it:'Anteprime TIFF',     pt:'Pré-visualizações TIFF',  pl:'Podglądy TIFF',   sv:'TIFF-förhandsvisningar'},
+            'tmp':      {en:'Temporary files',       nl:'Tijdelijke bestanden', de:'Temporäre Dateien',  fr:'Fichiers temporaires', es:'Archivos temporales',    it:'File temporanei',    pt:'Ficheiros temporários',  pl:'Pliki tymczasowe',   sv:'Temporära filer'},
         };
         function cacheDirLabel(name) {
             const map = CACHE_DIR_LABELS_BY_LANG[name];

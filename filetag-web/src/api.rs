@@ -523,6 +523,7 @@ pub async fn api_cache_clear_subdir(
         "zip-pages",
         "vtiles",
         "tiff-preview",
+        "tmp",
     ];
     if !ALLOWED_SUBDIRS.contains(&body.subdir.as_str()) {
         return Err(AppError(anyhow::anyhow!(
