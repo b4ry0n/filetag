@@ -2232,9 +2232,18 @@ function renderDetail() {
         // Entry inside a zip archive
         const entry = state.zipEntries.find(e => e.name === zipEntry.entryName);
         if (entry && entry.is_image && entry.image_index !== null) {
+            // Use /api/zip/page (original bytes) so the browser honours EXIF
+            // orientation via image-orientation:from-image.  /api/zip/thumb
+            // returns a pre-rotated WebP thumbnail suited for grid tiles, not
+            // for the full-size detail panel preview.
+            // Use <div> not <a> to match the regular-image preview structure so
+            // that _faceWrapPreviewImg (called below) can apply the same
+            // aspect-ratio sizing and the image is correctly contained.
             const pageUrl = '/api/zip/page?' + new URLSearchParams({ path: zipEntry.zipPath, page: entry.image_index, dir: _previewDir });
-            preview = `<a class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" title="Click to open in viewer">` +
-                      `<img src="${pageUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)"></a>`;
+            preview = `<div class="preview-zoomable" onclick="openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})">` +
+                      `<img src="${pageUrl}" alt="${esc(name)}" onerror="_cardThumbError(this)">` +
+                      `<div class="preview-viewer-hover-zone"><button class="preview-viewer-overlay-btn" onclick="event.stopPropagation();openMediaViewer('${jesc(zipEntry.zipPath)}', ${entry.image_index})" tabindex="-1">Open in viewer</button></div>` +
+                      `</div>`;
         } else {
             // Entries not loaded yet (e.g. selected from search results);
             // show placeholder and async-fetch entries to render the real preview.
@@ -2393,6 +2402,16 @@ function renderDetail() {
         faceOnDetailRendered(f.path, type_);
     }
 
+    // Wrap ZIP entry preview images in an aspect-ratio container so they are
+    // correctly contained by the panel.  _faceWrapPreviewImg sets aspect-ratio
+    // from the image's natural dimensions and applies max-width/max-height
+    // constraints — the same mechanism used for regular images.  No face
+    // detections are requested (zip entries are not indexed files).
+    if (typeof _faceWrapPreviewImg === 'function' && zipEntry &&
+            state.zipEntries.find(e => e.name === zipEntry.entryName && e.is_image)) {
+        _faceWrapPreviewImg();
+    }
+
     // Async-fetch zip entry preview when entries are not cached (e.g. selected from search results)
     if (zipEntry && !state.zipEntries.find(e => e.name === zipEntry.entryName)) {
         const _selectedPath = f.path;
@@ -2406,16 +2425,24 @@ function renderDetail() {
                 const placeholder = document.getElementById('zip-entry-preview-placeholder');
                 if (!placeholder || !entry || !entry.is_image || entry.image_index === null) return;
                 const pageUrl = '/api/zip/page?' + new URLSearchParams({ path: _zipPath, page: entry.image_index, dir: _previewDir });
-                const anchor = document.createElement('a');
-                anchor.className = 'preview-zoomable';
-                anchor.title = 'Click to open in viewer';
-                anchor.onclick = () => openMediaViewer(_zipPath, entry.image_index);
+                const wrap = document.createElement('div');
+                wrap.className = 'preview-zoomable';
+                wrap.onclick = () => openMediaViewer(_zipPath, entry.image_index);
                 const imgEl = document.createElement('img');
                 imgEl.src = pageUrl;
                 imgEl.alt = _entryName;
                 imgEl.onerror = function() { _cardThumbError(this); };
-                anchor.appendChild(imgEl);
-                placeholder.replaceWith(anchor);
+                const hoverZone = document.createElement('div');
+                hoverZone.className = 'preview-viewer-hover-zone';
+                const hoverBtn = document.createElement('button');
+                hoverBtn.className = 'preview-viewer-overlay-btn';
+                hoverBtn.tabIndex = -1;
+                hoverBtn.textContent = 'Open in viewer';
+                hoverBtn.onclick = (e) => { e.stopPropagation(); openMediaViewer(_zipPath, entry.image_index); };
+                hoverZone.appendChild(hoverBtn);
+                wrap.appendChild(imgEl);
+                wrap.appendChild(hoverZone);
+                placeholder.replaceWith(wrap);
                 // Now that the real preview image is in the DOM, apply face
                 // detection overlays (detections were already fetched by
                 // faceOnDetailRendered but found no image to wrap at that point).
