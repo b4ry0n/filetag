@@ -2309,20 +2309,25 @@ pub async fn api_rename_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RenameTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
-    let conn = open_conn(db_root)?;
-    // Apply to all linked databases (the primary is included in the result).
-    let all_dbs =
-        db::collect_all_databases(conn, db_root.root.to_path_buf(), true).unwrap_or_default();
+    // Tag metadata operations are not scoped to an active root — apply to every
+    // loaded root (and each root's linked databases) so the rename is consistent
+    // across the whole collection.
     let mut any_ok = false;
     let mut any_merged = false;
-    for db in &all_dbs {
-        match db::rename_tag(&db.conn, &body.name, &body.new_name) {
-            Ok(db::RenameOutcome::NotFound) | Err(_) => {}
-            Ok(db::RenameOutcome::Renamed) => any_ok = true,
-            Ok(db::RenameOutcome::Merged { .. }) => {
-                any_ok = true;
-                any_merged = true;
+    for db_root in &state.roots {
+        let Ok(conn) = open_conn(db_root) else {
+            continue;
+        };
+        let all_dbs =
+            db::collect_all_databases(conn, db_root.root.to_path_buf(), true).unwrap_or_default();
+        for db in &all_dbs {
+            match db::rename_tag(&db.conn, &body.name, &body.new_name) {
+                Ok(db::RenameOutcome::NotFound) | Err(_) => {}
+                Ok(db::RenameOutcome::Renamed) => any_ok = true,
+                Ok(db::RenameOutcome::Merged { .. }) => {
+                    any_ok = true;
+                    any_merged = true;
+                }
             }
         }
     }
@@ -2393,9 +2398,15 @@ pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
-    let conn = open_conn(db_root)?;
-    let ok = db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)?;
+    let mut ok = false;
+    for db_root in &state.roots {
+        let Ok(conn) = open_conn(db_root) else {
+            continue;
+        };
+        if db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)? {
+            ok = true;
+        }
+    }
     Ok(Json(serde_json::json!({ "ok": ok })))
 }
 
@@ -2404,9 +2415,15 @@ pub async fn api_delete_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db_root = root_from_dir_or_id(&state, body.dir.as_deref(), body.root_id)?;
-    let conn = open_conn(db_root)?;
-    let deleted = db::delete_tag(&conn, &body.name).map_err(AppError)?;
+    let mut deleted = false;
+    for db_root in &state.roots {
+        let Ok(conn) = open_conn(db_root) else {
+            continue;
+        };
+        if db::delete_tag(&conn, &body.name).map_err(AppError)? {
+            deleted = true;
+        }
+    }
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 

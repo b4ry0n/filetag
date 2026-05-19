@@ -324,10 +324,6 @@ pub struct TagColorRequest {
     pub name: String,
     /// `None` clears the colour.
     pub color: Option<String>,
-    /// Absolute filesystem path of the currently browsed directory.
-    pub dir: Option<String>,
-    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
-    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/rename-tag`.
@@ -335,20 +331,12 @@ pub struct TagColorRequest {
 pub struct RenameTagRequest {
     pub name: String,
     pub new_name: String,
-    /// Absolute filesystem path of the currently browsed directory.
-    pub dir: Option<String>,
-    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
-    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/delete-tag`.
 #[derive(Deserialize)]
 pub struct DeleteTagRequest {
     pub name: String,
-    /// Absolute filesystem path of the currently browsed directory.
-    pub dir: Option<String>,
-    /// Root ID (from `GET /api/roots`) as alternative to `dir`.
-    pub root_id: Option<usize>,
 }
 
 /// Body for `POST /api/rename-subject`.

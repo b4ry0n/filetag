@@ -1360,7 +1360,7 @@ function closeTagMenu() {
 
 async function setTagColor(tagName, color) {
     closeTagMenu();
-    await apiPost('/api/tag-color', { name: tagName, color, dir: currentAbsDir() });
+    await apiPost('/api/tag-color', { name: tagName, color });
     await loadTags();
     ftEmit('ft:tags-meta', { tag: tagName });
 }
@@ -1372,7 +1372,7 @@ async function deleteTag(tagName) {
     if (count > 0 && !confirm(`Delete tag "${tagName}"? It is applied to ${count} file(s).`)) {
         return;
     }
-    await apiPost('/api/delete-tag', { name: tagName, dir: currentAbsDir() });
+    await apiPost('/api/delete-tag', { name: tagName });
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
     ftEmit('ft:file-tags', { tag: tagName });
@@ -1595,7 +1595,7 @@ async function renameTag(oldName, newName) {
     for (const n of [oldBase, baseName]) {
         delete state.kvValueCache[n];
     }
-    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
+    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName });
     if (res && !res.ok) {
         showToast(`Could not rename "${oldName}": tag or value not found.`);
         return;
@@ -1657,7 +1657,7 @@ function startKvValueRename(tagName, oldValue) {
 async function deleteKvValue(tagName, value) {
     closeTagMenu();
     if (!confirm(`Remove "${tagName}=${value}" from all files?`)) return;
-    await apiPost('/api/delete-tag', { name: `${tagName}=${value}`, dir: currentAbsDir() });
+    await apiPost('/api/delete-tag', { name: `${tagName}=${value}` });
     delete state.kvValueCache[tagName];
     await loadTags();
     if (state.selectedFile) await loadFileDetail(state.selectedFile.path);
@@ -2118,7 +2118,7 @@ async function renderTmDetail(name) {
 // Tag Manager operations
 
 async function tmSetColor(name, color) {
-    await apiPost('/api/tag-color', { name, color, dir: currentAbsDir() });
+    await apiPost('/api/tag-color', { name, color });
     await loadTags();
     renderTmList();
     await renderTmDetail(name);
@@ -2171,7 +2171,7 @@ async function tmDoRename(oldName) {
     }
     if (!confirm(confirmMsg)) return;
 
-    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName, dir: currentAbsDir() });
+    const res = await apiPost('/api/rename-tag', { name: oldName, new_name: newName });
     if (isKvConvert) showToast(`Converted "${oldName}" \u2192 "${targetTag}" (k=v).`);
     else if (res && res.merged) showToast(`Merged into "${newName}".`);
     else showToast(`Renamed "${oldName}" to "${newName}".`);
@@ -2197,7 +2197,6 @@ async function tmDoRenamePrefix(oldPrefix) {
         await apiPost('/api/rename-tag', {
             name: child.name,
             new_name: `${newPrefix}/${suffix}`,
-            dir: currentAbsDir(),
         });
     }
     showToast(`Renamed group "${oldPrefix}" to "${newPrefix}".`);
@@ -2213,7 +2212,7 @@ async function tmDeleteTag(name) {
     const tag = state.tags.find(t => t.name === name);
     const count = tag?.count || 0;
     if (!confirm(`Delete tag "${name}"?\nThis removes it from ${count} file(s). This cannot be undone.`)) return;
-    await apiPost('/api/delete-tag', { name, dir: currentAbsDir() });
+    await apiPost('/api/delete-tag', { name });
     showToast(`Deleted "${name}".`);
     await loadTags();
     _tmSelectedTag = null;
@@ -2240,7 +2239,6 @@ async function tmRenameValue(tagName, oldValue) {
     const res = await apiPost('/api/rename-tag', {
         name: `${tagName}=${oldValue}`,
         new_name: `${tagName}=${newValue}`,
-        dir: currentAbsDir(),
     });
     if (res && res.merged) showToast(`Values merged.`);
     else showToast(`Value renamed.`);
