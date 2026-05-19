@@ -1363,10 +1363,15 @@ fn image_dims_for_rel(root: &Path, rel: &str) -> (u32, u32) {
         if let Ok((bytes, _)) = crate::archive::archive_read_entry(&zip_abs, entry_name)
             && let Ok(img) = image::load_from_memory(&bytes)
         {
-            // Archive entries are not EXIF-rotated during analysis, but the
-            // dimensions we need are the raw decode dimensions (the stored
-            // bounding boxes use those coordinates).
-            return (img.width(), img.height());
+            // Apply the same EXIF orientation swap used during detection so the
+            // reported dimensions match the browser's display orientation.
+            let orient = jpeg_exif_orientation_bytes(&bytes);
+            let (w, h) = (img.width(), img.height());
+            return if matches!(orient, 5..=8) {
+                (h, w)
+            } else {
+                (w, h)
+            };
         }
         return (0, 0);
     }
@@ -1505,7 +1510,11 @@ fn face_crop_jpeg_for_rel(
     if let Some((zip_rel, entry_name)) = rel_path.split_once("::") {
         let zip_abs = root.join(zip_rel);
         let (bytes, _) = crate::archive::archive_read_entry(&zip_abs, entry_name)?;
+        // Apply EXIF orientation so the crop is taken from the correctly
+        // oriented image (matching the coordinates stored during detection).
+        let orient = jpeg_exif_orientation_bytes(&bytes);
         let img = image::load_from_memory(&bytes)?;
+        let img = apply_exif_orientation_face(img, orient);
         return face_crop_jpeg_from_image(img, x, y, w, h);
     }
     face_crop_jpeg(&root.join(rel_path), x, y, w, h)
@@ -1673,10 +1682,16 @@ fn analyse_file_sync(
     let img = if let Some((zip_rel, entry_name)) = rel.split_once("::") {
         let zip_abs = root.join(zip_rel);
         match crate::archive::archive_read_entry(&zip_abs, entry_name) {
-            Ok((bytes, _)) => match image::load_from_memory(&bytes) {
-                Ok(i) => i,
-                Err(_) => return Ok((vec![], 0, 0)),
-            },
+            Ok((bytes, _)) => {
+                // Apply EXIF orientation so detection coordinates match the
+                // browser's display orientation — same as load_image() for
+                // regular files.
+                let orient = jpeg_exif_orientation_bytes(&bytes);
+                match image::load_from_memory(&bytes) {
+                    Ok(i) => apply_exif_orientation_face(i, orient),
+                    Err(_) => return Ok((vec![], 0, 0)),
+                }
+            }
             Err(_) => return Ok((vec![], 0, 0)),
         }
     } else {
