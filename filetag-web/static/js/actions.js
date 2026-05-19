@@ -2698,17 +2698,35 @@ function showFileMenu(e, path, isDir, rootId) {
     // Use the provided rootId (from the card rendering context), or fall back
     // to the currently active root. Never construct absolute paths.
     rootId = rootId ?? state.currentRootId;
-    const name = path.split('/').pop();
+
+    // When path is empty the target is the root directory itself (no rename/move/trash).
+    const isRootDir = (path === '' || path == null);
+    const name = isRootDir
+        ? ((state.roots || []).find(r => r.id === rootId)?.name || 'Root')
+        : path.split('/').pop();
+
     const menu = document.createElement('div');
     menu.id = 'file-context-menu';
     menu.className = 'tag-context-menu';
-    menu.innerHTML = `
-        <div class="tag-menu-header">${esc(name)}</div>
+
+    let html = `<div class="tag-menu-header">${esc(name)}</div>`;
+    if (!isRootDir) {
+        html += `
         <button class="tag-menu-action" onclick="closeFileMenu(); promptRename(${rootId},'${jesc(path)}',${isDir})">Rename\u2026</button>
-        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove(${rootId},'${jesc(path)}',${isDir})">Move to\u2026</button>
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptMove(${rootId},'${jesc(path)}',${isDir})">Move to\u2026</button>`;
+    }
+    if (isDir) {
+        if (!isRootDir) html += `<div class="tag-menu-divider"></div>`;
+        html += `
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptMkdir(${rootId},'${jesc(path || '')}')">New folder\u2026</button>`;
+    }
+    if (!isRootDir) {
+        html += `
         <div class="tag-menu-divider"></div>
-        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); trashItem(${rootId},'${jesc(path)}',${isDir})">Move to Trash</button>
-    `;
+        <button class="tag-menu-action tag-menu-delete" onclick="closeFileMenu(); trashItem(${rootId},'${jesc(path)}',${isDir})">Move to Trash</button>`;
+    }
+    menu.innerHTML = html;
+
     document.body.appendChild(menu);
 
     // Position the menu near the cursor, clamped to viewport.
@@ -2846,6 +2864,91 @@ function promptRename(rootId, relPath, isDir) {
             _ftreeRefresh(parentAbs);
         } catch (err) {
             alert('Rename failed: ' + err.message);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// New folder (mkdir)
+// ---------------------------------------------------------------------------
+
+/**
+ * Show a context menu with a "New folder…" action for the content area's
+ * empty space (right-click not on a card).
+ */
+function showContentAreaMenu(e) {
+    // Ignore clicks that land on a card or interactive element.
+    if (e.target.closest('.card, .tag-context-menu, .fs-dialog-overlay')) return;
+    // Only available in browse mode with an active root.
+    if (state.mode === 'zip' || state.currentRootId == null) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    closeFileMenu();
+
+    const rootId = state.currentRootId;
+    const currentDir = state.currentPath || '';
+
+    const menu = document.createElement('div');
+    menu.id = 'file-context-menu';
+    menu.className = 'tag-context-menu';
+    menu.innerHTML = `
+        <button class="tag-menu-action" onclick="closeFileMenu(); promptMkdir(${rootId},'${jesc(currentDir)}')">New folder\u2026</button>
+    `;
+    document.body.appendChild(menu);
+
+    const rect = menu.getBoundingClientRect();
+    let x = e.clientX;
+    let y = e.clientY;
+    if (x + rect.width  > window.innerWidth)  x = window.innerWidth  - rect.width  - 8;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    menu.style.left = x + 'px';
+    menu.style.top  = y + 'px';
+
+    requestAnimationFrame(() => {
+        document.addEventListener('click', closeFileMenu, { once: true });
+    });
+}
+
+/**
+ * Prompt the user for a new folder name and create it via POST /api/fs/mkdir.
+ * @param {number} rootId       — root ID of the parent directory
+ * @param {string} parentRelDir — path of the parent directory relative to the root
+ *                                (empty string = the root itself)
+ */
+function promptMkdir(rootId, parentRelDir) {
+    _showFsDialog('New folder', `
+        <form onsubmit="return false">
+            <label class="fs-dialog-label">Folder name</label>
+            <input class="fs-dialog-input" type="text" name="dir_name" value="New folder" autocomplete="off" spellcheck="false"
+                onkeydown="if(event.key==='Enter'){document.getElementById('fs-dialog-submit').click();}if(event.key==='Escape'){_closeFsDialog();}">
+        </form>
+        <div class="fs-dialog-footer">
+            <button class="fs-dialog-btn" onclick="_closeFsDialog()">Cancel</button>
+            <button class="fs-dialog-btn primary" id="fs-dialog-submit">Create</button>
+        </div>
+    `, async fd => {
+        const name = (fd.get('dir_name') || '').trim();
+        if (!name) { _closeFsDialog(); return; }
+        try {
+            await apiPost('/api/fs/mkdir', { root_id: rootId, rel_path: parentRelDir, name });
+            _closeFsDialog();
+
+            // Refresh the file listing if we are currently viewing the parent dir.
+            if (state.currentRootId === rootId &&
+                    (state.currentPath || '') === (parentRelDir || '')) {
+                await loadFiles(state.currentPath);
+                render();
+            }
+
+            // Invalidate the filetree cache for the parent directory.
+            const root = (state.roots || []).find(r => r.id === rootId);
+            const parentAbs = root
+                ? (parentRelDir ? root.path + '/' + parentRelDir : root.path)
+                : state.currentBasePath;
+            _ftreeRefresh(parentAbs);
+        } catch (err) {
+            alert('Could not create folder: ' + err.message);
         }
     });
 }

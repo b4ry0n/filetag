@@ -130,6 +130,7 @@ function _ftRenderRoot(root) {
             ondragover="ftreeDirDragOver(event,'${jesc(root.path)}')"
             ondragleave="ftreeDirDragLeave(event)"
             ondrop="ftreeDirDrop(event,'${jesc(root.path)}')"
+            oncontextmenu="showFileMenu(event,'',true,${root.id})"
             title="${esc(root.path)}">
             <svg class="chevron-icon${chevCls} ft-chevron" viewBox="0 0 12 12" width="11" height="11"
                 onclick="event.stopPropagation();ftreeToggleDir('${jesc(root.path)}')">

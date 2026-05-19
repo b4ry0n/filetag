@@ -782,6 +782,20 @@ pub struct FsCopyRequest {
     pub new_name: Option<String>,
 }
 
+/// Body for `POST /api/fs/mkdir`.
+#[derive(Deserialize)]
+pub struct FsMkdirRequest {
+    /// Absolute filesystem path of the parent directory (legacy; prefer `root_id` + `rel_path`).
+    pub path: Option<String>,
+    /// Root ID (from `GET /api/roots`). Used together with `rel_path`.
+    pub root_id: Option<usize>,
+    /// Path of the parent directory relative to its database root.
+    /// Use an empty string or omit for the root directory itself.
+    pub rel_path: Option<String>,
+    /// Name for the new directory (basename only — must not contain path separators).
+    pub name: String,
+}
+
 /// Body for `POST /api/face/config`.
 #[derive(Deserialize)]
 pub struct FaceConfigRequest {

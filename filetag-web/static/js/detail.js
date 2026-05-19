@@ -2017,8 +2017,29 @@ function renderDetailTagsSectionOnly() {
     }
 }
 
+// If a video inside `panel` is currently in Picture-in-Picture mode, move it
+// to a hidden off-screen holder so removing the panel's innerHTML does not
+// cause the browser to exit PiP.  A one-time `leavepictureinpicture` listener
+// cleans up the holder element afterwards.
+function _preservePipVideo(panel) {
+    const pipEl = document.pictureInPictureElement;
+    if (!pipEl || !(pipEl instanceof HTMLVideoElement) || !panel.contains(pipEl)) return;
+    let holder = document.getElementById('pip-holder');
+    if (!holder) {
+        holder = document.createElement('div');
+        holder.id = 'pip-holder';
+        holder.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden';
+        document.body.appendChild(holder);
+    }
+    holder.appendChild(pipEl);
+    pipEl.addEventListener('leavepictureinpicture', () => {
+        if (pipEl.parentNode === holder) holder.removeChild(pipEl);
+    }, { once: true });
+}
+
 function renderDetail() {
     const panel = document.getElementById('detail');
+    _preservePipVideo(panel);
 
     // Clean up previous selection.
 

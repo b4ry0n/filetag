@@ -3062,6 +3062,54 @@ pub async fn api_fs_delete(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// POST /api/fs/mkdir — create a new directory inside an existing directory.
+pub async fn api_fs_mkdir(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FsMkdirRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_filename(&body.name).map_err(AppError)?;
+
+    let parent = resolve_fs_path(
+        &state,
+        body.root_id,
+        body.rel_path.as_deref(),
+        body.path.as_deref(),
+    )?;
+
+    // Ensure the parent is inside a known root.
+    let root = root_for_dir(&state, &parent).ok_or_else(|| {
+        AppError(anyhow::anyhow!(
+            "path is not within any known database root"
+        ))
+    })?;
+
+    if !parent.is_dir() {
+        return Err(AppError(anyhow::anyhow!("parent is not a directory")));
+    }
+
+    // Prevent creating directories inside .filetag/.
+    let rel = db::relative_to_root(&parent, &root.root).map_err(AppError)?;
+    if rel == ".filetag" || rel.starts_with(".filetag/") {
+        return Err(AppError(anyhow::anyhow!(
+            "cannot create directories inside .filetag"
+        )));
+    }
+
+    let new_dir = parent.join(&body.name);
+    if new_dir.exists() {
+        return Err(AppError(anyhow::anyhow!(
+            "a file named {:?} already exists",
+            body.name
+        )));
+    }
+
+    std::fs::create_dir(&new_dir)
+        .context("create directory failed")
+        .map_err(AppError)?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 /// POST /api/fs/copy — copy a file (tags are copied to the destination).
 pub async fn api_fs_copy(
     State(state): State<Arc<AppState>>,

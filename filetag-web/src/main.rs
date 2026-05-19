@@ -364,6 +364,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/fs/move", post(api::api_fs_move))
         .route("/api/fs/delete", post(api::api_fs_delete))
         .route("/api/fs/copy", post(api::api_fs_copy))
+        .route("/api/fs/mkdir", post(api::api_fs_mkdir))
         .route("/api/trash", get(api::api_trash_list))
         .route("/api/trash/move", post(api::api_trash_move))
         .route("/api/trash/restore", post(api::api_trash_restore))
