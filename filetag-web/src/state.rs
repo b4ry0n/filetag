@@ -420,6 +420,19 @@ pub fn root_from_dir_or_id<'a>(
     })
 }
 
+/// Find the first loaded root that contains `rel_path` as an existing file.
+///
+/// Used by endpoints that receive a relative `path` parameter but no
+/// `dir`/`root_id` (e.g. when the client does not have an active directory
+/// context, such as trickplay sprite requests from a search-result detail panel).
+pub fn root_for_rel_path<'a>(state: &'a AppState, rel_path: &str) -> Option<&'a TagRoot> {
+    state.roots.iter().find(|r| {
+        preview_safe_path(&r.root, rel_path)
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    })
+}
+
 /// Resolve a relative path under `root`, rejecting directory traversal.
 pub fn safe_path(root: &Path, rel: &str) -> anyhow::Result<PathBuf> {
     preview_safe_path(root, rel)

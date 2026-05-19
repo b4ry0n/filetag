@@ -21,7 +21,7 @@ use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
     AppState, ONDEMAND_PENDING, OnDemandGuard, THUMB_LIMITER, TRANSCODE_LIMITER,
     TRANSCODE_REGISTRY, TranscodeEntry, VTHUMB_LIMITER, load_features_for, resolve_preview,
-    root_for_dir, root_from_dir_or_id,
+    root_for_dir, root_for_rel_path, root_from_dir_or_id,
 };
 use crate::types::DirParam;
 
@@ -1244,7 +1244,13 @@ pub async fn api_vthumbs(
 ) -> Response {
     let db_root = match root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id) {
         Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response(),
+        // No dir/root_id supplied — find the first root that contains the file.
+        Err(_) => match root_for_rel_path(&state, &params.path) {
+            Some(r) => r,
+            None => {
+                return (StatusCode::BAD_REQUEST, "Unknown root or missing dir").into_response();
+            }
+        },
     };
 
     if !load_features_for(&state, &db_root.root).video {
