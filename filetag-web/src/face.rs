@@ -2111,9 +2111,10 @@ fn resolve_conn_for_detection(
     root_id: Option<usize>,
     detection_id: i64,
 ) -> Result<Connection, AppError> {
-    // Fast path: dir or root_id is provided.
-    if dir.is_some() || root_id.is_some() {
-        let root_entry = root_from_dir_or_id(state, dir, root_id)?;
+    // Fast path: dir or root_id is provided (non-empty).
+    let dir_non_empty = dir.filter(|s| !s.is_empty());
+    if dir_non_empty.is_some() || root_id.is_some() {
+        let root_entry = root_from_dir_or_id(state, dir_non_empty, root_id)?;
         return open_conn(root_entry).map_err(AppError);
     }
 
