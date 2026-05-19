@@ -2819,9 +2819,31 @@ function promptRename(rootId, relPath, isDir) {
         try {
             await apiPost('/api/fs/rename', { root_id: rootId, rel_path: relPath, new_name: newName });
             _closeFsDialog();
-            await loadFiles(state.currentPath);
+
+            // Compute the parent-relative path and new relative path of the renamed item.
+            const parentRel = relPath.includes('/')
+                ? relPath.slice(0, relPath.lastIndexOf('/'))
+                : '';
+            const newRelPath = parentRel ? parentRel + '/' + newName : newName;
+
+            // If the current view is inside the renamed directory (or IS it), follow the
+            // rename so that loadFiles does not request a path that no longer exists.
+            let pathToLoad = state.currentPath;
+            if (isDir && state.currentRootId === rootId && state.currentPath &&
+                    (state.currentPath === relPath || state.currentPath.startsWith(relPath + '/'))) {
+                pathToLoad = newRelPath + state.currentPath.slice(relPath.length);
+            }
+
+            await loadFiles(pathToLoad);
             render();
-            _ftreeRefresh(state.currentBasePath);
+
+            // Invalidate the parent directory of the renamed item in the file tree
+            // (not just the root) so that nested tree entries are refreshed correctly.
+            const root = (state.roots || []).find(r => r.id === rootId);
+            const parentAbs = root
+                ? (parentRel ? root.path + '/' + parentRel : root.path)
+                : state.currentBasePath;
+            _ftreeRefresh(parentAbs);
         } catch (err) {
             alert('Rename failed: ' + err.message);
         }
