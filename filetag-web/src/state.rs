@@ -128,6 +128,36 @@ pub static DIR_THUMB_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::c
 /// generation for the rest of the session.
 pub static TRANSCODE_LIMITER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
+// ---------------------------------------------------------------------------
+// Transcode job registry
+// ---------------------------------------------------------------------------
+
+/// A background slow-path transcoding job.  Inserted when the encode starts;
+/// removed when ffmpeg exits (success or failure).  Enables SIGSTOP/SIGCONT
+/// on navigate-away/navigate-back without restarting the encode from scratch.
+pub struct TranscodeEntry {
+    /// PID of the ffmpeg process (`nice` exec's it so `Child::id()` is the
+    /// actual ffmpeg PID on both macOS and Linux).
+    pub pid: u32,
+    /// Growing staging file that accumulates encoded fragments until ffmpeg
+    /// exits and it is renamed to the final cache path.
+    pub tmp_path: PathBuf,
+    /// Set to `true` (with `Release` ordering) after the staging file is
+    /// successfully renamed to the final cache path.
+    pub done: Arc<AtomicBool>,
+    /// Set to `true` (with `Release` ordering) when ffmpeg exits with a
+    /// non-zero status or cannot be spawned.
+    pub failed: Arc<AtomicBool>,
+}
+
+/// Active slow-path transcode jobs keyed by their intended final cache path.
+///
+/// Guarded by a `std::sync::Mutex` (not tokio) because all critical sections
+/// are short and never held across an `.await` point.
+pub static TRANSCODE_REGISTRY: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<TranscodeEntry>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 /// Counter of currently-active on-demand ffmpeg/image operations (thumbnails,
 /// on-demand sprites, on-demand vtiles).  Background pregen tasks poll this
 /// counter and pause while it is non-zero so that user-facing thumbnail

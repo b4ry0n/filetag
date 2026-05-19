@@ -5,18 +5,23 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use axum::{
+    body::Body,
     extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json, Response},
 };
 use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::preview::{file_cache_path, serve_file_range};
 use crate::state::{
-    AppState, ONDEMAND_PENDING, OnDemandGuard, THUMB_LIMITER, TRANSCODE_LIMITER, VTHUMB_LIMITER,
-    load_features_for, resolve_preview, root_for_dir, root_from_dir_or_id,
+    AppState, ONDEMAND_PENDING, OnDemandGuard, THUMB_LIMITER, TRANSCODE_LIMITER,
+    TRANSCODE_REGISTRY, TranscodeEntry, VTHUMB_LIMITER, load_features_for, resolve_preview,
+    root_for_dir, root_from_dir_or_id,
 };
 use crate::types::DirParam;
 
@@ -228,15 +233,95 @@ pub fn orient_to_vf_prefix(orient: u8) -> &'static str {
     }
 }
 
-/// Transcode (or remux) a video to MP4 and serve the cached result.
+/// Send a Unix signal to a process by PID.  Silently ignores errors (e.g.
+/// when the process has already exited).  Guards against PID 0 to avoid
+/// accidentally signalling an entire process group.
+fn send_unix_signal(pid: u32, sig: &str) {
+    if pid == 0 {
+        return;
+    }
+    let _ = std::process::Command::new("kill")
+        .args([format!("-{sig}").as_str(), &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Stream bytes from a growing file until `done` or `failed` is set and the
+/// end of the file has been reached.
 ///
-/// Fast path (H.264/HEVC/AV1 source in a non-MP4 container): container-only
+/// A background task reads the file in 64 KiB chunks, polling at 50 ms
+/// intervals when at the current end.  When the receiver is dropped (client
+/// disconnected / navigated away), the ffmpeg process is paused (SIGSTOP) so
+/// it does not waste CPU while nobody is watching.
+fn stream_growing_file(
+    tmp_path: PathBuf,
+    done: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    pid: u32,
+) -> ReceiverStream<Result<Vec<u8>, std::io::Error>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(4);
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        // Wait for the staging file to appear (ffmpeg may not have written
+        // anything in the first few milliseconds after spawn).
+        let mut file = loop {
+            match tokio::fs::File::open(&tmp_path).await {
+                Ok(f) => break f,
+                Err(_) => {
+                    if failed.load(Ordering::Acquire) {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        };
+
+        let mut buf = vec![0u8; 65536];
+        loop {
+            match file.read(&mut buf).await {
+                Ok(0) => {
+                    // Current EOF — either we have caught up with ffmpeg or it
+                    // has finished writing.
+                    if done.load(Ordering::Acquire) || failed.load(Ordering::Acquire) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok(n) => {
+                    if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
+                        // Receiver dropped — client disconnected / navigated away.
+                        // SIGSTOP the encoder to save CPU while nobody is watching.
+                        if !done.load(Ordering::Acquire) && !failed.load(Ordering::Acquire) {
+                            send_unix_signal(pid, "STOP");
+                        }
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    break;
+                }
+            }
+        }
+    });
+    ReceiverStream::new(rx)
+}
+
+/// Transcode (or remux) a video to MP4 and serve the result.
+///
+/// **Fast path** (H.264/HEVC/AV1 source in a non-MP4 container): container-only
 /// remux, completes in seconds, then served with full Range/seek support.
 ///
-/// Slow path (codec that browsers cannot decode, e.g. MPEG-4 part 2):
-/// re-encodes to H.264 using all available CPU threads, waits for the full
-/// encode to complete, then serves the seekable faststart MP4 from cache.
-/// Subsequent plays are served instantly from cache.
+/// **Slow path** (codec that browsers cannot decode, e.g. MPEG-4 part 2):
+/// re-encodes to H.264 using a fragmented MP4 (`frag_keyframe+empty_moov`)
+/// and streams the growing output file to the browser immediately, so
+/// playback can start before encoding is complete.
+///
+/// When the client disconnects (navigate away), the streaming task SIGSTOPs
+/// ffmpeg so it does not waste CPU.  On reconnect the handler SIGCONTs the
+/// paused process and streams from byte 0 of the staging file; already-encoded
+/// fragments are served in one fast burst, followed by new fragments as they
+/// arrive.  Once encoding finishes the full result is cached for instant replay.
 pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap) -> Response {
     let cache_path = match file_cache_path(path, root, "video", "v7.mp4") {
         Some(p) => p,
@@ -248,16 +333,63 @@ pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap)
         return serve_file_range(&cache_path, headers).await;
     }
 
-    // Acquire concurrency permit.
+    // Attach to an existing in-progress or SIGSTOP'd encode without
+    // re-acquiring the permit or re-spawning ffmpeg.
+    let existing = TRANSCODE_REGISTRY.lock().unwrap().get(&cache_path).cloned();
+    if let Some(e) = existing
+        && !e.failed.load(Ordering::Acquire)
+    {
+        if !e.done.load(Ordering::Acquire) {
+            // Resume a paused encode.
+            send_unix_signal(e.pid, "CONT");
+        }
+        let stream = stream_growing_file(
+            e.tmp_path.clone(),
+            Arc::clone(&e.done),
+            Arc::clone(&e.failed),
+            e.pid,
+        );
+        return axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "video/mp4")
+            .body(Body::from_stream(stream))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    }
+
+    // Acquire concurrency permit (limits simultaneous new encodes, not
+    // resumed/SIGSTOP'd ones which consume no CPU).
     let permit = match TRANSCODE_LIMITER.acquire().await {
         Ok(p) => p,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "transcode queue full").into_response(),
     };
 
-    // Re-check after acquiring permit.
+    // Re-check after acquiring permit (another task may have finished or
+    // started since we checked above).
     if cache_path.exists() {
         drop(permit);
         return serve_file_range(&cache_path, headers).await;
+    }
+    {
+        let existing2 = TRANSCODE_REGISTRY.lock().unwrap().get(&cache_path).cloned();
+        if let Some(e) = existing2
+            && !e.failed.load(Ordering::Acquire)
+        {
+            drop(permit);
+            if !e.done.load(Ordering::Acquire) {
+                send_unix_signal(e.pid, "CONT");
+            }
+            let stream = stream_growing_file(
+                e.tmp_path.clone(),
+                Arc::clone(&e.done),
+                Arc::clone(&e.failed),
+                e.pid,
+            );
+            return axum::http::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "video/mp4")
+                .body(Body::from_stream(stream))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
     }
 
     // Probe codecs; fall back to full transcode if ffprobe fails.
@@ -309,9 +441,18 @@ pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap)
         }
     }
 
-    // Slow path: video re-encoding needed (e.g. MPEG-4 part 2 / DivX).
-    // Encode fully to a tmp file first, then serve the seekable faststart result.
-    // Uses all available CPU threads (-threads 0) for best encoding speed.
+    // Slow path: video re-encoding to fragmented MP4.
+    //
+    // frag_keyframe   — emit a self-contained fragment at every keyframe so
+    //                   the browser can start playing before the encode ends.
+    // empty_moov      — the initial moov box carries track metadata but no
+    //                   duration; required for live/streaming fragmented MP4.
+    // default_base_moof — improves compatibility with some older browsers
+    //                   and MSE implementations.
+    //
+    // The staging file uses the `.staging` extension so the cache-eviction
+    // loop ignores it (eviction only removes files with extension `mp4`/`webm`).
+    let staging = cache_path.with_extension("staging");
     let mut cmd = tokio::process::Command::new("nice");
     cmd.args(["-n", "10", "ffmpeg", "-y"])
         .arg("-i")
@@ -324,26 +465,71 @@ pub async fn serve_transcoded_mp4(path: &Path, root: &Path, headers: &HeaderMap)
     if c_audio != "copy" {
         cmd.args(["-b:a", "128k"]);
     }
-    cmd.args(["-sn", "-movflags", "+faststart", "-f", "mp4"])
-        .arg(&tmp)
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
+    cmd.args([
+        "-sn",
+        "-movflags",
+        "frag_keyframe+empty_moov+default_base_moof",
+        "-f",
+        "mp4",
+    ])
+    .arg(&staging)
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true); // killed if the Child is dropped (server restart)
 
-    let ok = cmd.status().await.map(|s| s.success()).unwrap_or(false);
-
-    drop(permit);
-
-    if ok {
-        let _ = tokio::fs::rename(&tmp, &cache_path).await;
-        if let Some(dir) = cache_path.parent() {
-            let dir = dir.to_path_buf();
-            tokio::spawn(evict_video_cache(dir, VIDEO_CACHE_MAX_BYTES));
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => {
+            drop(permit);
+            return serve_file_range(path, headers).await;
         }
-        serve_file_range(&cache_path, headers).await
-    } else {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        serve_file_range(path, headers).await
-    }
+    };
+    let pid = child.id().unwrap_or(0);
+
+    let done = Arc::new(AtomicBool::new(false));
+    let failed = Arc::new(AtomicBool::new(false));
+    let entry = Arc::new(TranscodeEntry {
+        pid,
+        tmp_path: staging.clone(),
+        done: Arc::clone(&done),
+        failed: Arc::clone(&failed),
+    });
+    TRANSCODE_REGISTRY
+        .lock()
+        .unwrap()
+        .insert(cache_path.clone(), Arc::clone(&entry));
+
+    // Background monitor: waits for ffmpeg to exit, then renames the staging
+    // file to the final cache path (success) or deletes it (failure).
+    // The permit is held until the encode finishes so slow encodes count
+    // against the TRANSCODE_LIMITER for their full duration.
+    let done_bg = Arc::clone(&done);
+    let failed_bg = Arc::clone(&failed);
+    let staging_bg = staging.clone();
+    let cache_bg = cache_path.clone();
+    tokio::spawn(async move {
+        let _permit = permit; // released when this task exits
+        let ok = child.wait().await.map(|s| s.success()).unwrap_or(false);
+        if ok {
+            let _ = tokio::fs::rename(&staging_bg, &cache_bg).await;
+            done_bg.store(true, Ordering::Release);
+            if let Some(dir) = cache_bg.parent() {
+                tokio::spawn(evict_video_cache(dir.to_path_buf(), VIDEO_CACHE_MAX_BYTES));
+            }
+        } else {
+            failed_bg.store(true, Ordering::Release);
+            let _ = tokio::fs::remove_file(&staging_bg).await;
+        }
+        TRANSCODE_REGISTRY.lock().unwrap().remove(&cache_bg);
+    });
+
+    // Return a streaming response immediately.  The browser plays as fragments
+    // arrive; the streaming task SIGSTOPs ffmpeg when the client disconnects.
+    let stream = stream_growing_file(staging, done, failed, pid);
+    axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 /// Axum handler for `/transcode/{*path}`: always returns a transcoded/remuxed

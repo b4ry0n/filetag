@@ -241,7 +241,6 @@ function _previewVideoError(video) {
     const n = video.dataset.name || '';
     const previewUrl = video.dataset.previewUrl || '';
     const transcodeUrl = previewUrl.replace(/^\/preview\//, '/transcode/');
-    const transcodeWebmUrl = previewUrl.replace(/^\/preview\//, '/transcode-webm/');
     const d = document.createElement('div');
     d.className = 'no-preview';
     d.innerHTML = fileIcon(n) + '<div class="preview-unavail-msg">Browser kan dit formaat niet direct afspelen.</div>';
@@ -251,11 +250,6 @@ function _previewVideoError(video) {
         btn.textContent = 'Transcoderen naar MP4';
         btn.addEventListener('click', () => _startTranscode(d, transcodeUrl, n));
         d.appendChild(btn);
-        const btnWebm = document.createElement('button');
-        btnWebm.className = 'transcode-btn';
-        btnWebm.textContent = 'Transcoderen naar WebM';
-        btnWebm.addEventListener('click', () => _startTranscode(d, transcodeWebmUrl, n));
-        d.appendChild(btnWebm);
     }
     video.replaceWith(d);
 }
@@ -2265,7 +2259,6 @@ function renderDetail() {
     } else if (type_ === 'video') {
         const ext = name.split('.').pop().toLowerCase();
         const transcodeUrl = previewUrl.replace(/^\/preview\//, '/transcode/');
-        const transcodeWebmUrl = previewUrl.replace(/^\/preview\//, '/transcode-webm/');
         if (!_browserCanPlayVideoExt(ext) && transcodeUrl !== previewUrl) {
             // Browser cannot play this format natively — skip the doomed play
             // attempt (which would produce console errors) and go straight to
@@ -2273,7 +2266,6 @@ function renderDetail() {
             preview = `<div class="no-preview">${fileIcon(name)}`
                     + `<div class="preview-unavail-msg">Browser kan dit formaat niet direct afspelen.</div>`
                     + `<button class="transcode-btn" onclick="_transcodeImmediately(this,'${jesc(transcodeUrl)}','${jesc(name)}')">Transcoderen naar MP4</button>`
-                    + `<button class="transcode-btn" onclick="_transcodeImmediately(this,'${jesc(transcodeWebmUrl)}','${jesc(name)}')">Transcoderen naar WebM</button>`
                     + `</div>`;
         } else {
             preview = `<video controls preload="metadata" src="${previewUrl}" data-name="${esc(name)}" data-preview-url="${previewUrl}"`
