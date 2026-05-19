@@ -52,6 +52,15 @@ function startJobPolling() {
     };
 }
 
+// Close the SSE connection cleanly before unload so the browser does not log
+// a "connection interrupted" console error on every page reload.
+window.addEventListener('beforeunload', () => {
+    if (_evtSource) {
+        _evtSource.close();
+        _evtSource = null;
+    }
+});
+
 function stopJobPolling() {
     // Kept for backward compatibility; the SSE connection stays open.
 }
