@@ -86,7 +86,7 @@ function renderPeopleSection() {
     };
 
     const makeItem = (p, isUnknown) => {
-        const isActive = state.faceActivePerson === p.name;
+        const isActive = (state.activePeople || new Set()).has(p.name);
         // Use the root_path from the subject record so the thumbnail request
         // targets the correct database even when people come from multiple roots.
         const thumbDir = p.root_path || currentAbsDir();
@@ -108,7 +108,7 @@ function renderPeopleSection() {
             : `<img class="person-thumb" src="${thumbUrl}" alt="${esc(label)}"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                <span class="person-thumb-placeholder" style="display:none">&#x1F464;</span>`;
-        return `<button class="person-item${activeClass}${unknownClass}" onclick="faceSelectPerson(${onclickArg})"
+        return `<button class="person-item${activeClass}${unknownClass}" onclick="faceSelectPerson(${onclickArg}, event)"
             title="${esc(p.name || t('face.unassigned'))}">
             ${thumbHtml}
             <span class="person-label">${esc(label)}</span>
@@ -164,31 +164,44 @@ function _faceBatchProgressHtml() {
 }
 
 /** Filter grid to files containing this person. */
-async function faceSelectPerson(name) {
-    if (state.faceActivePerson === name) {
-        // Toggle off
-        state.faceActivePerson = null;
+async function faceSelectPerson(name, event) {
+    if (!state.activePeople) state.activePeople = new Set();
+    const multiKey = event && (event.metaKey || event.ctrlKey || event.shiftKey);
+    if (state.tagMultiSelectMode || multiKey) {
+        if (state.activePeople.has(name)) {
+            state.activePeople.delete(name);
+        } else {
+            state.activePeople.add(name);
+        }
+    } else {
+        // Single-select: clicking the sole active person (with nothing else) deselects.
+        if (state.activePeople.has(name) && state.activePeople.size === 1
+                && state.activeTags.size === 0 && (!state.activeSubjects || state.activeSubjects.size === 0)) {
+            state.activePeople.clear();
+        } else {
+            state.activeTags.clear();
+            if (state.activeSubjects) state.activeSubjects.clear();
+            state.activePeople.clear();
+            state.activePeople.add(name);
+        }
+    }
+    state.faceActivePerson = state.activePeople.size === 1 ? [...state.activePeople][0] : null;
+    if (state.activePeople.size === 0 && state.activeTags.size === 0
+            && (!state.activeSubjects || state.activeSubjects.size === 0)) {
         doClearSearch();
         renderTags();
         return;
     }
-    state.faceActivePerson = name;
+    const q = typeof _buildFilterQuery === 'function'
+        ? _buildFilterQuery()
+        : [...state.activePeople].map(p => 'subject:' + p).join(' and ');
     try {
-        const data = await api(
-            '/api/face/files?' +
-            new URLSearchParams({ subject: name })
-        );
-        const results = data.results || [];
-        // Load these paths into search-result mode so the grid shows them.
-        // Populate searchResultRoots so thumbnails target the correct database
-        // when results span multiple roots.
-        state.searchQuery = 'subject:' + name;
-        state.searchResults = results.map(r => ({ path: r.path, root_path: r.root_path, tags: [] }));
-        state.searchResultRoots = new Map(results.map(r => [r.path, r.root_path]).filter(([, rp]) => rp));
-        state.mode = 'search';
         state.selectedFile = null;
         state.selectedPaths.clear();
         state.selectedFilesData.clear();
+        document.getElementById('search-input').value = q;
+        document.getElementById('search-clear').hidden = false;
+        await searchFiles(q);
         render();
         renderTags();
     } catch (e) {

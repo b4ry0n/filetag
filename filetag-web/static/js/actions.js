@@ -51,6 +51,8 @@ async function _navRestore(snap) {
         state.selectedPaths.clear();
         state.selectedFilesData.clear();
         state.activeTags.clear();
+        state.activeSubjects.clear();
+        state.activePeople.clear();
         _lastClickedPath = null;
         _armedBulkTag    = null;
         if (snap.mode === 'zip') {
@@ -108,6 +110,8 @@ async function navigateTo(path) {
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
     if ('faceActivePerson' in state) state.faceActivePerson = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
@@ -173,6 +177,8 @@ async function enterRoot(rootPath) {
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
     _lastClickedPath = null;
     _armedBulkTag = null;
 
@@ -199,6 +205,8 @@ async function goVirtualRoot() {
     state.selectedPaths.clear();
     state.selectedFilesData.clear();
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
     state.info = null;
     _lastClickedPath = null;
     _armedBulkTag = null;
@@ -221,6 +229,8 @@ async function doSearch() {
     const query = input.value.trim();
     if (!query) return;
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
     await searchFiles(query);
     document.getElementById('search-clear').hidden = false;
     render();
@@ -229,6 +239,9 @@ async function doSearch() {
 function doClearSearch() {
     _thumbClearCache();
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
+    if ('faceActivePerson' in state) state.faceActivePerson = null;
     document.getElementById('search-input').value = '';
     document.getElementById('search-clear').hidden = true;
     // When the Tags tab is active: don't navigate to the browse view — just
@@ -2438,6 +2451,8 @@ async function doTagGroupSearch(prefix) {
     // Expand group on click and clear any active tag filters
     _thumbClearCache();
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
     state.expandedGroups.add(prefix);
     const hasRoot = state.tags.some(t => t.name === prefix);
     const q = hasRoot ? `${prefix} or ${prefix}/*` : `${prefix}/*`;

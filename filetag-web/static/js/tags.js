@@ -2,6 +2,16 @@
 // Default (single-click): select ONLY this tag, replacing any existing filter.
 // Cmd/Ctrl/Shift-click or tagMultiSelectMode: add/remove this tag to/from the
 // active filter set (legacy multi-select behaviour).
+
+/** Build a combined AND query from all active tags, subjects and people. */
+function _buildFilterQuery() {
+    const parts = [];
+    for (const t of state.activeTags) parts.push(quoteQueryToken(t));
+    for (const s of state.activeSubjects) parts.push('subject:' + quoteQueryToken(s));
+    for (const p of state.activePeople) parts.push('subject:' + quoteQueryToken(p));
+    return parts.join(' and ');
+}
+
 window.toggleTagFilter = async function(tagName, event) {
     const multiKey = event && (event.metaKey || event.ctrlKey || event.shiftKey);
     if (state.tagMultiSelectMode || multiKey) {
@@ -14,22 +24,24 @@ window.toggleTagFilter = async function(tagName, event) {
     } else {
         // Single-select: if this is already the sole active tag, deselect it;
         // otherwise replace the entire selection with just this tag.
-        if (state.activeTags.has(tagName) && state.activeTags.size === 1) {
+        if (state.activeTags.has(tagName) && state.activeTags.size === 1
+                && state.activeSubjects.size === 0 && state.activePeople.size === 0) {
             state.activeTags.clear();
         } else {
             state.activeTags.clear();
+            state.activeSubjects.clear();
+            state.activePeople.clear();
             state.activeTags.add(tagName);
         }
     }
     closeMobileSidebar(); // auto-close drawer on mobile after tapping a tag
-    // Build a query expression from all active tags.
-    const tags = [...state.activeTags];
-    if (tags.length === 0) {
+    // Build a query expression from all active filters.
+    const q = _buildFilterQuery();
+    if (!q) {
         doClearSearch();
         renderTags();
         return;
     }
-    const q = tags.map(quoteQueryToken).join(' and ');
     document.getElementById('search-input').value = q;
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
@@ -39,13 +51,12 @@ window.toggleTagFilter = async function(tagName, event) {
 /** Remove a single tag from the active filter (used by the × chips). */
 window.removeTagFilter = async function(tagName) {
     state.activeTags.delete(tagName);
-    const tags = [...state.activeTags];
-    if (tags.length === 0) {
+    const q = _buildFilterQuery();
+    if (!q) {
         doClearSearch();
         renderTags();
         return;
     }
-    const q = tags.map(quoteQueryToken).join(' and ');
     document.getElementById('search-input').value = q;
     document.getElementById('search-clear').hidden = false;
     await searchFiles(q);
@@ -62,6 +73,8 @@ window.toggleTagMultiSelectMode = function() {
 /** Clear all active tag filters and reset search. */
 window.clearTagFilters = async function() {
     state.activeTags.clear();
+    state.activeSubjects.clear();
+    state.activePeople.clear();
     doClearSearch();
     renderTags();
 };
@@ -932,7 +945,7 @@ function renderTags() {
             const namedCount = (state.people || []).filter(p =>
                 typeof _faceIsUnknown === 'function' ? !_faceIsUnknown(p.name) : !!(p.name)
             ).length;
-            const activePerson = state.faceActivePerson ? ' active' : '';
+            const activePerson = state.activePeople.size > 0 ? ' active' : '';
             const peopleCls = peopleCollapsed ? ' chevron-collapsed' : '';
             const peopleBodyHtml = peopleCollapsed ? '' : renderPeopleSection();
             peopleHtml = `<div class="ai-section-divider${activePerson}" data-section-key="people" data-section-label="People"
@@ -1103,7 +1116,7 @@ function renderSubjectTreeNodes(nodeMap, depth) {
 function renderSubjectTreeNode(node, depth) {
     const { segment, fullPath, tag, children } = node;
     const marginStyle = depth > 0 ? ' style="margin-left:12px"' : '';
-    const isActive = state.mode === 'search' && state.searchQuery === ('subject:' + quoteTag(fullPath));
+    const isActive = state.activeSubjects.has(fullPath);
 
     if (!children.size) {
         // Leaf node
@@ -1111,7 +1124,7 @@ function renderSubjectTreeNode(node, depth) {
         const count = tag ? ` <span class="count">${tag.count}</span>` : '';
         const clickFn = state.tagPickerMode
             ? `toggleSubjectPick('${jesc(fullPath)}')`
-            : `doSubjectSearch('${jesc(fullPath)}')`;
+            : `doSubjectSearch('${jesc(fullPath)}', event)`;
         // In picker mode: radio-style indicator (filled circle = selected).
         // In normal mode: subject icon for alignment with tag items.
         const indicator = state.tagPickerMode
@@ -1139,7 +1152,7 @@ function renderSubjectTreeNode(node, depth) {
         : [...children.values()].reduce((acc, c) => acc + (c.tag ? c.tag.count : 0), 0);
     const groupClickFn = state.tagPickerMode
         ? `toggleSubjectPick('${jesc(fullPath)}')`
-        : `doSubjectSearch('${jesc(fullPath)}')`;
+        : `doSubjectSearch('${jesc(fullPath)}', event)`;
     const groupPickedCls = state.tagPickerMode && state.tagPickerSubject === fullPath ? ' picker-checked' : '';
     return `<div class="tag-group subject-tree-group"${marginStyle}>
         <div class="tag-group-label${expandedClass}${activeClass}">
@@ -1181,11 +1194,31 @@ function pickerDropNoSubject(event) {
     }
 }
 
-async function doSubjectSearch(subject) {
-    const q = 'subject:' + quoteQueryToken(subject);
-    // Toggle: clicking an already-active subject clears the search.
-    if (state.mode === 'search' && state.searchQuery === q) {
+async function doSubjectSearch(subject, event) {
+    const multiKey = event && (event.metaKey || event.ctrlKey || event.shiftKey);
+    if (state.tagMultiSelectMode || multiKey) {
+        if (state.activeSubjects.has(subject)) {
+            state.activeSubjects.delete(subject);
+        } else {
+            state.activeSubjects.add(subject);
+        }
+    } else {
+        // Single-select: clicking the sole active subject (with nothing else) deselects it.
+        if (state.activeSubjects.has(subject) && state.activeSubjects.size === 1
+                && state.activeTags.size === 0 && state.activePeople.size === 0) {
+            state.activeSubjects.clear();
+        } else {
+            state.activeTags.clear();
+            state.activeSubjects.clear();
+            state.activePeople.clear();
+            state.activeSubjects.add(subject);
+        }
+    }
+    closeMobileSidebar();
+    const q = _buildFilterQuery();
+    if (!q) {
         doClearSearch();
+        renderTags();
         return;
     }
     document.getElementById('search-input').value = q;

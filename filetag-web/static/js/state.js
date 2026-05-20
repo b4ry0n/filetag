@@ -34,6 +34,8 @@ const state = {
     tagSortMode: 'groups-first', // 'groups-first' | 'alpha' | 'count'
     tagFilter: '',             // sidebar tag search filter string
     activeTags: new Set(),     // sidebar multi-tag filter: set of selected tag names
+    activeSubjects: new Set(), // sidebar multi-subject filter: set of selected subject names
+    activePeople: new Set(),   // sidebar multi-people filter: set of selected person names
     kvValueCache: {},          // tagName → [{value, count}] loaded lazily for k/v tags
     tagPickerMode: false,      // true while the multi-tag picker is active
     tagMultiSelectMode: (() => { try { return localStorage.getItem('ft-tag-multiselect') === '1'; } catch (_) { return false; } })(), // sticky multi-select toggle
