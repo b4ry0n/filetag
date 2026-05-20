@@ -1353,6 +1353,9 @@ function showTagMenu(e, tagName) {
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
 
+    const synInput = document.getElementById('tag-menu-synonym-input');
+    if (synInput) attachTagAutocomplete(synInput, () => addSynonymFromInput(tagName));
+
     requestAnimationFrame(() => {
         document.addEventListener('click', closeTagMenu, { once: true });
     });
@@ -1596,17 +1599,14 @@ function startTagRename(tagName) {
     input.value = tagName;
     input.className = 'tag-menu-rename-input';
     input.onclick = e => e.stopPropagation();
-    input.onkeydown = async e => {
-        if (e.key === 'Enter') {
-            await renameTag(tagName, input.value.trim());
-        } else if (e.key === 'Escape') {
-            closeTagMenu();
-        }
-    };
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeTagMenu();
+    });
 
     header.replaceWith(input);
     input.id = 'tag-menu-header';
     input.select();
+    attachTagAutocomplete(input, () => renameTag(tagName, input.value.trim()));
 
     document.removeEventListener('click', closeTagMenu);
     requestAnimationFrame(() => {
@@ -2052,6 +2052,8 @@ async function renderTmDetail(name) {
                     </div>
                 </section>
             `;
+            const renInputG = document.getElementById('tm-rename-input');
+            if (renInputG) attachTagAutocomplete(renInputG, () => tmDoRenamePrefix(name));
             return;
         }
         panel.innerHTML = `<div class="tm-detail-placeholder">Tag not found.</div>`;
@@ -2146,6 +2148,10 @@ async function renderTmDetail(name) {
             </button>
         </div>
     `;
+    const synInput = document.getElementById('tm-syn-input');
+    if (synInput) attachTagAutocomplete(synInput, () => tmAddSynonym(name));
+    const renInput = document.getElementById('tm-rename-input');
+    if (renInput) attachTagAutocomplete(renInput, () => tmDoRename(name));
 }
 
 // Tag Manager operations
@@ -2500,12 +2506,8 @@ async function renderTmSubjectDetail(name) {
             <div class="tm-syn-add" style="margin-top:6px">
                 <input id="tm-subj-prop-tag" class="tm-input" type="text"
                     placeholder="Kenmerk (bijv. geslacht, geboren\u2026)"
-                    list="tm-subj-prop-datalist"
                     style="flex:1.5"
                     onkeydown="if(event.key==='Enter') tmSubjectSetProp('${jesc(name)}')">
-                <datalist id="tm-subj-prop-datalist">
-                    ${state.tags.map(t => `<option value="${esc(t.name)}">`).join('')}
-                </datalist>
                 <input id="tm-subj-prop-val" class="tm-input" type="text"
                     placeholder="Waarde (optioneel)"
                     style="flex:1"
@@ -2557,6 +2559,8 @@ async function renderTmSubjectDetail(name) {
             </button>
         </div>
     `;
+    const propTagInput = document.getElementById('tm-subj-prop-tag');
+    if (propTagInput) attachTagAutocomplete(propTagInput, () => tmSubjectSetProp(name));
 }
 
 async function tmSubjectAddTag(subject) {
