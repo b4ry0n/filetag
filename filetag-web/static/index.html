@@ -359,6 +359,13 @@
                     <div class="cm-actions">
                         <div class="cm-action-row">
                             <div class="cm-action-info">
+                                <strong data-i18n="cm.repair-title">Re-link moved files</strong>
+                                <span class="cm-action-desc" data-i18n="cm.repair-desc">Scans the library for files that have been moved or renamed and updates their database paths so their tags are preserved.</span>
+                            </div>
+                            <button class="cm-btn" id="cm-repair-btn" onclick="doRepair()" data-i18n="cm.repair-btn">Repair</button>
+                        </div>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
                                 <strong data-i18n="cm.purge-title">Remove deleted files</strong>
                                 <span class="cm-action-desc" data-i18n="cm.purge-desc">Removes database records for files that no longer exist on disk. Their tags are also removed.</span>
                             </div>
@@ -377,13 +384,6 @@
                                 <span class="cm-action-desc" data-i18n="cm.orphan-ft-desc">Removes file–tag links whose file or tag record no longer exists. Should not occur under normal use.</span>
                             </div>
                             <button class="cm-btn cm-btn-warn" id="cm-orphan-ft-btn" onclick="doPurgeOrphanFileTags()" data-i18n="cm.orphan-ft-btn">Remove</button>
-                        </div>
-                        <div class="cm-action-row">
-                            <div class="cm-action-info">
-                                <strong data-i18n="cm.repair-title">Re-link moved files</strong>
-                                <span class="cm-action-desc" data-i18n="cm.repair-desc">Scans the library for files that have been moved or renamed and updates their database paths so their tags are preserved.</span>
-                            </div>
-                            <button class="cm-btn" id="cm-repair-btn" onclick="doRepair()" data-i18n="cm.repair-btn">Repair</button>
                         </div>
                         <div class="cm-action-row">
                             <div class="cm-action-info">
