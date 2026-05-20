@@ -380,6 +380,13 @@
                         </div>
                         <div class="cm-action-row">
                             <div class="cm-action-info">
+                                <strong data-i18n="cm.repair-title">Re-link moved files</strong>
+                                <span class="cm-action-desc" data-i18n="cm.repair-desc">Scans the library for files that have been moved or renamed and updates their database paths so their tags are preserved.</span>
+                            </div>
+                            <button class="cm-btn" id="cm-repair-btn" onclick="doRepair()" data-i18n="cm.repair-btn">Repair</button>
+                        </div>
+                        <div class="cm-action-row">
+                            <div class="cm-action-info">
                                 <strong data-i18n="cm.vacuum-title">Compact database</strong>
                                 <span class="cm-action-desc" data-i18n="cm.vacuum-desc">Runs SQLite VACUUM to reclaim free space after deletions.</span>
                             </div>

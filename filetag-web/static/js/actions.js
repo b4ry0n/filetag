@@ -2397,6 +2397,32 @@ async function doPurgeOrphanFileTags() {
     }
 }
 
+async function doRepair() {
+    if (state.currentBasePath == null) return;
+    const btn = document.getElementById('cm-repair-btn');
+    const statusEl = document.getElementById('cm-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = t('cm.loading');
+    try {
+        const resp = await fetch('/api/db/repair' + dirParam('?'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        const data = await resp.json();
+        const n = data.repaired || 0;
+        const m = data.still_missing || 0;
+        if (statusEl) statusEl.textContent = n === 0
+            ? t('cm.repair-none')
+            : t('cm.repair-done', { n, plural: n !== 1 ? t('cm.pruned-plural') : '', m });
+        if (n > 0) { _thumbClearCache(); refreshCurrentDir(); }
+    } catch (e) {
+        if (statusEl) statusEl.textContent = e.message || String(e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 async function doVacuum() {
     if (state.currentBasePath == null) return;
     const btn = document.getElementById('cm-vacuum-btn');

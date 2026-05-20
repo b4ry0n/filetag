@@ -353,6 +353,7 @@ async fn main() -> anyhow::Result<()> {
             post(api::api_db_purge_orphan_file_tags),
         )
         .route("/api/db/vacuum", post(api::api_db_vacuum))
+        .route("/api/db/repair", post(api::api_db_repair))
         .route("/api/tags", get(api::api_tags))
         .route("/api/tag-values", get(api::api_tag_values))
         .route("/api/subjects", get(api::api_subjects))

@@ -669,6 +669,143 @@ pub async fn api_db_vacuum(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// `POST /api/db/repair` — re-link files that have been moved or renamed.
+///
+/// For every file in the database that no longer exists at its stored path,
+/// the root tree is scanned for a candidate match.  Matching is attempted in
+/// two stages:
+///
+/// 1. **file_id** (`device:inode` on Unix) — exact identity match.
+/// 2. **name + size** — same filename and byte-size (fallback).
+///
+/// Matched records are updated in-place so their tags are preserved.
+/// Unmatched files remain in the database unchanged.
+///
+/// Returns `{ repaired: usize, still_missing: usize }`.
+pub async fn api_db_repair(
+    State(state): State<Arc<AppState>>,
+    Query(rp): Query<DirParam>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir_or_id(&state, rp.dir.as_deref(), rp.root_id)?;
+    let root = db_root.root.clone();
+    let db_path = db_root.db_path.clone();
+
+    let (repaired, still_missing) =
+        tokio::task::spawn_blocking(move || -> anyhow::Result<(usize, usize)> {
+            let conn = rusqlite::Connection::open(&db_path)?;
+
+            // Collect all file records; identify which are missing from disk.
+            let rows: Vec<(i64, String, Option<String>, i64)> = {
+                let mut stmt =
+                    conn.prepare("SELECT id, path, file_id, size FROM files ORDER BY path")?;
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                    .flatten()
+                    .collect()
+            };
+            let known_paths: std::collections::HashSet<String> =
+                rows.iter().map(|(_, p, _, _)| p.clone()).collect();
+            let missing: Vec<(i64, String, Option<String>, i64)> = rows
+                .into_iter()
+                .filter(|(_, rel, _, _)| !root.join(rel).exists())
+                .collect();
+
+            if missing.is_empty() {
+                return Ok((0, 0));
+            }
+            let total_missing = missing.len();
+
+            // Build lookup maps for fast candidate matching.
+            // file_id → (db_id, old_rel_path)  [strong match, first entry wins]
+            let mut fid_map: std::collections::HashMap<String, (i64, String)> =
+                std::collections::HashMap::new();
+            // (filename, size) → (db_id, old_rel_path)  [weak match, first wins]
+            let mut name_size_map: std::collections::HashMap<(String, i64), (i64, String)> =
+                std::collections::HashMap::new();
+            for (id, path, file_id, size) in &missing {
+                if let Some(fid) = file_id {
+                    fid_map.entry(fid.clone()).or_insert((*id, path.clone()));
+                }
+                let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                name_size_map
+                    .entry((name, *size))
+                    .or_insert((*id, path.clone()));
+            }
+
+            // Walk the root directory to find candidate files.
+            let mut repaired = 0usize;
+            let mut repaired_ids = std::collections::HashSet::<i64>::new();
+            for entry in walkdir::WalkDir::new(&root)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+                .filter(|e| !e.path().components().any(|c| c.as_os_str() == ".filetag"))
+            {
+                let rel = match entry.path().strip_prefix(&root) {
+                    Ok(r) => r.to_string_lossy().into_owned(),
+                    Err(_) => continue,
+                };
+                // Skip files already known to the DB.
+                if known_paths.contains(&rel) {
+                    continue;
+                }
+
+                let meta = match std::fs::metadata(entry.path()) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+
+                #[cfg(unix)]
+                let candidate_fid: Option<String> = {
+                    use std::os::unix::fs::MetadataExt;
+                    Some(format!("{}:{}", meta.dev(), meta.ino()))
+                };
+                #[cfg(not(unix))]
+                let candidate_fid: Option<String> = None;
+
+                // Try file_id first, then name+size.
+                let matched = candidate_fid
+                    .as_ref()
+                    .and_then(|fid| fid_map.get(fid))
+                    .or_else(|| {
+                        let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+                        name_size_map.get(&(name, meta.len() as i64))
+                    });
+
+                if let Some((id, _old_path)) = matched {
+                    let id = *id;
+                    if repaired_ids.contains(&id) {
+                        continue;
+                    }
+                    let size = meta.len() as i64;
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos() as i64)
+                        .unwrap_or(0);
+                    conn.execute(
+                        "UPDATE files \
+                         SET path = ?1, file_id = ?2, size = ?3, mtime_ns = ?4, \
+                             indexed_at = datetime('now') \
+                         WHERE id = ?5",
+                        rusqlite::params![rel, candidate_fid, size, mtime, id],
+                    )?;
+                    repaired += 1;
+                    repaired_ids.insert(id);
+                }
+            }
+
+            Ok((repaired, total_missing - repaired))
+        })
+        .await
+        .map_err(|e| AppError(anyhow::anyhow!("task error: {e}")))?
+        .map_err(AppError)?;
+
+    Ok(Json(
+        serde_json::json!({ "repaired": repaired, "still_missing": still_missing }),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Tags list
 // ---------------------------------------------------------------------------
