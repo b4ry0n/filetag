@@ -2652,22 +2652,21 @@ function renderFileTagChips(f, covered) {
 // ---------------------------------------------------------------------------
 
 function aggregateBulkTags() {
-    const counts = new Map(); // tagStr → {count, subject}
+    // Key by (subject, tagStr) so the same tag under different subjects appears separately.
+    const counts = new Map(); // `${subject}\x00${tagStr}` → {count, subject, tagStr}
     for (const [path, data] of state.selectedFilesData) {
         if (!state.selectedPaths.has(path)) continue;
-        for (const t of (data.tags || [])) {
+        for (const tt of (data.tags || [])) {
             // Skip linkage tags (subject name == tag name); they are shown in the subjects section.
-            if (t.subject && t.name === t.subject) continue;
-            const str = formatTag(t);
-            if (!counts.has(str)) {
-                counts.set(str, { count: 0, subject: t.subject || '' });
-            }
-            counts.get(str).count++;
+            if (tt.subject && tt.name === tt.subject) continue;
+            const str = formatTag(tt);
+            const subj = tt.subject || '';
+            const key = subj + '\x00' + str;
+            if (!counts.has(key)) counts.set(key, { count: 0, subject: subj, tagStr: str });
+            counts.get(key).count++;
         }
     }
-    return [...counts.entries()]
-        .map(([tagStr, { count, subject }]) => ({ tagStr, count, subject }))
-        .sort((a, b) => b.count - a.count || a.tagStr.localeCompare(b.tagStr));
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.tagStr.localeCompare(b.tagStr));
 }
 
 function aggregateBulkSubjects() {
@@ -2685,40 +2684,8 @@ function aggregateBulkSubjects() {
         .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-function renderBulkTagChips(bulkTags, total) {
-    if (bulkTags.length === 0) return '';
-    return bulkTags.map(({ tagStr, count }) => {
-        const stateTag = state.tags.find(st => st.name === tagStr || st.name === tagStr.split('=')[0]);
-        const chipBorder = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
-        const isPartial = count < total;
-        const countBadge = isPartial
-            ? `<span class="bulk-chip-count">${count}/${total}</span>`
-            : '';
-        const applyBtn = isPartial
-            ? `<button class="bulk-chip-apply" onclick="doBulkApplyTagToAll('${jesc(tagStr)}')" title="${esc(t('bulk.apply-title', {n: total}))}">+</button>`
-            : '';
-        const isArmed = _armedBulkTag === tagStr;
-        const hoverIn  = `bulkChipHoverEnter('${jesc(tagStr)}')`;
-        const hoverOut = `bulkChipHoverLeave()`;
-        if (isArmed) {
-            return `<span class="bulk-chip armed"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
-                <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
-                <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}')" title="${esc(t('bulk.cancel'))}">&#8617;</button>
-                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}')">${esc(t('bulk.remove'))}</button>
-            </span>`;
-        }
-        return `<span class="bulk-chip"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
-            <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
-            ${applyBtn}
-            <button class="bulk-chip-arm" onclick="armBulkTag('${jesc(tagStr)}')" title="Remove from selection">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-            </button>
-        </span>`;
-    }).join('');
-}
-
-// Render bulk tags grouped by subject — mirrors the single-file subject-group layout.
-// Each chip retains bulk-specific controls (partial-count badge, apply-to-all, arm/remove).
+// Render bulk tags grouped by subject — each (tag, subject) pair is a distinct chip.
+// Supports drag & drop between subject zones and per-group action buttons.
 function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
     if (!bulkTags.length && !bulkSubjects.length) return '';
 
@@ -2730,28 +2697,46 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
         groups.get(subj).push(tag);
     }
 
-    function chipHtml({ tagStr, count }) {
+    // Drag-target attributes for a subject zone.
+    const dragAttrs = subj =>
+        `ondragover="bulkZoneDragOver(event)" ondragleave="bulkZoneDragLeave(event)" ondrop="bulkZoneDrop(event,'${jesc(subj)}')"`;
+
+    // Per-group +all / −all action buttons.
+    function groupActions(subj, tags) {
+        const hasPartial = tags.some(tag => tag.count < total);
+        const applyAll = hasPartial
+            ? `<button class="bulk-group-action" onclick="doBulkApplySubjectGroup('${jesc(subj)}')" title="${esc(t('bulk.apply-title', {n: total}))}">+all</button>`
+            : '';
+        const removeAll = tags.length
+            ? `<button class="bulk-group-action bulk-group-remove" onclick="doBulkRemoveSubjectGroup('${jesc(subj)}')" title="${esc(t('bulk.remove'))} all">\u2212all</button>`
+            : '';
+        return applyAll + removeAll;
+    }
+
+    function chipHtml({ tagStr, count, subject: subj }) {
+        subj = subj || '';
         const stateTag = state.tags.find(st => st.name === tagStr || st.name === tagStr.split('=')[0]);
         const chipBorder = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
         const isPartial = count < total;
         const countBadge = isPartial ? `<span class="bulk-chip-count">${count}/${total}</span>` : '';
         const applyBtn = isPartial
-            ? `<button class="bulk-chip-apply" onclick="doBulkApplyTagToAll('${jesc(tagStr)}')" title="${esc(t('bulk.apply-title', {n: total}))}">+</button>`
+            ? `<button class="bulk-chip-apply" onclick="doBulkApplyTagToAll('${jesc(tagStr)}','${jesc(subj)}')" title="${esc(t('bulk.apply-title', {n: total}))}">+</button>`
             : '';
-        const isArmed = _armedBulkTag === tagStr;
-        const hoverIn  = `bulkChipHoverEnter('${jesc(tagStr)}')`;
+        const isArmed = _armedBulkTag && _armedBulkTag.tagStr === tagStr && _armedBulkTag.subject === subj;
+        const hoverIn  = `bulkChipHoverEnter('${jesc(tagStr)}','${jesc(subj)}')`;
         const hoverOut = `bulkChipHoverLeave()`;
+        const dragAttrsChip = `draggable="true" ondragstart="bulkChipDragStart(event,'${jesc(tagStr)}','${jesc(subj)}')"`;
         if (isArmed) {
-            return `<span class="bulk-chip armed"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
+            return `<span class="bulk-chip armed"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}" ${dragAttrsChip}>
                 <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
-                <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}')" title="${esc(t('bulk.cancel'))}">&#8617;</button>
-                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}')">${esc(t('bulk.remove'))}</button>
+                <button class="bulk-chip-cancel" onclick="armBulkTag('${jesc(tagStr)}','${jesc(subj)}')" title="${esc(t('bulk.cancel'))}">&#8617;</button>
+                <button class="bulk-chip-fire" onclick="doBulkRemoveTagChip('${jesc(tagStr)}','${jesc(subj)}')">${esc(t('bulk.remove'))}</button>
             </span>`;
         }
-        return `<span class="bulk-chip"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}">
+        return `<span class="bulk-chip"${chipBorder} onmouseenter="${hoverIn}" onmouseleave="${hoverOut}" ${dragAttrsChip}>
             <span class="bulk-chip-label">${esc(tagStr)}${countBadge}</span>
             ${applyBtn}
-            <button class="bulk-chip-arm" onclick="armBulkTag('${jesc(tagStr)}')" title="Remove from selection">
+            <button class="bulk-chip-arm" onclick="armBulkTag('${jesc(tagStr)}','${jesc(subj)}')" title="Remove from selection">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             </button>
         </span>`;
@@ -2759,11 +2744,14 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
 
     let html = '';
 
-    // No-subject tags first.
+    // No-subject zone — always rendered as a drop target.
     const noSubjTags = groups.get('') || [];
+    html += `<div class="no-subject-zone bulk-drop-zone" ${dragAttrs('')}>`;
     if (noSubjTags.length) {
-        html += `<div class="no-subject-zone">${noSubjTags.map(chipHtml).join('')}</div>`;
+        html += `<div class="bulk-group-header"><span class="bulk-group-label">${esc(t('detail.no-subject'))}</span>${groupActions('', noSubjTags)}</div>`;
+        html += noSubjTags.map(chipHtml).join('');
     }
+    html += `</div>`;
 
     // Subject groups: tags that have a subject, plus subjects that only have a linkage tag.
     const subjectNames = [
@@ -2775,8 +2763,8 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
         const subjEntry = bulkSubjects.find(s => s.name === subj);
         const badge = subjEntry && subjEntry.count < total
             ? ` <span class="bulk-chip-count">${subjEntry.count}/${total}</span>` : '';
-        html += `<div class="subject-group">`;
-        html += `<span class="subject-label">${esc(subj)}${badge}</span>`;
+        html += `<div class="subject-group bulk-drop-zone" ${dragAttrs(subj)}>`;
+        html += `<div class="bulk-group-header"><span class="subject-label" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}${badge}</span>${groupActions(subj, tags)}</div>`;
         html += tags.map(chipHtml).join('');
         html += `</div>`;
     }
@@ -2784,11 +2772,13 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
     return html;
 }
 
-// Highlight grid/list cards that have the given tag among the selected files.
-function bulkChipHoverEnter(tagStr) {
+// Highlight grid/list cards that have the given (tag, subject) among the selected files.
+function bulkChipHoverEnter(tagStr, subject) {
+    subject = subject || '';
     const hasPaths = new Set();
     for (const [path, data] of state.selectedFilesData) {
-        if (state.selectedPaths.has(path) && (data.tags || []).some(t => formatTag(t) === tagStr)) {
+        if (state.selectedPaths.has(path) &&
+            (data.tags || []).some(tt => formatTag(tt) === tagStr && (tt.subject || '') === subject)) {
             hasPaths.add(path);
         }
     }
@@ -2801,11 +2791,12 @@ function bulkChipHoverLeave() {
     document.querySelectorAll('.bulk-tag-lit').forEach(el => el.classList.remove('bulk-tag-lit'));
 }
 
-// Apply tagStr to every selected file that does not yet have it.
-async function doBulkApplyTagToAll(tagStr) {
+// Apply (tagStr, subject) to every selected file that does not yet have it.
+async function doBulkApplyTagToAll(tagStr, subject) {
+    subject = subject || '';
     const paths = [...state.selectedPaths].filter(p => {
         const data = state.selectedFilesData.get(p);
-        return data && !(data.tags || []).some(t => formatTag(t) === tagStr);
+        return data && !(data.tags || []).some(tt => formatTag(tt) === tagStr && (tt.subject || '') === subject);
     });
     if (!paths.length) return;
     // Group paths by root and issue one bulk request per root.
@@ -2813,7 +2804,9 @@ async function doBulkApplyTagToAll(tagStr) {
     for (const p of paths) { const rid = searchRootIdForPath(p); if (!byRootId.has(rid)) byRootId.set(rid, []); byRootId.get(rid).push(p); }
     await Promise.all([...byRootId.entries()].map(([rid, ps]) => {
         const rootParam = rid != null ? { root_id: rid } : {};
-        return apiPost('/api/tag-bulk', { paths: ps, tags: [tagStr], ...rootParam });
+        const body = { paths: ps, tags: [tagStr], ...rootParam };
+        if (subject) body.subject = subject;
+        return apiPost('/api/tag-bulk', body);
     }));
     // Update local cache
     const eqIdx = tagStr.indexOf('=');
@@ -2821,7 +2814,7 @@ async function doBulkApplyTagToAll(tagStr) {
     const tValue = eqIdx !== -1 ? tagStr.slice(eqIdx + 1) : '';
     for (const p of paths) {
         const d = state.selectedFilesData.get(p);
-        if (d) d.tags.push({ name: tName, value: tValue });
+        if (d) d.tags.push({ name: tName, value: tValue, subject: subject || null });
     }
     await loadTags();
     if (state.mode === 'browse') await loadFiles(state.currentPath);
@@ -2835,30 +2828,39 @@ async function doBulkApplyTagToAll(tagStr) {
     _dirThumbInit();
 }
 
-function armBulkTag(tagStr) {
-    _armedBulkTag = _armedBulkTag === tagStr ? null : tagStr;
+function armBulkTag(tagStr, subject) {
+    subject = subject || '';
+    const current = _armedBulkTag;
+    if (current && current.tagStr === tagStr && current.subject === subject) {
+        _armedBulkTag = null;
+    } else {
+        _armedBulkTag = { tagStr, subject };
+    }
     const el = document.getElementById('bulk-tags-grouped');
     if (el) el.innerHTML = renderBulkTagsGrouped(aggregateBulkTags(), aggregateBulkSubjects(), state.selectedPaths.size);
 }
 
-async function doBulkRemoveTagChip(tagStr) {
+async function doBulkRemoveTagChip(tagStr, subject) {
+    subject = subject || '';
     _armedBulkTag = null;
-    // Only remove from files that actually have this tag
+    // Only remove from files that actually have this (tag, subject) combination.
     const paths = [...state.selectedPaths].filter(p => {
         const data = state.selectedFilesData.get(p);
-        return data && data.tags.some(t => formatTag(t) === tagStr);
+        return data && data.tags.some(tt => formatTag(tt) === tagStr && (tt.subject || '') === subject);
     });
     const byRootId = new Map();
     for (const p of paths) { const rid = searchRootIdForPath(p); if (!byRootId.has(rid)) byRootId.set(rid, []); byRootId.get(rid).push(p); }
     await Promise.all([...byRootId.entries()].map(([rid, ps]) => {
         const rootParam = rid != null ? { root_id: rid } : {};
-        return apiPost('/api/untag-bulk', { paths: ps, tags: [tagStr], ...rootParam });
+        const body = { paths: ps, tags: [tagStr], ...rootParam };
+        if (subject) body.subject = subject;
+        return apiPost('/api/untag-bulk', body);
     }));
     // Update local cache immediately so the chip list refreshes right away,
     // before the slower loadTags() / loadFiles() network calls complete.
     for (const p of paths) {
         const d = state.selectedFilesData.get(p);
-        if (d) d.tags = d.tags.filter(t => formatTag(t) !== tagStr);
+        if (d) d.tags = d.tags.filter(tt => !(formatTag(tt) === tagStr && (tt.subject || '') === subject));
     }
     const statusEl = document.getElementById('bulk-status');
     if (statusEl) statusEl.textContent = t('bulk.removed', {tag: tagStr, n: paths.length, plural: paths.length !== 1 ? t('bulk.removed-plural') : ''});
@@ -2874,6 +2876,88 @@ async function doBulkRemoveTagChip(tagStr) {
     renderContent();
     _thumbInit();
     _dirThumbInit();
+}
+
+// ---------------------------------------------------------------------------
+// Bulk drag-and-drop (move a chip between subject zones)
+// ---------------------------------------------------------------------------
+
+function bulkChipDragStart(event, tagStr, subject) {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/filetag-bulk-tag', JSON.stringify({ tagStr, subject: subject || '' }));
+}
+
+function bulkZoneDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    event.currentTarget.classList.add('subject-drag-over');
+}
+
+function bulkZoneDragLeave(event) {
+    event.currentTarget.classList.remove('subject-drag-over');
+}
+
+async function bulkZoneDrop(event, newSubject) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('subject-drag-over');
+    const raw = event.dataTransfer.getData('text/filetag-bulk-tag');
+    if (!raw) return;
+    const { tagStr, subject: oldSubject } = JSON.parse(raw);
+    const normOld = oldSubject || '';
+    const normNew = newSubject || '';
+    if (normOld === normNew) return;
+
+    const paths = [...state.selectedPaths].filter(p => {
+        const data = state.selectedFilesData.get(p);
+        return data && data.tags.some(tt => formatTag(tt) === tagStr && (tt.subject || '') === normOld);
+    });
+    if (!paths.length) return;
+
+    const byRootId = new Map();
+    for (const p of paths) { const rid = searchRootIdForPath(p); if (!byRootId.has(rid)) byRootId.set(rid, []); byRootId.get(rid).push(p); }
+    for (const [rid, ps] of byRootId) {
+        const rootParam = rid != null ? { root_id: rid } : {};
+        const untagBody = { paths: ps, tags: [tagStr], ...rootParam };
+        if (normOld) untagBody.subject = normOld;
+        const tagBody = { paths: ps, tags: [tagStr], ...rootParam };
+        if (normNew) tagBody.subject = normNew;
+        await apiPost('/api/untag-bulk', untagBody);
+        await apiPost('/api/tag-bulk',   tagBody);
+    }
+
+    // Update local cache.
+    const eqIdx = tagStr.indexOf('=');
+    const tName  = eqIdx !== -1 ? tagStr.slice(0, eqIdx) : tagStr;
+    const tValue = eqIdx !== -1 ? tagStr.slice(eqIdx + 1) : '';
+    for (const p of paths) {
+        const d = state.selectedFilesData.get(p);
+        if (!d) continue;
+        d.tags = d.tags.filter(tt => !(formatTag(tt) === tagStr && (tt.subject || '') === normOld));
+        d.tags.push({ name: tName, value: tValue || null, subject: normNew || null });
+    }
+    await loadTags();
+    const el = document.getElementById('bulk-tags-grouped');
+    if (el) el.innerHTML = renderBulkTagsGrouped(aggregateBulkTags(), aggregateBulkSubjects(), state.selectedPaths.size);
+}
+
+// Apply all partial tags in a subject group to every selected file that lacks them.
+async function doBulkApplySubjectGroup(subject) {
+    subject = subject || '';
+    const tags = aggregateBulkTags().filter(tag => (tag.subject || '') === subject && tag.count < state.selectedPaths.size);
+    for (const { tagStr } of tags) {
+        await doBulkApplyTagToAll(tagStr, subject);
+    }
+}
+
+// Remove all tags in a subject group from all selected files.
+async function doBulkRemoveSubjectGroup(subject) {
+    subject = subject || '';
+    _armedBulkTag = null;
+    const tags = aggregateBulkTags().filter(tag => (tag.subject || '') === subject);
+    for (const { tagStr } of tags) {
+        await doBulkRemoveTagChip(tagStr, subject);
+    }
 }
 
 // ---------------------------------------------------------------------------
