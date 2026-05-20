@@ -806,6 +806,122 @@ pub async fn api_db_repair(
     ))
 }
 
+/// `POST /api/db/repair/file` — re-link a single file that has been moved or renamed.
+///
+/// The caller supplies the file's **old relative path** (as stored in the database).
+/// The root tree is scanned for a candidate match using:
+///
+/// 1. **file_id** (`device:inode` on Unix) — exact identity match.
+/// 2. **name + size** — same filename and byte-size (fallback).
+///
+/// The scan exits as soon as one match is found, so it is much cheaper than a
+/// full-library repair for the common case (rename in the same directory).
+///
+/// Returns `{ found: bool, new_path: string|null }`.
+pub async fn api_db_repair_file(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<FileDetailParams>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_root = root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id)?;
+    let root = db_root.root.clone();
+    let db_path = db_root.db_path.clone();
+    let old_rel = params.path.clone();
+
+    let new_path = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        let conn = rusqlite::Connection::open(&db_path)?;
+
+        // Look up the file record in the database.
+        let row: Option<(i64, Option<String>, i64)> = conn
+            .query_row(
+                "SELECT id, file_id, size FROM files WHERE path = ?1",
+                rusqlite::params![old_rel],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((db_id, file_id, db_size)) = row else {
+            return Ok(None); // not in DB — nothing to repair
+        };
+
+        // If the file already exists at its stored path, nothing to do.
+        if root.join(&old_rel).exists() {
+            return Ok(None);
+        }
+
+        // Pre-load known paths to skip already-indexed files during the walk.
+        let known_paths: std::collections::HashSet<String> = {
+            let mut stmt = conn.prepare("SELECT path FROM files")?;
+            stmt.query_map([], |r| r.get(0))?.flatten().collect()
+        };
+        let old_name = old_rel.rsplit('/').next().unwrap_or(&old_rel).to_string();
+
+        // Walk the root tree and return the first match found.
+        for entry in walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| !e.path().components().any(|c| c.as_os_str() == ".filetag"))
+        {
+            let rel = match entry.path().strip_prefix(&root) {
+                Ok(r) => r.to_string_lossy().into_owned(),
+                Err(_) => continue,
+            };
+            if known_paths.contains(&rel) {
+                continue;
+            }
+            let meta = match std::fs::metadata(entry.path()) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            #[cfg(unix)]
+            let candidate_fid: Option<String> = {
+                use std::os::unix::fs::MetadataExt;
+                Some(format!("{}:{}", meta.dev(), meta.ino()))
+            };
+            #[cfg(not(unix))]
+            let candidate_fid: Option<String> = None;
+
+            // Match by file_id (strong) or name+size (weak fallback).
+            let by_fid = match (candidate_fid.as_deref(), file_id.as_deref()) {
+                (Some(c), Some(d)) => c == d,
+                _ => false,
+            };
+            let cand_name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+            let by_name_size = cand_name == old_name && meta.len() as i64 == db_size;
+            let matched = by_fid || by_name_size;
+
+            if matched {
+                let new_size = meta.len() as i64;
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0);
+                conn.execute(
+                    "UPDATE files \
+                         SET path = ?1, file_id = ?2, size = ?3, mtime_ns = ?4, \
+                             indexed_at = datetime('now') \
+                         WHERE id = ?5",
+                    rusqlite::params![rel, candidate_fid, new_size, mtime, db_id],
+                )?;
+                return Ok(Some(rel));
+            }
+        }
+
+        Ok(None)
+    })
+    .await
+    .map_err(|e| AppError(anyhow::anyhow!("task error: {e}")))?
+    .map_err(AppError)?;
+
+    Ok(Json(serde_json::json!({
+        "found": new_path.is_some(),
+        "new_path": new_path,
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // Tags list
 // ---------------------------------------------------------------------------
@@ -1556,6 +1672,7 @@ pub async fn api_file_detail(
             mtime: record.mtime_ns,
             indexed_at,
             covered: true,
+            missing: !is_zip && !eff_root.join(&effective_rel).exists(),
             root_id: state
                 .roots
                 .iter()
@@ -1575,6 +1692,7 @@ pub async fn api_file_detail(
             mtime: 0,
             indexed_at: String::new(),
             covered: true,
+            missing: false,
             root_id: state
                 .roots
                 .iter()
@@ -1603,6 +1721,7 @@ pub async fn api_file_detail(
         mtime,
         indexed_at: String::new(),
         covered: file_is_covered(&state, &fs_path),
+        missing: false,
         root_id: state
             .roots
             .iter()

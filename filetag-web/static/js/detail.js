@@ -2325,6 +2325,10 @@ function renderDetail() {
             </div>`
         : `<div class="uncovered-notice">${esc(t('detail.uncovered'))}</div>`;
 
+    const missingNotice = f.missing
+        ? `<div class="missing-notice">${esc(t('detail.missing'))}</div>`
+        : '';
+
     const aiBtn = _renderAiBtn(f, type_, covered);
 
     // ComicInfo import button — shown for CBZ/CBR/CB7 archives only.
@@ -2375,6 +2379,7 @@ function renderDetail() {
         <div class="detail-v-handle" id="detail-v-handle"></div>
         <div class="detail-tags-section">
             <h4>${t('detail.tags')}</h4>
+            ${missingNotice}
             <div class="detail-tags">${tagChips}</div>
             ${tagAddSection}
             ${aiBtn}

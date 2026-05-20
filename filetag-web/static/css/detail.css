@@ -591,6 +591,17 @@
     font-size: 12px;
 }
 
+.missing-notice {
+    margin-top: 0;
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text-secondary);
+    font-size: 12px;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 .tag-add-form {
     display: flex;
     flex-direction: column;

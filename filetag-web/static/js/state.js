@@ -305,6 +305,46 @@ async function loadFileDetail(path, rootId) {
     if (state.selectedFilesData.has(path)) {
         state.selectedFilesData.set(path, state.selectedFile);
     }
+    // If the file is in the DB but missing from disk, attempt a per-file repair
+    // transparently in the background.  The panel renders immediately with the
+    // existing tags; a toast confirms if re-linking succeeds.
+    if (state.selectedFile.missing) {
+        _tryAutoRepairFile(path, effectiveId);
+    }
+}
+
+// Background per-file repair.  Called when api_file_detail returns missing:true.
+// Scans the root tree for the moved/renamed file and updates the DB path.
+// If successful, reloads the detail panel and shows a toast.
+async function _tryAutoRepairFile(path, rootId) {
+    try {
+        const body = rootId != null ? { path, root_id: rootId } : { path };
+        const repair = await apiPost('/api/db/repair/file', body);
+        if (!repair.found || !repair.new_path) return;
+        // Guard: abort if the user has navigated away.
+        if (!state.selectedPaths.has(path) && state.selectedFile?.path !== path) return;
+        showToast(t('detail.repair-auto', { path: repair.new_path }), 6000);
+        // Re-fetch detail for the new path.
+        const effectiveId = rootId ?? searchRootIdForPath(path);
+        const rootParam = effectiveId != null ? '&root_id=' + effectiveId : '';
+        state.selectedFile = await api(
+            '/api/file?path=' + encodeURIComponent(repair.new_path) + rootParam
+        );
+        state.selectedDir = null;
+        // Update selection map from old path to new path.
+        if (state.selectedPaths.has(path)) {
+            state.selectedPaths.delete(path);
+            state.selectedFilesData.delete(path);
+            state.selectedPaths.add(repair.new_path);
+        }
+        if (state.selectedFilesData.has(path)) {
+            state.selectedFilesData.delete(path);
+            state.selectedFilesData.set(repair.new_path, state.selectedFile);
+        }
+        renderDetail();
+        _thumbClearCache();
+        if (typeof refreshCurrentDir === 'function') refreshCurrentDir();
+    } catch (_) { /* silent — repair failure is non-fatal */ }
 }
 
 async function selectDir(path, name, fileCount) {

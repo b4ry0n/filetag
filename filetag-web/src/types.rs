@@ -133,6 +133,10 @@ pub struct ApiFileDetail {
     /// Video duration in seconds (only set for video files).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// True when the database has a record for this path but the file no longer
+    /// exists at that location on disk (moved or deleted).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub missing: bool,
 }
 
 /// A tag attached to a file, optionally with a value and a subject group.

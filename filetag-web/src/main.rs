@@ -354,6 +354,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/db/vacuum", post(api::api_db_vacuum))
         .route("/api/db/repair", post(api::api_db_repair))
+        .route("/api/db/repair/file", post(api::api_db_repair_file))
         .route("/api/tags", get(api::api_tags))
         .route("/api/tag-values", get(api::api_tag_values))
         .route("/api/subjects", get(api::api_subjects))
