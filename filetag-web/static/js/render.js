@@ -580,6 +580,7 @@ function renderContent() {
         ? items.map(r => ({
             name: r.path.split('/').pop(),
             path: r.path,
+            root_id: r.root_id,
             root_path: r.root_path,
             is_dir: false,
             size: null,
