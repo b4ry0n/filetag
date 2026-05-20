@@ -970,9 +970,9 @@ async function doBulkAddTag() {
     _updateCardSelection();
     renderTags();
     _kbRestoreFocus();
-    const el = document.getElementById('bulk-tag-chips');
-    if (el) el.innerHTML = renderBulkTagChips(aggregateBulkTags(), state.selectedPaths.size);
-    else renderDetail(); // chips container not in DOM yet (first tag added)
+    const el = document.getElementById('bulk-tags-grouped');
+    if (el) el.innerHTML = renderBulkTagsGrouped(aggregateBulkTags(), aggregateBulkSubjects(), state.selectedPaths.size);
+    else renderDetail(); // grouped container not in DOM yet (first tag added)
     input.focus();
 }
 
