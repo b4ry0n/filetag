@@ -2311,23 +2311,42 @@ pub async fn api_rename_tag(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Tag metadata operations are not scoped to an active root — apply to every
     // loaded root (and each root's linked databases) so the rename is consistent
-    // across the whole collection.
+    // across the whole collection.  Roots are processed in parallel.
+    let mut set = tokio::task::JoinSet::new();
+    for db_root in &state.roots {
+        let db_path = db_root.db_path.clone();
+        let root = db_root.root.clone();
+        let name = body.name.clone();
+        let new_name = body.new_name.clone();
+        set.spawn_blocking(move || -> (bool, bool) {
+            let Ok(conn) = db::open_db_fast(&db_path) else {
+                return (false, false);
+            };
+            let all_dbs = db::collect_all_databases(conn, root, true).unwrap_or_default();
+            let mut any_ok = false;
+            let mut any_merged = false;
+            for d in &all_dbs {
+                match db::rename_tag(&d.conn, &name, &new_name) {
+                    Ok(db::RenameOutcome::NotFound) | Err(_) => {}
+                    Ok(db::RenameOutcome::Renamed) => any_ok = true,
+                    Ok(db::RenameOutcome::Merged { .. }) => {
+                        any_ok = true;
+                        any_merged = true;
+                    }
+                }
+            }
+            (any_ok, any_merged)
+        });
+    }
     let mut any_ok = false;
     let mut any_merged = false;
-    for db_root in &state.roots {
-        let Ok(conn) = open_conn(db_root) else {
-            continue;
-        };
-        let all_dbs =
-            db::collect_all_databases(conn, db_root.root.to_path_buf(), true).unwrap_or_default();
-        for db in &all_dbs {
-            match db::rename_tag(&db.conn, &body.name, &body.new_name) {
-                Ok(db::RenameOutcome::NotFound) | Err(_) => {}
-                Ok(db::RenameOutcome::Renamed) => any_ok = true,
-                Ok(db::RenameOutcome::Merged { .. }) => {
-                    any_ok = true;
-                    any_merged = true;
-                }
+    while let Some(res) = set.join_next().await {
+        if let Ok((ok, merged)) = res {
+            if ok {
+                any_ok = true;
+            }
+            if merged {
+                any_merged = true;
             }
         }
     }
@@ -2398,12 +2417,23 @@ pub async fn api_tag_color(
     State(state): State<Arc<AppState>>,
     Json(body): Json<TagColorRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let mut ok = false;
+    let mut set = tokio::task::JoinSet::new();
     for db_root in &state.roots {
-        let Ok(conn) = open_conn(db_root) else {
-            continue;
-        };
-        if db::set_tag_color(&conn, &body.name, body.color.as_deref()).map_err(AppError)? {
+        let db_path = db_root.db_path.clone();
+        let name = body.name.clone();
+        let color = body.color.clone();
+        set.spawn_blocking(move || -> bool {
+            let Ok(conn) = db::open_db_fast(&db_path) else {
+                return false;
+            };
+            db::set_tag_color(&conn, &name, color.as_deref()).unwrap_or(false)
+        });
+    }
+    let mut ok = false;
+    while let Some(res) = set.join_next().await {
+        if let Ok(v) = res
+            && v
+        {
             ok = true;
         }
     }
@@ -2415,12 +2445,22 @@ pub async fn api_delete_tag(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteTagRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let mut deleted = false;
+    let mut set = tokio::task::JoinSet::new();
     for db_root in &state.roots {
-        let Ok(conn) = open_conn(db_root) else {
-            continue;
-        };
-        if db::delete_tag(&conn, &body.name).map_err(AppError)? {
+        let db_path = db_root.db_path.clone();
+        let name = body.name.clone();
+        set.spawn_blocking(move || -> bool {
+            let Ok(conn) = db::open_db_fast(&db_path) else {
+                return false;
+            };
+            db::delete_tag(&conn, &name).unwrap_or(false)
+        });
+    }
+    let mut deleted = false;
+    while let Some(res) = set.join_next().await {
+        if let Ok(v) = res
+            && v
+        {
             deleted = true;
         }
     }
