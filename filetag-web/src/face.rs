@@ -2307,29 +2307,32 @@ pub async fn api_face_config_get(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FaceDirParams>,
 ) -> Json<FaceConfigResponse> {
-    // When no dir is provided (e.g. at page load before any directory is entered),
-    // fall back to the first loaded root.  If there are no roots at all, return a
-    // default config so the frontend always gets a valid response.
+    // Face is enabled globally if it is turned on in *any* loaded root.
+    // This ensures the People sidebar shows up regardless of which root is
+    // currently browsed, matching the cross-root behaviour of api_face_subjects.
+    let any_enabled = state.roots.iter().any(|root| {
+        open_conn(root)
+            .ok()
+            .and_then(|conn| db::get_setting(&conn, "feature.faces").ok().flatten())
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    });
+
+    // Operational config values (thresholds, tag_prefix, …) are read from the
+    // requested root, falling back to the first root when no dir/root_id is given.
     let root_entry = if params.dir.is_some() || params.root_id.is_some() {
         root_from_dir_or_id(&state, params.dir.as_deref(), params.root_id).ok()
     } else {
         state.roots.first()
     };
 
-    let (enabled, cfg) = match root_entry.and_then(|r| open_conn(r).ok()) {
-        Some(conn) => {
-            let cfg = load_face_config(&conn);
-            let enabled = db::get_setting(&conn, "feature.faces")
-                .unwrap_or(None)
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
-            (enabled, cfg)
-        }
-        None => (false, FaceConfig::default()),
+    let cfg = match root_entry.and_then(|r| open_conn(r).ok()) {
+        Some(conn) => load_face_config(&conn),
+        None => FaceConfig::default(),
     };
 
     Json(FaceConfigResponse {
-        enabled,
+        enabled: any_enabled,
         confidence: cfg.confidence,
         cluster_distance: cfg.cluster_distance,
         min_face_px: cfg.min_face_px,
