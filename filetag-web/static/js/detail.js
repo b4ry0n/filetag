@@ -2110,7 +2110,7 @@ function renderDetail() {
             </div>
             <div class="bulk-tag-section">
                 ${(bulkTags.length > 0 || bulkSubjects.length > 0) ? `<div id="bulk-tags-grouped">${renderBulkTagsGrouped(bulkTags, bulkSubjects, count)}</div>` : ''}
-                <p class="bulk-section-label" style="margin-top:${(bulkTags.length > 0 || bulkSubjects.length > 0) ? '12' : '0'}px">${esc(t('bulk.add-label'))}</p>
+                <h4 class="bulk-tags-heading">${esc(t('detail.tags'))}</h4>
                 <div class="tag-add-form">
                     <div class="tag-input-row">
                         <div class="tag-input-wrap">
@@ -2653,7 +2653,7 @@ function renderFileTagChips(f, covered) {
 
 function aggregateBulkTags() {
     // Key by (subject, tagStr) so the same tag under different subjects appears separately.
-    const counts = new Map(); // `${subject}\x00${tagStr}` → {count, subject, tagStr}
+    const counts = new Map(); // `${subject}\x00${tagStr}` → {count, subject, tagStr, implicitCount}
     for (const [path, data] of state.selectedFilesData) {
         if (!state.selectedPaths.has(path)) continue;
         for (const tt of (data.tags || [])) {
@@ -2662,8 +2662,10 @@ function aggregateBulkTags() {
             const str = formatTag(tt);
             const subj = tt.subject || '';
             const key = subj + '\x00' + str;
-            if (!counts.has(key)) counts.set(key, { count: 0, subject: subj, tagStr: str });
-            counts.get(key).count++;
+            if (!counts.has(key)) counts.set(key, { count: 0, subject: subj, tagStr: str, implicitCount: 0 });
+            const entry = counts.get(key);
+            entry.count++;
+            if (tt.implicit) entry.implicitCount++;
         }
     }
     return [...counts.values()].sort((a, b) => b.count - a.count || a.tagStr.localeCompare(b.tagStr));
@@ -2685,7 +2687,7 @@ function aggregateBulkSubjects() {
 }
 
 // Render bulk tags grouped by subject — each (tag, subject) pair is a distinct chip.
-// Supports drag & drop between subject zones and per-group action buttons.
+// Supports drag & drop between subject zones. Layout mirrors the single-file detail panel.
 function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
     if (!bulkTags.length && !bulkSubjects.length) return '';
 
@@ -2701,18 +2703,7 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
     const dragAttrs = subj =>
         `ondragover="bulkZoneDragOver(event)" ondragleave="bulkZoneDragLeave(event)" ondrop="bulkZoneDrop(event,'${jesc(subj)}')"`;
 
-    // Per-group +all / −all action buttons.
-    function groupActions(subj, tags) {
-        const hasPartial = tags.some(tag => tag.count < total);
-        const applyAll = hasPartial
-            ? `<button class="bulk-group-action" onclick="doBulkApplySubjectGroup('${jesc(subj)}')" title="${esc(t('bulk.apply-title', {n: total}))}">+all</button>`
-            : '';
-        const removeAll = tags.length
-            ? `<button class="bulk-group-action bulk-group-remove" onclick="doBulkRemoveSubjectGroup('${jesc(subj)}')" title="${esc(t('bulk.remove'))} all">\u2212all</button>`
-            : '';
-        return applyAll + removeAll;
-    }
-
+    // Interactive bulk chip for explicit tags.
     function chipHtml({ tagStr, count, subject: subj }) {
         subj = subj || '';
         const stateTag = state.tags.find(st => st.name === tagStr || st.name === tagStr.split('=')[0]);
@@ -2742,15 +2733,19 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
         </span>`;
     }
 
+    // Read-only chip for implicit (subject-property) tags.
+    function implicitChipHtml({ tagStr }) {
+        const stateTag = state.tags.find(st => st.name === tagStr || st.name === tagStr.split('=')[0]);
+        const chipBorder = stateTag?.color ? ` style="border-left: 3px solid ${stateTag.color}"` : '';
+        return `<span class="tag-chip tag-chip--implicit"${chipBorder} title="Subject tag (edit in Subjects manager)">${esc(tagStr)}</span>`;
+    }
+
     let html = '';
 
     // No-subject zone — always rendered as a drop target.
-    const noSubjTags = groups.get('') || [];
+    const noSubjTags = (groups.get('') || []).filter(t => t.implicitCount < t.count || t.implicitCount === 0);
     html += `<div class="no-subject-zone bulk-drop-zone" ${dragAttrs('')}>`;
-    if (noSubjTags.length) {
-        html += `<div class="bulk-group-header"><span class="bulk-group-label">${esc(t('detail.no-subject'))}</span>${groupActions('', noSubjTags)}</div>`;
-        html += noSubjTags.map(chipHtml).join('');
-    }
+    html += noSubjTags.map(chipHtml).join('');
     html += `</div>`;
 
     // Subject groups: tags that have a subject, plus subjects that only have a linkage tag.
@@ -2759,13 +2754,19 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
         ...bulkSubjects.map(s => s.name).filter(n => !groups.has(n)),
     ];
     for (const subj of subjectNames) {
-        const tags = groups.get(subj) || [];
+        const allTags = groups.get(subj) || [];
+        const explicitTags = allTags.filter(t => t.implicitCount < t.count || t.implicitCount === 0);
+        const implicitTags = allTags.filter(t => t.implicitCount > 0 && t.implicitCount === t.count);
         const subjEntry = bulkSubjects.find(s => s.name === subj);
         const badge = subjEntry && subjEntry.count < total
             ? ` <span class="bulk-chip-count">${subjEntry.count}/${total}</span>` : '';
         html += `<div class="subject-group bulk-drop-zone" ${dragAttrs(subj)}>`;
-        html += `<div class="bulk-group-header"><span class="subject-label" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}${badge}</span>${groupActions(subj, tags)}</div>`;
-        html += tags.map(chipHtml).join('');
+        html += `<span class="subject-label" title="Click to fill subject field" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}${badge}</span>`;
+        html += explicitTags.map(chipHtml).join('');
+        if (implicitTags.length) {
+            html += `<span class="subject-implicit-sep" title="Subject tags (read-only)"></span>`;
+            html += implicitTags.map(implicitChipHtml).join('');
+        }
         html += `</div>`;
     }
 
@@ -2939,25 +2940,6 @@ async function bulkZoneDrop(event, newSubject) {
     await loadTags();
     const el = document.getElementById('bulk-tags-grouped');
     if (el) el.innerHTML = renderBulkTagsGrouped(aggregateBulkTags(), aggregateBulkSubjects(), state.selectedPaths.size);
-}
-
-// Apply all partial tags in a subject group to every selected file that lacks them.
-async function doBulkApplySubjectGroup(subject) {
-    subject = subject || '';
-    const tags = aggregateBulkTags().filter(tag => (tag.subject || '') === subject && tag.count < state.selectedPaths.size);
-    for (const { tagStr } of tags) {
-        await doBulkApplyTagToAll(tagStr, subject);
-    }
-}
-
-// Remove all tags in a subject group from all selected files.
-async function doBulkRemoveSubjectGroup(subject) {
-    subject = subject || '';
-    _armedBulkTag = null;
-    const tags = aggregateBulkTags().filter(tag => (tag.subject || '') === subject);
-    for (const { tagStr } of tags) {
-        await doBulkRemoveTagChip(tagStr, subject);
-    }
 }
 
 // ---------------------------------------------------------------------------

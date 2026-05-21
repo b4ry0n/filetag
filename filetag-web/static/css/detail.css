@@ -382,12 +382,13 @@
     padding: 12px 16px;
 }
 
-.detail-tags-section h4 {
+.detail-tags-section h4,
+.bulk-tags-heading {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-secondary);
-    margin-bottom: 8px;
+    margin: 12px 0 8px;
 }
 
 .detail-tags {
@@ -620,9 +621,10 @@
 .tag-input-row .tag-input-wrap { flex: 1; min-width: 0; }
 .tag-input-row > .tag-input-wrap { flex: 1; min-width: 0; }
 
-/* Main tag input spans both columns — no longer needed, kept for compat */
-.tag-add-form #tag-input {
+/* All inputs inside tag-input-wrap fill the available width. */
+.tag-input-wrap input {
     width: 100%;
+    min-width: 0;
 }
 
 .tag-autocomplete {
