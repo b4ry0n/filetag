@@ -302,9 +302,7 @@ async function loadFileDetail(path, rootId) {
     state.selectedFile = await api('/api/file?path=' + encodeURIComponent(path) + rootParam);
     state.selectedDir = null;
     // Keep selectedFilesData in sync so multi-select tag aggregation stays fresh.
-    if (state.selectedFilesData.has(path)) {
-        state.selectedFilesData.set(path, state.selectedFile);
-    }
+    state.selectedFilesData.set(path, state.selectedFile);
     // If the file is in the DB but missing from disk, attempt a per-file repair
     // transparently in the background.  The panel renders immediately with the
     // existing tags; a toast confirms if re-linking succeeds.

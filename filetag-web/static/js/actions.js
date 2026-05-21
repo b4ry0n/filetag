@@ -947,8 +947,8 @@ async function doBulkAddTag() {
         const d = state.selectedFilesData.get(p);
         if (d) {
             d.tags = d.tags || [];
-            if (!d.tags.some(t => t.name === tName && (t.value || '') === tValue)) {
-                d.tags.push({ name: tName, value: tValue || null });
+            if (!d.tags.some(t => t.name === tName && (t.value || '') === tValue && (t.subject || '') === (subject || ''))) {
+                d.tags.push({ name: tName, value: tValue || null, subject: subject || null });
             }
         }
     }

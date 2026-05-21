@@ -85,6 +85,7 @@ async function selectFile(path, event) {
     }
     // Single select (default)
     state.selectedPaths.clear();
+    state.selectedFilesData.clear();
     state.selectedPaths.add(path);
     _lastClickedPath = path;
     // Highlight the card immediately so the UI responds without waiting for

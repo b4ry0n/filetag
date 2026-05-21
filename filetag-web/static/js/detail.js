@@ -2109,7 +2109,7 @@ function renderDetail() {
                 </div>
             </div>
             <div class="bulk-tag-section">
-                ${(bulkTags.length > 0 || bulkSubjects.length > 0) ? `<div id="bulk-tags-grouped">${renderBulkTagsGrouped(bulkTags, bulkSubjects, count)}</div>` : ''}
+                ${(bulkTags.length > 0 || bulkSubjects.length > 0) ? `<div id="bulk-tags-grouped" class="detail-tags">${renderBulkTagsGrouped(bulkTags, bulkSubjects, count)}</div>` : ''}
                 <h4 class="bulk-tags-heading">${esc(t('detail.tags'))}</h4>
                 <div class="tag-add-form">
                     <div class="tag-input-row">
@@ -2760,7 +2760,7 @@ function renderBulkTagsGrouped(bulkTags, bulkSubjects, total) {
         const subjEntry = bulkSubjects.find(s => s.name === subj);
         const badge = subjEntry && subjEntry.count < total
             ? ` <span class="bulk-chip-count">${subjEntry.count}/${total}</span>` : '';
-        html += `<div class="subject-group bulk-drop-zone" ${dragAttrs(subj)}>`;
+        html += `<div class="subject-group" ${dragAttrs(subj)}>`;
         html += `<span class="subject-label" title="Click to fill subject field" onclick="toggleSubjectInput('${jesc(subj)}')">${esc(subj)}${badge}</span>`;
         html += explicitTags.map(chipHtml).join('');
         if (implicitTags.length) {
